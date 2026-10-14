@@ -1,14 +1,11 @@
 """Tests for perception.py -- the stages Athreya writes.
 
-Every test here fails with NotImplementedError until the matching function is
-written, and goes green when it is correct. Work down the file in order; each
-test says what the function has to get right.
+Every stage has its own tests, checked against exact answers from
+`synthetic.py`, so a failure is a real disagreement rather than a tolerance
+problem.
 
-    # just the stage you are working on
+    # just one stage
     python -m pytest test/test_perception.py -k voxel -x -v
-
-    # everything that should already pass
-    python -m pytest test -m "not unimplemented"
 
 The expected answers come from `synthetic.py`, which models an EPAL 1 pallet
 exactly, so a failure is a real disagreement, not a tolerance problem.
@@ -22,8 +19,6 @@ import synthetic as S
 
 from pallet_approach import perception
 from pallet_approach.model import Plane
-
-pytestmark = pytest.mark.unimplemented
 
 
 # ------------------------------------------------------- depth_to_points
