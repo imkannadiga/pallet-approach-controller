@@ -1,0 +1,355 @@
+# Pallet approach: every tunable value lives here. Nothing is hard-coded in the
+# source. Measured values are marked [measured] with their origin; values that are
+# a choice are marked [choice] with the reasoning. See docs/SYSTEM.md.
+
+# ---------------------------------------------------------------------------
+# Shared by every node in the stack.
+# ---------------------------------------------------------------------------
+/**:
+  ros__parameters:
+
+    frames:
+      # [measured] the depth and left-image headers carry this frame.
+      camera_optical: zed2_left_camera_frame_optical
+
+      # [measured] Perception works HERE, not in base_link. base_footprint is
+      # the robot's ground frame. base_link is the chassis body frame 0.235 m
+      # up (the wheels mount at base_link level and lift the body), so working
+      # there would put the floor at -0.235 and the pocket centres at -0.163 --
+      # correct but needlessly error-prone. Here heights read as what they are.
+      #
+      # NOTE base_footprint is *not* exactly on the floor. Measured 2026-10-14:
+      # the camera lens is 0.398 m above the floor and the URDF puts it 0.163 m
+      # above base_link, so base_link is 0.235 m up -- matching the wheel
+      # geometry (0.2348 m) to 0.2 mm, while base_footprint claims 0.210 m.
+      # So the real floor sits at z = -0.025 in this frame. Nothing in the
+      # pipeline assumes otherwise: every pallet height below is relative to
+      # the *fitted* floor, which perception measures per frame.
+      #
+      # The URDF joint is a pure translation (xyz "0 0 -0.21", rpy "0 0 0"), so
+      # base_footprint and base_link share x, y and yaw exactly. Only z differs.
+      # That is why the driving targets below can be composed with the pose
+      # /odom reports for base_link without any conversion.
+      ground: base_footprint
+
+      # [measured] what /odom reports: odom -> base_link at 50 Hz.
+      body: base_link
+
+      # [measured] driving targets are stored here. Never `map`: slam_toolbox
+      # publishes map->odom and it jumps on loop closure.
+      odom: odom
+      # zed2_camera_center -> zed2_left_camera_frame is republished at 58 Hz by the
+      # SDK's self-calibration, so lookups must be stamped, with a short wait.
+      tf_timeout: 0.15          # s
+
+      # Extrinsic correction for the camera mounting. The URDF says the optical
+      # frame is level with base_footprint; measured 2026-10-14 against the
+      # floor plane, it is pitched down 0.698 deg and rolled -0.516 deg, 0.868
+      # deg in total. The LiDAR on the same bottom_box_link comes out level, so
+      # the box is fine and the camera on it is not. Uncorrected that is 22 mm
+      # of vertical error at the standoff against a 30 mm pocket-height
+      # tolerance. See docs/SYSTEM.md.
+      #
+      # These two numbers are the MEASUREMENT, exactly as
+      # tools/floor_plane_check.py prints for the camera's robot-fixed mounting
+      # tilt -- the code derives the correcting rotation from them, so the sign
+      # cannot be entered backwards. Re-measure after any remount:
+      #
+      #   python3 pallet_approach/tools/floor_plane_check.py \
+      #       ~/bags/floor_cam_pose1 ~/bags/floor_cam_pose2
+      #
+      # Radians, per the SI convention; degrees in the comments.
+      #
+      # Only pitch and roll: a ground-plane observation constrains exactly three
+      # of the six extrinsic degrees of freedom -- the two tilts and the height.
+      # It is blind to yaw, x and y, because sliding or spinning a sensor along
+      # a plane does not change what the plane looks like. The height measured
+      # right already (-0.0246 m against -0.025 m from the tape, 1.7 mm apart);
+      # yaw, x and y need an object at a taped position instead.
+      extrinsic_correction:
+        enabled: true
+        measured_floor_pitch: 0.012182      # +0.698 deg
+        measured_floor_roll: -0.009005      # -0.516 deg
+
+    topics:
+      # [measured] ros2 topic list -t on 2026-10-13. All RELIABLE/VOLATILE, so
+      # default rclpy QoS is compatible; do not switch to sensor-data QoS.
+      depth: /zed2/zed_node/depth/depth_registered
+      depth_camera_info: /zed2/zed_node/depth/camera_info
+      left_image: /zed2/zed_node/rgb/color/rect/image
+      left_camera_info: /zed2/zed_node/rgb/color/rect/camera_info
+      odom: /odom
+      cmd_vel: /cmd_vel                       # geometry_msgs/Twist, NOT stamped
+
+    # EPAL 1 / EUR pallet, nominal dimensions. [choice] nominal for now; the real
+    # pallet still has to be tape-measured and these corrected if it disagrees.
+    pallet:
+      # Measured pallet (2026-10-14, tape)
+      pallet_width: 0.795            # pocket side
+      pallet_length: 1.195
+      pallet_height: 0.145
+
+      # Pockets: 0.23 wide, 0.10 high, from the floor up; centres 0.365 apart
+      pocket_nominal_width: 0.23
+      pocket_nominal_height: 0.10
+      pocket_nominal_spacing: 0.365
+
+      entry_face: "short"
+
+      pocket_center_height: 0.055    # band 0.035–0.075: above the 0.03 floor margin, 2.5 cm below the board edge
+      pocket_band_half_height: 0.02
+      pocket_slab_half_depth: 0.06   # face slice thickness, for depth noise at ~2 m
+      pocket_min_points_per_bin: 2
+      pocket_min_gap_width: 0.15
+      pocket_max_gap_width: 0.32
+
+    # Virtual forks for the overlay: a standard ITA Class II forklift fork set,
+    # with the spacing set to match the pocket centres above.
+    # [choice] the robot has no forks; these are what a reach truck handling EUR
+    # pallets carries. All in base_link, x forward.
+    forks:
+      tine_length: 1.150        # standard for a 1200 mm deep pallet
+      tine_width: 0.100         # 64 mm clearance each side in a 227.5 mm pocket
+      tine_thickness: 0.040     # in a 100 mm high pocket
+      spacing: 0.365            # centre-to-centre, matching the MEASURED
+                                # pallet.pocket_nominal_spacing, not the
+                                # EPAL nominal 0.3725
+      # underside 0.052 m above the floor puts the tine centre at 0.072 m, exactly
+      # the pocket centre height.
+      bottom_height: 0.052
+      # the carriage sits at the base_link origin, so the tips reach x = 1.150 m.
+      # At the 1.30 m standoff below they stop 0.15 m short of the pallet face.
+      carriage_x: 0.0
+
+# ---------------------------------------------------------------------------
+# pallet_perception (lifecycle node): depth -> pallet pose and pockets
+# ---------------------------------------------------------------------------
+pallet_perception:
+  ros__parameters:
+
+    depth:
+      # [choice] ZED min_depth is 0.30 m. The far limit is provisional: the Day 5
+      # noise curve replaces it with the range where depth is actually usable.
+      min_range: 0.40
+      max_range: 4.00
+      # keep every Nth pixel when back-projecting. 1280x720 = 921k points;
+      # stride 2 gives ~230k, which is plenty and 4x cheaper.
+      stride: 2
+
+    # Region of interest in base_footprint, applied before anything else.
+    # The real floor is at z = -0.025 (measured), so -0.05 keeps the floor
+    # plane in with 25 mm to spare -- RANSAC needs it -- and 0.8 m covers a
+    # loaded pallet without pulling in the ceiling or the walls.
+    # [choice] generous enough for a pallet at 1-4 m, tight enough to drop the
+    # robot's own sensor box.
+    roi:
+      x_min: 0.50
+      x_max: 4.00
+      y_min: -1.50
+      y_max: 1.50
+      z_min: -0.05
+      z_max: 0.80
+
+    voxel_size: 0.02            # [choice] 2 cm, below the pocket tolerance
+
+    # RANSAC seed. A fixed value makes a replayed bag give the same answer
+    # every time, which is what makes offline debugging tractable. Set it to
+    # null on the robot if you want independent draws per frame.
+    seed: 0
+
+    floor:
+      ransac_distance: 0.02     # [choice] 2 cm, ~ the ZED noise at 2 m
+      ransac_iterations: 200
+      # a plane only counts as the floor if its normal is within this of vertical
+      max_normal_tilt: 0.17     # rad, ~10 deg
+      min_inlier_fraction: 0.25
+      # Where the floor is expected, in base_footprint. Measured 2026-10-14
+      # from the lens height: -0.025, i.e. base_footprint is 25 mm above the
+      # real floor. Reject a fit further than max_z_error from here -- that is
+      # a wall or the pallet top deck, not the floor. The tolerance covers
+      # tyre compression, load and an uneven floor, not a 25 cm blunder.
+      expected_z: -0.025
+      max_z_error: 0.08
+      # floor points are removed up to this height above the fitted plane
+      removal_margin: 0.03
+
+    cluster:
+      eps: 0.05                 # [choice] DBSCAN neighbourhood, 5 cm
+      # MUST stay well below the number of neighbours a point actually has.
+      # After voxel_downsample the cloud is a SURFACE with points `voxel_size`
+      # apart, so a disc of radius eps holds about pi*eps^2/voxel_size^2 of
+      # them: 19 at eps 0.05 and voxel 0.02, and half that at the edge of a
+      # face. This was 30 to begin with, which nothing could reach -- every
+      # point came back as noise and there were no clusters at all.
+      # test_params.py now checks the relationship, so changing voxel_size
+      # cannot silently break it again.
+      min_samples: 8
+      # Smallest cluster that could still be a pallet. Derived, not guessed:
+      # after remove_floor the front face is pallet_width x
+      # (pallet_height - floor.removal_margin), which at voxel_size 0.02
+      # voxelises to (0.80/0.02) x (0.114/0.02) = 228 points -- and because
+      # voxelising is range-independent, that count holds anywhere inside the
+      # working range. Half of it leaves room for a partly occluded or partly
+      # visible face. This was 300, which rejected a cluster containing the
+      # whole face. test_params.py checks it against the geometry.
+      min_cluster_points: 100
+      # How far a cluster's height and footprint may differ from the pallet's
+      # and still be accepted, as a fraction. 0.25 is loose on purpose: a
+      # loaded pallet is taller and the camera sees a partial footprint.
+      size_tolerance: 0.25
+
+    face:
+      # Support the face fit must have before go_nogo will trust it. Derived,
+      # then checked against real data: the fit keeps voxels within
+      # face.ransac_distance (15 mm) of a vertical plane, and the real pallet's
+      # front surface spans 26 mm from deck boards to blocks, so only two or
+      # three voxel rows of the 0.795/0.02 = 40 columns fall inside the band.
+      # Measured on pallet_2m_0deg: 139-146 inliers across five frames. This
+      # was 300, which would have rejected every real estimate as a thin fit.
+      # 60 is one and a half voxel rows across the full width.
+      min_points: 60
+      # the front face must be close to vertical to be accepted
+      max_tilt_from_vertical: 0.26   # rad, ~15 deg
+      ransac_distance: 0.015
+      # A candidate face must point roughly at the robot. Generous, so that a
+      # pallet turned 30 deg is still accepted; the inlier count is what
+      # actually picks the front face over a side face.
+      max_facing_angle: 1.05         # rad, 60 deg
+
+
+# ---------------------------------------------------------------------------
+# approach_controller (lifecycle node): drives to the standoff pose.
+# Publishes cmd_vel ONLY while active.
+# ---------------------------------------------------------------------------
+approach_controller:
+  ros__parameters:
+
+    # [measured+choice] 0.2 m/s is the lab limit for autonomous runs. Angular is
+    # a choice, deliberately low. NEVER raise either without being asked.
+    limits:
+      max_linear: 0.20          # m/s
+      max_angular: 0.30         # rad/s
+      max_linear_accel: 0.30    # m/s^2
+      max_angular_accel: 0.60   # rad/s^2
+      # the skid-steer base does not move below roughly these; commands smaller
+      # than this are raised to it, or zeroed if the goal is already met.
+      min_linear: 0.05
+      min_angular: 0.10
+
+    # rotate - drive - rotate, the simplest thing that works on a skid-steer.
+    gains:
+      k_rho: 0.6                # distance -> linear
+      k_alpha: 1.2              # heading-to-goal -> angular
+      k_beta: 0.4               # final-heading -> angular
+
+    tolerances:
+      position: 0.030           # m
+      yaw: 0.030                # rad, ~1.7 deg
+      # rotate in place until the heading error is under this, then drive
+      heading_before_drive: 0.100   # rad
+
+    # Commands cross the network to the robot PC, and the base driver has NO
+    # command timeout (ros2 param dump /scout), so we never let the base coast on
+    # a stale command: fixed publish rate while active, explicit zero on stop.
+    command_rate: 20.0          # Hz
+    # if no fresh target arrives within this, publish zero and report unstable
+    target_timeout: 0.50        # s
+    # how long to keep publishing zeros after a stop, to be sure one lands
+    zero_command_repeats: 5
+
+# ---------------------------------------------------------------------------
+# coordinator: action server and state machine. Owns every decision to move.
+# ---------------------------------------------------------------------------
+coordinator:
+  ros__parameters:
+
+    action_name: pallet_task
+
+    approach:
+      # [derived] base_footprint stops this far from the pallet face. The
+      # binding constraint is the camera's vertical FOV, not the fork length.
+      #
+      # The camera is level, 0.390 m ahead of base_footprint and 0.398 m above
+      # the floor (measured 2026-10-14), with a 20.76 deg vertical half-FOV.
+      # Features low on the pallet fall out of the bottom of the image as the
+      # robot closes in, and the GO/NO-GO rules measure the pocket opening
+      # height against a 0.030 m tolerance -- so the bottom lip of the
+      # opening, 0.022 m above the floor, has to stay in frame:
+      #
+      #   standoff   lowest visible    margin on the      floor strip
+      #              above the floor   0.022 m lip        still in frame
+      #   1.38 m     +0.022 m           0 mm             none
+      #   1.40 m     +0.015 m          +7 mm             none
+      #   1.45 m     -0.004 m         +26 mm             4 mm
+      #   1.50 m     -0.023 m         +45 mm            23 mm
+      #
+      # 1.40 m leaves 7 mm, which is inside the noise once tyre compression,
+      # floor unevenness and a little pitch under braking are allowed for.
+      # 1.45 m gives 26 mm and brings the floor contact line just back into
+      # frame, so a floor fit is still possible at the standoff. Costs 5 px of
+      # pocket resolution (89 instead of 94). See docs/SYSTEM.md.
+      standoff_distance: 1.45
+      # the line-up point is a further this-much back along the face normal, so
+      # the robot turns onto the pocket centre line before driving in straight.
+      lineup_extra: 0.50
+
+    detecting:
+      timeout: 10.0             # s, then NO_PALLET
+      confirm_frames: 5         # consecutive consistent frames to confirm
+      max_position_spread: 0.050
+      max_yaw_spread: 0.090
+
+    approaching:
+      # no accepted estimate for this long -> pallet lost -> ABORTED
+      lost_pallet_timeout: 1.0  # s
+      # re-estimate while moving; reject a jump larger than this as an outlier
+      max_estimate_jump: 0.15   # m
+      max_estimate_jump_yaw: 0.20   # rad
+
+    checking:
+      settle_time: 0.5          # s stopped before evaluating the rules
+      frames: 5                 # frames the rules are evaluated over
+
+    # GO/NO-GO thresholds. Conservative by default: a false GO is far worse
+    # than a false NO-GO, so every limit here errs towards NO-GO.
+    go_nogo:
+      max_yaw_error: 0.087        # rad, 5 deg at the standoff
+      max_lateral_offset: 0.050   # m from the pocket centre line
+      pocket_width_tolerance: 0.040
+      pocket_height_tolerance: 0.030
+      min_pocket_count: 2
+      # a load point this far in front of the fitted face counts as overhang
+      overhang_margin: 0.020
+      # clear volume that must be empty in front of each pocket
+      pocket_clearance_depth: 0.10
+      # stability over the last N accepted frames
+      stability_frames: 5
+      max_position_spread: 0.030  # m
+      max_yaw_spread: 0.035       # rad, ~2 deg
+
+    # Startup safety check: refuse to activate if anyone else publishes cmd_vel.
+    # Measured 2026-10-13: publisher count 0, one subscriber (`scout`).
+    require_sole_cmd_vel_publisher: true
+
+# ---------------------------------------------------------------------------
+# fork_overlay: draws the virtual forks and detected pockets on the left image.
+# ---------------------------------------------------------------------------
+fork_overlay:
+  ros__parameters:
+    publish_rate: 10.0          # Hz, decimated from the camera's ~37 Hz
+    # Fallback floor height in base_footprint, used until perception fits one.
+    # The measured value, not zero: base_footprint is 25 mm above the floor.
+    # It matters because at the standoff there is almost no floor left in
+    # frame to fit to (see docs/SYSTEM.md), so this is what the overlay uses.
+    floor_z: -0.025
+    alpha: 0.45                 # fill transparency
+    line_thickness: 2
+    draw_pockets: true
+    draw_standoff_marker: true
+    # BGR, by coordinator state
+    colors:
+      idle: [160, 160, 160]
+      detecting: [160, 160, 160]
+      approaching: [0, 200, 255]
+      go: [0, 200, 0]
+      no_go: [0, 0, 220]
