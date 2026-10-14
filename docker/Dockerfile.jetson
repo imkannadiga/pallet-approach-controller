@@ -1,0 +1,59 @@
+# Our stack's container for the Jetson (aarch64, L4T r36.5, JetPack 6.2.2).
+#
+# Deliberately NOT derived from the ZED image. The nodes consume ROS topics --
+# depth, image, camera_info, tf, odom -- and never touch the ZED SDK or CUDA, so
+# a plain ROS base is smaller, needs no GPU passthrough, and keeps us clear of
+# the ZED container's NumPy 2.2.6, which breaks the cv2 and cv_bridge builds that
+# ship with Humble (docs/SYSTEM.md). The ZED wrapper keeps running in its own
+# container, untouched.
+#
+# If a later stage needs the SDK -- replaying an SVO file through the wrapper,
+# for instance -- build that as a separate image from the stereolabs base:
+#   ARG BASE_IMAGE=stereolabs/zed:5.4.1-devel-l4t-r36.5
+ARG BASE_IMAGE=ros:humble-ros-base
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-lc"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+# NumPy pinned below 2: the Humble builds of cv_bridge and python3-opencv are
+# compiled against the 1.x C API and fail with "_ARRAY_API not found" otherwise.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3-numpy \
+        python3-scipy \
+        python3-sklearn \
+        python3-opencv \
+        python3-yaml \
+        ros-humble-cv-bridge \
+        ros-humble-tf2-ros-py \
+        ros-humble-tf2-geometry-msgs \
+        ros-humble-topic-tools \
+        ros-humble-rosbag2-storage-mcap \
+        ros-humble-lifecycle-msgs \
+        ros-humble-rclpy \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -c "import numpy; assert numpy.__version__.startswith('1.'), numpy.__version__; print('numpy', numpy.__version__)"
+
+WORKDIR /ros2_ws
+COPY pallet_approach_interfaces src/pallet_approach_interfaces
+COPY pallet_approach           src/pallet_approach
+
+RUN source /opt/ros/humble/setup.bash \
+    && colcon build --symlink-install --event-handlers console_direct+
+
+# Must match the rest of the robot: both machines run ROS_DOMAIN_ID 10 with
+# rmw_fastrtps_cpp (docs/SYSTEM.md). The Jetson is multi-homed (wifi 10.42.0.40,
+# wired 192.168.1.1, docker0), and the ZED container uses an explicit FastDDS
+# profile; bind-mount the same file in and point at it, or discovery can pick the
+# wrong interface:
+#   -v /ros2_ws/src/scout_nlp/configs:/dds:ro \
+#   -e FASTRTPS_DEFAULT_PROFILES_FILE=/dds/fastdds_jetson.xml
+ENV ROS_DOMAIN_ID=10
+ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+ENV ROS_LOCALHOST_ONLY=0
+
+RUN echo 'source /opt/ros/humble/setup.bash' >> /root/.bashrc \
+    && echo 'source /ros2_ws/install/setup.bash' >> /root/.bashrc
+
+CMD ["bash", "-lc", "source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py"]
