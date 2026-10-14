@@ -1,0 +1,16 @@
+# One pallet approach run, triggered manually.
+#
+#   ros2 action send_goal /pallet_task \
+#     pallet_approach_interfaces/action/PalletTask "{mode: pallet_orientation}" --feedback
+
+# ---------------- Goal ----------------
+string mode                           # "pallet_orientation" (the only mode for now)
+---
+# ---------------- Result ----------------
+string outcome                        # GO, NO_GO, NO_PALLET or ABORTED
+string reason                         # why, e.g. "yaw beyond limit"
+geometry_msgs/PoseStamped pallet_pose # last accepted estimate, frame_id = odom
+---
+# ---------------- Feedback ----------------
+string phase                          # DETECTING, APPROACHING or CHECKING
+float32 distance_to_standoff          # metres, base_link to the standoff point
