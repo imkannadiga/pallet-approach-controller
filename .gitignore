@@ -1,0 +1,27 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Data: bags and frames are large and never belong in git.
+# Keep docs/dataset.md (the ground-truth table) instead.
+bags/
+*.bag
+*.db3
+*.mcap
+*.svo
+*.svo2
+frames/
+*.npy
+
+# Survey output is kept: it is the record of what the system actually was.
+!docs/survey/*.txt
