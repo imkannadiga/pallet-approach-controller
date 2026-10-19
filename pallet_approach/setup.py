@@ -28,6 +28,7 @@ setup(
             'coordinator = pallet_approach.nodes.coordinator_node:main',
             'watchdog = pallet_approach.nodes.watchdog_node:main',
             'pallet_tracker = pallet_approach.nodes.tracker_node:main',
+            'virtual_forks = pallet_approach.nodes.forks_node:main',
             'fork_overlay = pallet_approach.nodes.fork_overlay_node:main',
         ],
     },

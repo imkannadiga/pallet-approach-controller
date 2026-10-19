@@ -29,6 +29,7 @@ NODE_NAMES = {
     'fork_overlay_node.py': 'fork_overlay',
     'watchdog_node.py': 'watchdog',
     'tracker_node.py': 'pallet_tracker',
+    'forks_node.py': 'virtual_forks',
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")

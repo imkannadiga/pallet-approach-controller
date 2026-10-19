@@ -72,6 +72,14 @@ def generate_launch_description():
             condition=IfCondition(watchdog),
         ),
 
+        # No hardware behind it; the coordinator waits for it exactly as it
+        # would wait for a real carriage.
+        Node(
+            package='pallet_approach', executable='virtual_forks',
+            name='virtual_forks', output='screen',
+            parameters=[params], arguments=arguments,
+        ),
+
         # Passive: it publishes a track per estimate and drives nothing. It
         # resets on both edges of a run, so one run never inherits another's
         # track.

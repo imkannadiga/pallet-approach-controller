@@ -602,6 +602,61 @@ but it returns **None for "found nothing", never "clear"** -- the distinction
 matters because at close range behind the robot there is nothing to find.
 (Stages 3, 6)
 
+## 2026-10-19 (stages 5b and 6: the forks and the insertion)
+
+**D43. The fork simulator may not claim anything the sequence did not do.**
+`loaded` is set only when a lift *completes* from the insertion height, and
+`lift()` refuses outright from any other height. Lowering and lifting take real
+time at `speed`, so a phase whose job is to take time while the robot stands
+still cannot be skipped. *Why:* there is no hardware behind any of this, so the
+simulator is the only thing standing between "the sequence reached LIFTING" and
+"the pallet came off the floor". A simulator that sets a flag because a state
+machine said a word is a simulator that produces a successful demo of nothing.
+(Stage 5b)
+
+**D44. `lift_travel` is carriage travel, and the pallet lift is reported
+separately per face.** 0.070 m of carriage travel from the 0.040 m insertion
+height. The tine top first takes up the slack to the top of the pocket --
+0.020 m on the short face, 0.045 m on the long one -- before the pallet moves,
+so the same travel lifts the short face **50 mm** off the floor and the long
+face **25 mm**. `forks.pallet_lift` reports which, and the tests require both
+to be positive. *Why:* "the forks rose by 70 mm" is a fact about the carriage;
+"the pallet came off the floor" is the claim a virtual pickup is making, and
+conflating them would let a lift that never moved the pallet read as a success.
+(Stage 5b)
+
+**D45. The insertion plan is built from the MEASURED face distance, and the
+LiDAR is the source for both the plan and the stop.** `plan_insertion` takes
+the face distance measured when insertion begins, not the configured 1.75 m,
+because the closing loop arrives within `range_tolerance` of the standoff
+rather than at it; planning from the nominal would spend that tolerance on the
+stop distance. The measurement comes from the LiDAR, with perception's estimate
+as a logged fallback. *Why the same sensor for both:* planning from one source
+and stopping on another is how a 50 mm disagreement becomes a surprise at the
+moment of the stop rather than a known offset at the start of the drive.
+`plan_insertion` **refuses** rather than clamps when the face is already inside
+the stop, when the travel exceeds `max_travel`, when the side has no configured
+geometry (which is what `ambiguous` reaches it as), or when the side is marked
+not insertable (D20). (Stage 6)
+
+**D46. During insertion, no LiDAR measurement for `max_unmeasured_frames`
+aborts, and so does finishing on odometry alone.** Five frames at 10 Hz is half
+a second, 25 mm of travel at 0.05 m/s. *Why:* this is the one phase where the
+robot deliberately drives at something it cannot fully see, and odometry alone
+is dead reckoning. D18 made a *disagreement* abort; this closes the gap D18
+left, which is that an absent measurement cannot disagree with anything. A run
+that completes its travel with nothing having confirmed where the face was has
+not measured an insertion and must not report one. (Stage 6)
+
+**D47. The insertion's lateral drift is measured and logged, not acted on.**
+`face_distance_ahead` returns the mean lateral position of the returns alongside
+the distance. *Why:* D7 and ROADMAP stage 6 keep insertion blind-on-odometry
+with angular exactly zero, because the tines are inside the pallet and steering
+drags them sideways through the blocks. But D13 found the LiDAR holds the face
+for the whole travel, so the drift *is* observable, and the decision about
+whether to correct it needs a number. Lab session C produces that number; until
+then the behaviour is unchanged and the data is collected. (Stage 6)
+
 ## Pending (to be decided at the start of each stage)
 
 See the stage lists in `docs/ROADMAP.md`. Stage 5a is closed (D15–D18); the

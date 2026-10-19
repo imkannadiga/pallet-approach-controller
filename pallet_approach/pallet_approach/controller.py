@@ -1,14 +1,12 @@
-"""Pose controller: drive the base to a target pose.
+"""What a velocity command is, and the three things every command passes through.
 
-Rotate - drive - rotate, which is the simplest thing that works on a skid-steer
-base and the easiest to reason about when something goes wrong in the lab. The
-robot turns to face the target, drives to it, then turns to the final heading.
-
-No ROS here: `compute_command` is a pure function of (where I am, where I want
-to be, phase), so the whole control law is unit testable at a desk. The node
-wrapper owns the clock, the odometry subscription and the publisher.
-
-Three safety properties live in this file and must not be weakened:
+This was the rotate-drive-rotate pose controller. Its control law
+(`compute_command`, `Phase`) went with the two-leg approach that used it, on
+2026-10-19 (D38): the robot no longer drives to a pose and turns, it servos
+onto the pocket centre line (`closing.py`) and drives straight on odometry for
+the reverse and the insertion (`insertion.py`). What remains here is what every
+one of those shares, and it is shared precisely so the safety properties are
+enforced in one place:
 
 1. Every command passes through `clamp_command`, so nothing above the limits in
    params.yaml can ever reach the base.
@@ -17,28 +15,17 @@ Three safety properties live in this file and must not be weakened:
    parameter at all -- so a stale non-zero command would keep the robot moving.
 3. `RateLimiter` bounds acceleration, so a jump in the estimate cannot become a
    jerk at the wheels.
+
+No ROS: the node wrapper owns the clock, the odometry subscription and the
+publisher.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from enum import Enum
 
-from pallet_approach.approach import wrap_angle
-from pallet_approach.model import Pose2D
-
-__all__ = ['Phase', 'Command', 'ZERO', 'clamp_command', 'apply_deadband',
-           'RateLimiter', 'compute_command']
-
-
-class Phase(Enum):
-    """Where in the rotate-drive-rotate sequence the controller is."""
-
-    ROTATE_TO_HEADING = 'ROTATE_TO_HEADING'
-    DRIVE = 'DRIVE'
-    ROTATE_TO_FINAL = 'ROTATE_TO_FINAL'
-    DONE = 'DONE'
+__all__ = ['Command', 'ZERO', 'clamp_command', 'apply_deadband', 'RateLimiter']
 
 
 @dataclass(frozen=True)
@@ -118,86 +105,10 @@ class RateLimiter:
         return self.previous
 
 
-def compute_command(
-    current: Pose2D,
-    target: Pose2D,
-    phase: Phase,
-    gains: dict,
-    limits: dict,
-    tolerances: dict,
-) -> tuple[Command, Phase]:
-    """One control step. Returns the command to send and the next phase.
-
-    Both poses must be in the same frame -- `odom` in the running system, since
-    that is where the coordinator stores its targets.
-
-    The sequence:
-
-    * ROTATE_TO_HEADING -- turn in place until the target bears less than
-      `heading_before_drive` off the nose. Turning away from the pallet is fine
-      here; nothing is moving forward yet.
-    * DRIVE -- drive forward, steering gently to hold the bearing. If the
-      bearing opens up past twice the threshold, go back to rotating: that
-      means the target moved (re-estimation) or the robot slipped.
-    * ROTATE_TO_FINAL -- in position; turn to the target heading, which at the
-      standoff means square-on to the pallet face.
-    * DONE -- `ZERO`, every time it is called.
-
-    Note what is deliberately absent: no integral term, no reverse. An
-    integrator would wind up while the base sits in its deadband, and reversing
-    mid-approach hides the pallet from the camera.
-    """
-    if phase is Phase.DONE:
-        return ZERO, Phase.DONE
-
-    dx = target.x - current.x
-    dy = target.y - current.y
-    rho = math.hypot(dx, dy)
-    bearing = wrap_angle(math.atan2(dy, dx) - current.yaw)
-    final_error = wrap_angle(target.yaw - current.yaw)
-
-    position_tolerance = tolerances['position']
-    yaw_tolerance = tolerances['yaw']
-    heading_gate = tolerances['heading_before_drive']
-
-    if phase is Phase.ROTATE_TO_HEADING:
-        if rho <= position_tolerance:
-            # already there; skip straight to the final heading
-            return _rotate(final_error, yaw_tolerance, gains['k_beta'],
-                           limits, Phase.ROTATE_TO_FINAL, Phase.DONE)
-        if abs(bearing) <= heading_gate:
-            return _drive(rho, bearing, gains, limits, position_tolerance)
-        return _rotate(bearing, heading_gate, gains['k_alpha'],
-                       limits, Phase.ROTATE_TO_HEADING, Phase.DRIVE)
-
-    if phase is Phase.DRIVE:
-        if rho <= position_tolerance:
-            return _rotate(final_error, yaw_tolerance, gains['k_beta'],
-                           limits, Phase.ROTATE_TO_FINAL, Phase.DONE)
-        if abs(bearing) > 2.0 * heading_gate:
-            return _rotate(bearing, heading_gate, gains['k_alpha'],
-                           limits, Phase.ROTATE_TO_HEADING, Phase.DRIVE)
-        return _drive(rho, bearing, gains, limits, position_tolerance)
-
-    # ROTATE_TO_FINAL
-    return _rotate(final_error, yaw_tolerance, gains['k_beta'],
-                   limits, Phase.ROTATE_TO_FINAL, Phase.DONE)
-
-
-def _finish(command: Command, limits: dict) -> Command:
-    """Clamp then deadband, in that order, so the deadband is never clipped away."""
-    command = clamp_command(command, limits['max_linear'], limits['max_angular'])
-    return apply_deadband(command, limits['min_linear'], limits['min_angular'])
-
-
-def _rotate(error, tolerance, gain, limits, stay, done) -> tuple[Command, Phase]:
-    """Turn in place towards `error`, or hand over to `done` once inside tolerance."""
-    if abs(error) <= tolerance:
-        return ZERO, done
-    return _finish(Command(0.0, gain * error), limits), stay
-
-
-def _drive(rho, bearing, gains, limits, position_tolerance) -> tuple[Command, Phase]:
-    """Drive forward, steering gently. Slows down as the target gets close."""
-    command = Command(linear=gains['k_rho'] * rho, angular=gains['k_alpha'] * bearing)
-    return _finish(command, limits), Phase.DRIVE
+# `compute_command`, `_finish`, `_rotate` and `_drive` lived here: the
+# rotate-drive-rotate law for driving to a pose. Removed with the two-leg
+# approach they served (D38) rather than left unused, because dead code with
+# passing tests behind it reads as a design that is still in force. The laws
+# that replaced it are `closing.closing_command` (servo onto the pocket centre
+# line) and `closing.straight_command` (drive a distance on odometry); both
+# finish through `clamp_command` and `apply_deadband` above.

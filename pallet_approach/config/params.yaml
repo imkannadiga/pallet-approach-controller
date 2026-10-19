@@ -437,17 +437,10 @@ approach_controller:
       min_linear: 0.05
       min_angular: 0.10
 
-    # rotate - drive - rotate, the simplest thing that works on a skid-steer.
-    gains:
-      k_rho: 0.6                # distance -> linear
-      k_alpha: 1.2              # heading-to-goal -> angular
-      k_beta: 0.4               # final-heading -> angular
-
-    tolerances:
-      position: 0.030           # m
-      yaw: 0.030                # rad, ~1.7 deg
-      # rotate in place until the heading error is under this, then drive
-      heading_before_drive: 0.100   # rad
+    # The `gains` and `tolerances` blocks lived here, for the
+    # rotate-drive-rotate pose controller. Both went with it (D38): the closing
+    # servo's gains are under `closing` below, and the straight moves have no
+    # gains at all -- they drive a distance at a speed.
 
     # ------------------------------------------------------------- closing
     # The servo that replaced the two-leg approach (D38). Two nested loops:
@@ -542,6 +535,44 @@ approach_controller:
       max_height: 1.00
       # Obstacle this close to the needed reverse distance refuses the reverse.
       clearance_margin: 0.15
+
+    # ------------------------------------------------------------ insertion
+    # The one phase where the robot drives at something it cannot fully see.
+    # The pockets leave the camera at 1.17 m, 0.58 m into the travel; the LiDAR
+    # holds the face for all of it (D13), which is what makes a measured stop
+    # possible. Angular is exactly zero throughout (D7).
+    insert:
+      # [choice] D8's slowest speed, for the phase that earned it.
+      speed: 0.05
+      # How close to the planned stop counts as reached, for both sources.
+      stop_tolerance: 0.010
+      # [choice] D18: if odometry and the LiDAR disagree by more than this at
+      # the moment the stop fires, abort rather than complete the insertion.
+      # 50 mm against a 65 mm pocket slack: a disagreement that big means one
+      # of the two is wrong, and that is not a condition to drive forward in.
+      max_disagreement: 0.05
+      # Longest insertion this will plan. 1.75 - 0.700 = 1.05 m is the real
+      # travel on the short face; more than 1.20 m means the robot is not at a
+      # standoff and the plan is being built from a bad number.
+      max_travel: 1.20
+      # [choice] Frames in a row with nothing measurable before the insertion
+      # aborts. 5 at 10 Hz is half a second, which at 0.05 m/s is 25 mm of
+      # blind travel -- a sensor hiccup, not a drive on dead reckoning. Sits
+      # with the stop rule rather than with the corridor below, because it is
+      # about how long to keep driving without a measurement, not about how to
+      # take one.
+      max_unmeasured_frames: 5
+      lidar:
+        # Corridor ahead. Narrow and low, so the nearest surface in it is the
+        # pallet face or something standing in front of the face -- and either
+        # is a reason to stop, which is why no attempt is made to tell them
+        # apart. 0.20 m is just above the 0.145 m pallet.
+        half_width: 0.30
+        min_height: 0.03
+        max_height: 0.20
+        # Returns closer than this are the robot's own structure, not the world.
+        min_x: 0.50
+        min_points: 10
 
     # Commands cross the network to the robot PC, and the base driver has NO
     # command timeout (ros2 param dump /scout), so we never let the base coast on
@@ -784,3 +815,32 @@ pallet_tracker:
       # still well inside max_offset, and beyond that the comparison is between
       # two different moments.
       max_cloud_age: 0.30             # s
+
+# ---------------------------------------------------------------------------
+# virtual_forks: the carriage this robot does not have (D43).
+# Heights are of the tine UNDERSIDE above the floor -- the same quantity as
+# forks.bottom_height, which is what the overlay draws.
+# ---------------------------------------------------------------------------
+virtual_forks:
+  ros__parameters:
+
+    publish_rate: 10.0
+    # [choice] Travel height. Clear of a 0.03 m floor-removal margin and of
+    # anything the robot would drive over in a lab, and visibly different from
+    # the insertion height so the overlay shows the lowering happen.
+    park_height: 0.150
+    # The insertion height IS forks.bottom_height (D27), repeated here only
+    # because this node reads it as its own target. test_params.py checks the
+    # two agree; two numbers for one height is how an overlay and a simulator
+    # come to disagree about where the forks are.
+    insert_height: 0.040
+    # [choice] Carriage travel for the lift, NOT how far the pallet rises. The
+    # tine top first takes up the slack to the top of the pocket -- 20 mm on
+    # the short face, 45 mm on the long -- so 70 mm of travel lifts the short
+    # face 50 mm off the floor and the long face 25 mm. Both are a real pallet
+    # lift; the simulator reports which.
+    lift_travel: 0.070
+    # [choice] Vertical speed. A real reach truck is faster; slow enough to see
+    # on the overlay is the more useful property here, and nothing waits on it
+    # except the sequence's own timeout.
+    speed: 0.05
