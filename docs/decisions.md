@@ -327,6 +327,94 @@ is what makes a mismatch between them attributable.
 (Stage 8; supersedes the reasoning in `fork_overlay.tine_corners`' original
 docstring, which argued the opposite and was wrong.)
 
+## 2026-10-19 (stage 0: arbitration and safety)
+
+**D30. `twist_mux` arbitration is configured, and our controller no longer
+publishes at the base.** `config/twist_mux.yaml`: `/cmd_vel_safety` at priority
+200, `/cmd_vel_pallet` at 100, `/cmd_vel_nav` at 10, every input with a 0.5 s
+timeout, output remapped onto `/cmd_vel`. Plus a **lock** at priority 50 on
+`/pallet_approach/nav_lock`, held at 10 Hz by the coordinator for the length of
+a run. *Why:* implements D3/D10. Three points that are decisions rather than
+transcription:
+
+- **A lock as well as priorities.** Priority only decides who wins while both
+  are publishing, and "Nav2 finished its goal" and "a pallet run started" are
+  independent events -- a half-finished Nav2 goal still has a controller that
+  believes it is driving. The lock makes "a run is in progress" explicit
+  instead of inferred from who happens to be talking.
+- **The lock expires in 0.5 s.** A lock with no timeout is held for ever once
+  published, so a coordinator that died mid-run would lock the robot out of
+  navigation until a human noticed. Expiring means a dead coordinator gives
+  control back.
+- **Input timeouts (0.5 s) are deliberately looser than the watchdog's
+  staleness limits (0.20-0.50 s, D9).** The watchdog is meant to notice first
+  and stop the robot with a reason the operator can read; the mux timeout is
+  the backstop for the watchdog itself dying.
+
+**Open on the robot:** Nav2 still publishes straight to `/cmd_vel`, which is
+the mux's output. Until its controller server is remapped to `/cmd_vel_nav`,
+Nav2 bypasses arbitration and two publishers share the base's input. That is
+survivable only because Nav2 is measured silent while idle (D10) -- a window,
+not a design. Remap before the first driving session; it is on the lab session A
+list. (Stage 0)
+
+**D31. The controller refuses to configure if nothing subscribes to its command
+topic.** This replaces `require_sole_cmd_vel_publisher`, which was dead code
+(the coordinator never declared it) encoding the superseded "shut Nav2 down for
+a run" design. *Why:* moving our output from `/cmd_vel` to `/cmd_vel_pallet`
+created a new silent failure -- with `twist_mux` not running, every command goes
+nowhere and the whole stack reports that it is driving while the robot sits
+still. That is the fifth instance of this project's recurring bug shape: a
+reasonable default, chosen automatically, never reported. The fix is the same as
+the other four: say what was chosen, or refuse. The launch file also starts the
+mux by default, so the normal way of running the stack cannot produce it.
+(Stage 0)
+
+**D32. A watchdog node, independent of the coordinator, owns the stop.** New
+node `watchdog`: it measures the age and rate of the camera, the perception
+estimate, odometry, the LiDAR and tf; publishes `/health` at 2 Hz and
+`/diagnostics`; and, while a run is in progress, publishes a zero command on
+the mux's highest-priority input the moment a required source goes outside its
+limits. *Why:* the coordinator aborting a run is the normal path and it depends
+on the coordinator being alive and correct. This node depends on neither, so a
+coordinator that has wedged still ends up with a stationary robot. The two
+mechanisms overlap on purpose. Four choices inside it:
+
+- **It never subscribes to depth.** Camera liveness comes from
+  `depth/camera_info` -- same publisher, same callback, same rate, a few dozen
+  bytes against 3.7 MB a frame. The network rule (CLAUDE.md item 7) then holds
+  by construction wherever the node runs.
+- **The LiDAR subscription is BEST_EFFORT.** `/ouster/points` publishes
+  BEST_EFFORT and a RELIABLE subscriber receives nothing at all from it
+  (measured 2026-10-15). A watchdog that silently saw no LiDAR would latch a
+  stop on every run.
+- **The stop latches for the rest of the run.** A sensor that flickers would
+  otherwise produce a stutter of stop and go, which is worse than either. It
+  releases when the run ends, and the reason reaches the operator on `/health`.
+- **What is required changes with the phase.** Perception is a managed
+  lifecycle node and publishes nothing between runs, so requiring its estimate
+  always would make the stack permanently unhealthy and D12's goal-time check
+  would refuse every goal. The estimate is required only while a run is in
+  progress; the sensors always. `/health` carries a `required[]` array so which
+  answer is being given is visible rather than implied.
+
+Two measurement rules inside `health.py` that are worth stating because they
+are the bugs this project keeps producing: **a source that has never published
+has no age** (`None`, not 0.0, which passes every staleness limit ever written),
+and **a rate is not measurable until the window holds enough history** (`None`,
+not 0.0, which would trip the rate floor on every run inside the first second).
+There is also a **future-stamp check**: a negative age is reported as clock skew
+rather than as freshness, because the 24.5 % fast camera clock measured on
+2026-10-15 would otherwise have read as perfectly fresh tf. (Stage 0)
+
+**D33. Rate floors come from what the pipeline consumes, not from what the
+sensor produces.** `camera_info` 10 Hz (perception looks at 5 frames a second,
+D24), `estimate` 2.5 Hz, `odom` 20 Hz, `lidar` 5 Hz -- each roughly half of
+what the consumer needs rather than half of the nominal sensor rate. *Why:*
+depth arrives at ~37 Hz and perception uses 5 of them, so a camera at 12 Hz
+costs the pipeline nothing and a floor set near the nominal rate would abort
+runs over a hiccup that does not matter. (Stage 0)
+
 ## Pending (to be decided at the start of each stage)
 
 See the stage lists in `docs/ROADMAP.md`. Stage 5a is closed (D15–D18); the

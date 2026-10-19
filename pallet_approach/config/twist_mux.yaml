@@ -1,0 +1,67 @@
+# twist_mux: exactly one source drives the base.
+#
+# D3 and D10. Nav2 brings the robot to the pallet and takes over again
+# afterwards, so "refuse to run if anything else publishes /cmd_vel" -- which
+# is what this stack did until 2026-10-19 -- is no longer the right design.
+# Arbitration replaces it.
+#
+#   /cmd_vel_safety  (200)  watchdog zeros. Outranks everything, including us.
+#   /cmd_vel_pallet  (100)  our approach controller.
+#   /cmd_vel_nav     ( 10)  Nav2.
+#        |
+#   twist_mux  --->  /cmd_vel  --->  scout base driver (robot PC)
+#
+# WHAT HAS TO CHANGE ON THE ROBOT: Nav2 currently publishes straight to
+# /cmd_vel, which is also this mux's output. Until its controller server is
+# remapped to /cmd_vel_nav, Nav2 bypasses arbitration entirely and two
+# publishers share the base's input. That is survivable only because Nav2 is
+# measured silent while it has no goal (D10) -- it is not a design, it is a
+# window. Remap it before the first driving session. Checked in lab session A.
+#
+# Every input has a timeout, so a publisher that crashes mid-command stops
+# driving the robot instead of leaving its last command standing. The base
+# itself has no command timeout at all (`ros2 param dump /scout`), so this is
+# the only thing between a dead node and a robot that keeps going.
+#
+# 0.5 s against a 20 Hz command rate is ten missed commands. Deliberately
+# looser than the watchdog's staleness limits (D9: 0.20-0.50 s): the watchdog
+# is meant to notice first and stop the robot deliberately, with a reason that
+# reaches the operator. The mux timeout is the backstop for the watchdog itself
+# dying.
+twist_mux:
+  ros__parameters:
+
+    topics:
+      safety:
+        topic: /cmd_vel_safety
+        timeout: 0.5
+        priority: 200
+      pallet:
+        topic: /cmd_vel_pallet
+        timeout: 0.5
+        priority: 100
+      navigation:
+        topic: /cmd_vel_nav
+        timeout: 0.5
+        priority: 10
+
+    # A lock blocks every TOPIC whose priority is at or below the lock's own,
+    # for as long as the lock keeps publishing true. The coordinator holds this
+    # one for the length of a run at 10 Hz, which takes Nav2 (10) out of the
+    # picture without touching the pallet controller (100) or the safety input
+    # (200).
+    #
+    # Why a lock as well as a priority: priority only decides who wins while
+    # BOTH are publishing. Nav2 finishing a goal and our run starting are
+    # independent events, and a half-finished Nav2 goal still has a controller
+    # that believes it is driving. The lock makes "a pallet run is in progress"
+    # explicit rather than inferred from who happens to be talking.
+    #
+    # The 0.5 s timeout is what makes this fail safe: if the coordinator dies
+    # mid-run the lock expires and Nav2 can drive again, rather than the robot
+    # being locked out until someone notices.
+    locks:
+      pallet_run:
+        topic: /pallet_approach/nav_lock
+        timeout: 0.5
+        priority: 50

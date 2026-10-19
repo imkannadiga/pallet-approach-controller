@@ -101,7 +101,29 @@
       left_image: /zed2/zed_node/rgb/color/rect/image
       left_camera_info: /zed2/zed_node/rgb/color/rect/camera_info
       odom: /odom
-      cmd_vel: /cmd_vel                       # geometry_msgs/Twist, NOT stamped
+      lidar: /ouster/points                   # BEST_EFFORT, see the note above
+
+      # Velocity commands, all geometry_msgs/Twist and NOT stamped.
+      #
+      # Arbitration (D3, D10, D30): nothing in this stack publishes straight at
+      # the base any more. Our controller drives its own input of twist_mux,
+      # the watchdog drives a higher-priority one, and twist_mux publishes the
+      # winner on cmd_vel_base, which is what the scout driver subscribes to.
+      # Priorities and timeouts live in config/twist_mux.yaml.
+      #
+      # Consequence worth knowing before a lab session: with twist_mux not
+      # running, commands go nowhere and the robot never moves. The controller
+      # refuses to configure in that case rather than looking busy and sitting
+      # still (D31).
+      cmd_vel_pallet: /cmd_vel_pallet          # our controller -> mux
+      cmd_vel_safety: /cmd_vel_safety          # the watchdog's stop -> mux
+      cmd_vel_base: /cmd_vel                   # mux -> the base
+      # Held true at 10 Hz for the length of a run. twist_mux blocks every
+      # input at or below priority 50 while it is held, which is Nav2 and
+      # nothing else. It expires 0.5 s after the coordinator stops publishing
+      # it, so a dead coordinator gives navigation back rather than locking the
+      # robot out.
+      nav_lock: /pallet_approach/nav_lock
 
     # The real pallet, tape-measured 2026-10-14 (D4, D19). NOT EPAL nominals --
     # the two disagree in ways that matter, and the measurement wins.
@@ -483,9 +505,11 @@ coordinator:
       max_position_spread: 0.030  # m
       max_yaw_spread: 0.035       # rad, ~2 deg
 
-    # Startup safety check: refuse to activate if anyone else publishes cmd_vel.
-    # Measured 2026-10-13: publisher count 0, one subscriber (`scout`).
-    require_sole_cmd_vel_publisher: true
+    # The old `require_sole_cmd_vel_publisher: true` lived here. It was
+    # already dead -- the coordinator never declared it -- and it encoded the
+    # superseded design where Nav2 had to be shut down for a run (D3). The
+    # replacement is arbitration (config/twist_mux.yaml) plus the controller's
+    # own refusal to configure with nothing listening (D31).
 
 # ---------------------------------------------------------------------------
 # fork_overlay: draws the virtual forks and detected pockets on the left image.
@@ -509,3 +533,54 @@ fork_overlay:
       approaching: [0, 200, 255]
       go: [0, 200, 0]
       no_go: [0, 0, 220]
+
+# ---------------------------------------------------------------------------
+# watchdog: measures whether the stack is healthy, and stops the robot when it
+# is not. Independent of the coordinator on purpose -- a coordinator that has
+# wedged still ends up with a stationary robot (D9, D12, D32).
+# ---------------------------------------------------------------------------
+watchdog:
+  ros__parameters:
+
+    publish_rate: 2.0           # Hz, /health and /diagnostics
+    # Matches approach_controller.command_rate. The safety stop has to arrive
+    # at least as often as the command it is overriding, or the mux alternates
+    # between them.
+    command_rate: 20.0
+    # Window the per-source rate is measured over. 2 s holds ~10 samples of the
+    # slowest source we check (the LiDAR at 10 Hz), which is enough to tell
+    # 5 Hz from 10 Hz.
+    window: 2.0
+
+    # [choice] D9's staleness limits, each about five missed messages at the
+    # measured rate. At the 0.20 m/s lab limit the robot travels under 60 mm
+    # before one of these fires.
+    #
+    # The rate floors are a second, independent check, and they are derived
+    # from what the pipeline CONSUMES rather than from what the sensor
+    # nominally produces: depth arrives at ~37 Hz and perception looks at 5 of
+    # them (D24), so a camera at 12 Hz is fine and one at 2 Hz is not. Setting
+    # these at the nominal rate would abort runs over a sensor hiccup that
+    # costs the pipeline nothing.
+    max_age:
+      # The camera's liveness comes from depth/camera_info, not from the depth
+      # image: same publisher, same callback, same rate, a few dozen bytes
+      # instead of 3.7 MB. Nothing in this node ever subscribes to an image.
+      camera_info: 0.30         # ~37 Hz nominal
+      estimate: 0.50            # perception's own 5 Hz target (D24)
+      odom: 0.20                # 50 Hz nominal
+      lidar: 0.50               # 10 Hz nominal
+      # The tf chain's camera link is republished at 58 Hz by the ZED SDK's
+      # stereo self-calibration, on the CAMERA's clock. So this is the check
+      # that catches clock skew between the Jetson and the camera -- the
+      # failure that cost an evening on 2026-10-15 and the reason
+      # tools/clock_audit.py exists. It is measured but NOT enforced while
+      # frames.tf_fallback_to_latest is true, and the node says so in a warning
+      # at startup.
+      tf: 0.30
+
+    min_rate:
+      camera_info: 10.0         # twice what perception consumes
+      estimate: 2.5             # half the 5 Hz target
+      odom: 20.0
+      lidar: 5.0

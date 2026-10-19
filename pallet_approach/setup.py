@@ -26,6 +26,7 @@ setup(
             'pallet_perception = pallet_approach.nodes.perception_node:main',
             'approach_controller = pallet_approach.nodes.controller_node:main',
             'coordinator = pallet_approach.nodes.coordinator_node:main',
+            'watchdog = pallet_approach.nodes.watchdog_node:main',
             'fork_overlay = pallet_approach.nodes.fork_overlay_node:main',
         ],
     },

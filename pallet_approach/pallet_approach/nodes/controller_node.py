@@ -13,9 +13,17 @@ coordinator being correct:
    explicit zeros.
 3. **Stale target means stop.** If the coordinator stops refreshing the target,
    the robot stops, rather than driving to a target that may no longer exist.
-4. **Sole publisher.** At configure it counts the other publishers on /cmd_vel
-   and refuses to activate if there are any. Measured 2026-10-13: zero, with
-   `scout` as the only subscriber -- no teleop, no joystick, no Nav2.
+4. **Somebody is listening.** At configure it checks that something subscribes
+   to its command topic, and refuses otherwise.
+
+   This replaces a sole-publisher refusal that belonged to the superseded
+   design where Nav2 was shut down for a run (D3). Arbitration took over
+   (config/twist_mux.yaml, D30), and that moved our output off /cmd_vel and
+   onto /cmd_vel_pallet -- which means that with twist_mux not running, every
+   command this node sends goes nowhere and the robot sits still while the
+   whole stack reports that it is driving. That is the exact shape of failure
+   this project keeps meeting: a reasonable default, chosen silently, never
+   reported. So it is reported, and it refuses (D31).
 """
 
 from __future__ import annotations
@@ -55,7 +63,7 @@ class ControllerNode(LifecycleNode):
         self._last_tick = None
 
     def _declare(self):
-        self.declare_parameter('topics.cmd_vel', '/cmd_vel')
+        self.declare_parameter('topics.cmd_vel_pallet', '/cmd_vel_pallet')
         self.declare_parameter('topics.odom', '/odom')
         for name, default in (
             ('limits.max_linear', 0.20), ('limits.max_angular', 0.30),
@@ -78,29 +86,53 @@ class ControllerNode(LifecycleNode):
     # ----------------------------------------------------------- lifecycle
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
-        cmd_topic = self.get_parameter('topics.cmd_vel').value
+        cmd_topic = self.get_parameter('topics.cmd_vel_pallet').value
         self._cmd_pub = self.create_lifecycle_publisher(Twist, cmd_topic, RELIABLE)
         self._arrived_pub = self.create_lifecycle_publisher(Bool, '~/arrived', 10)
         self.create_subscription(Odometry, self.get_parameter('topics.odom').value,
                                  self._on_odom, RELIABLE)
         self.create_subscription(PoseStamped, '~/target', self._on_target, RELIABLE)
 
+        if not self._wait_for_a_subscriber(cmd_topic):
+            self.get_logger().error(
+                f'nothing subscribes to {cmd_topic}, so every command this node '
+                f'sends would be discarded and the robot would never move. '
+                f'twist_mux is what should be listening -- start it with the '
+                f'stack (launch/pallet_approach.launch.py brings it up) or '
+                f'check config/twist_mux.yaml names this topic. Refusing to '
+                f'configure.')
+            return TransitionCallbackReturn.FAILURE
+
         others = self.count_publishers(cmd_topic) - 1
         if others > 0:
-            self.get_logger().error(
-                f'{others} other node(s) publish {cmd_topic}. Refusing to '
-                f'configure: the approach controller must be the only publisher. '
-                f'Stop Nav2, teleop or the joystick first.')
-            return TransitionCallbackReturn.FAILURE
+            self.get_logger().warning(
+                f'{others} other node(s) also publish {cmd_topic}, which is '
+                f'meant to be this node\'s private input to twist_mux. '
+                f'Arbitration cannot separate two publishers on one input.')
 
         self._limiter = RateLimiter(
             self.get_parameter('limits.max_linear_accel').value,
             self.get_parameter('limits.max_angular_accel').value)
         self.get_logger().info(
-            f'configured; sole publisher on {cmd_topic}; '
+            f'configured; commands go to {cmd_topic} '
+            f'({self.count_subscribers(cmd_topic)} subscriber(s)); '
             f'max {self.get_parameter("limits.max_linear").value} m/s, '
             f'{self.get_parameter("limits.max_angular").value} rad/s')
         return TransitionCallbackReturn.SUCCESS
+
+    def _wait_for_a_subscriber(self, topic: str, timeout: float = 2.0) -> bool:
+        """Is anything listening on `topic`?
+
+        With a short wait, because discovery is not instant and the mux may
+        have come up moments before us. Two seconds, then an answer either way
+        -- never an assumption.
+        """
+        deadline = self._now() + timeout
+        while self._now() < deadline:
+            if self.count_subscribers(topic) > 0:
+                return True
+            rclpy.spin_once(self, timeout_sec=0.1)
+        return self.count_subscribers(topic) > 0
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:
         self._phase = Phase.ROTATE_TO_HEADING

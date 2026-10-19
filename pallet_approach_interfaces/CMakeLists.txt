@@ -8,6 +8,8 @@ find_package(geometry_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Pocket.msg"
   "msg/PalletEstimate.msg"
+  "msg/Health.msg"
+  "msg/ForkState.msg"
   "action/PalletTask.action"
   DEPENDENCIES geometry_msgs std_msgs
 )
