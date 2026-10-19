@@ -1,7 +1,13 @@
 # One pallet approach run, triggered manually.
 #
-#   ros2 action send_goal /pallet_task \
-#     pallet_approach_interfaces/action/PalletTask "{mode: pallet_orientation}" --feedback
+# NO BACKSLASHES ANYWHERE IN THIS FILE, not even in a comment. rosidl_adapter
+# copies these comments into the generated IDL and the result is decoded with
+# Python's 'unicodeescape' codec, so a shell line-continuation at the end of a
+# comment line is an invalid escape and the whole package fails to build --
+# minutes into a container build, on the robot. test_interfaces.py checks this.
+#
+# To run one (one line, or wrap it in your shell's history):
+#   ros2 action send_goal /pallet_task pallet_approach_interfaces/action/PalletTask "{mode: pallet_orientation}" --feedback
 
 # ---------------- Goal ----------------
 string mode                           # "pallet_orientation" (the only mode for now)
