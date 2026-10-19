@@ -463,6 +463,12 @@ coordinator:
     # GO/NO-GO thresholds. Conservative by default: a false GO is far worse
     # than a false NO-GO, so every limit here errs towards NO-GO.
     go_nogo:
+      # [derived] the face fit's own support. face.min_points is what
+      # perception needs to accept a fit at all; this is what GO/NO-GO needs
+      # to trust one. Same number for now, raised here rather than there if
+      # the evaluation shows thin fits passing.
+      min_face_inliers: 60
+
       max_yaw_error: 0.087        # rad, 5 deg at the standoff
       max_lateral_offset: 0.050   # m from the pocket centre line
       pocket_width_tolerance: 0.040

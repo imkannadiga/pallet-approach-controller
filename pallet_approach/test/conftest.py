@@ -12,15 +12,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 import synthetic as S  # noqa: E402
 
 
-def pytest_configure(config):
-    config.addinivalue_line(
-        'markers',
-        'unimplemented: covers a function Athreya still has to write. These fail '
-        'with NotImplementedError until then -- that is the point. For a green '
-        'baseline run: pytest -m "not unimplemented"',
-    )
-
-
 @pytest.fixture
 def params():
     """Exactly what `perception_node._params()` hands `estimate_pallet`.

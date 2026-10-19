@@ -1,8 +1,7 @@
-"""Tests for go_nogo.py -- the safety rules Athreya writes.
+"""The safety rules: what the robot refuses to do, and why.
 
-These fail with NotImplementedError until the rules are written.
-
-Read the test names as the specification. Note how many of them assert a
+Read the test names as the specification. They were written before the rules
+were, and the rules were written to satisfy them. Note how many of them assert a
 NO-GO: that asymmetry is deliberate and it is the thing to defend in an
 interview. In particular `test_evaluate_refuses_when_data_is_missing` and
 `test_no_false_go_in_unsafe_scenarios` are the tests that stand behind the
@@ -17,8 +16,6 @@ import synthetic as S
 
 from pallet_approach import go_nogo
 from pallet_approach.model import PalletEstimate, Plane, Pocket, Pose2D
-
-pytestmark = pytest.mark.unimplemented
 
 
 def make_estimate(distance=2.0, lateral=0.0, yaw=0.0, pocket_width=S.POCKET_WIDTH,
