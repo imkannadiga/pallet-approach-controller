@@ -30,8 +30,15 @@ NODE_NAMES = {
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")
-# names declared from a loop over (name, default) tuples
-TUPLE_NAME = re.compile(r"""^\s*\(\s*['"]([\w.]+)['"]\s*,""", re.MULTILINE)
+# names declared from a loop over (name, default) tuples. NOT anchored to the
+# start of a line: an earlier version was, so `('a', 1), ('b', 2)` on one line
+# declared two parameters and this file checked one. Three parameters reached
+# the robot undeclared that way and the node died on the first frame with
+# ParameterNotDeclaredException('seed').
+TUPLE_NAME = re.compile(r"""\(\s*['"]([\w.]+)['"]\s*,""")
+# every way a node reads a parameter back
+READ = re.compile(
+    r"""get_parameter\(\s*['"]([\w.]+)['"]|(?<![\w.])get\(\s*['"]([\w.]+)['"]""")
 
 
 def flatten(block, prefix=''):
@@ -69,6 +76,21 @@ def declared():
     return out
 
 
+@pytest.fixture(scope='module')
+def read_back():
+    """{node name: set of parameter names the node reads}.
+
+    Only literal names. A name built from an f-string -- `pallet.sides.{side}`
+    -- cannot be checked statically and is skipped; those are covered by
+    test_every_declared_parameter_is_in_the_yaml from the other direction.
+    """
+    out = {}
+    for filename, node_name in NODE_NAMES.items():
+        source = (NODES / filename).read_text()
+        out[node_name] = {a or b for a, b in READ.findall(source)}
+    return out
+
+
 def available_to(node_name, params_file):
     """Every parameter the YAML offers this node: its own block plus `/**`."""
     flat = flatten(params_file.get('/**', {}).get('ros__parameters', {}))
@@ -78,6 +100,21 @@ def available_to(node_name, params_file):
 
 def test_params_file_parses(params_file):
     assert '/**' in params_file
+
+
+@pytest.mark.parametrize('node_name', sorted(NODE_NAMES.values()))
+def test_every_parameter_read_is_declared(node_name, declared, read_back):
+    """The other direction, and the one that kills the node.
+
+    Reading an undeclared parameter raises ParameterNotDeclaredException. In a
+    subscription callback that means every frame fails, so the node looks alive
+    -- it publishes diagnostics, it counts frames -- while doing nothing at all.
+    Measured 2026-10-15 on the robot: `seed`, `cluster.size_tolerance` and
+    `face.max_facing_angle` were all read and none declared.
+    """
+    undeclared = sorted(read_back[node_name] - declared[node_name])
+    assert not undeclared, (
+        f'{node_name} reads parameters it never declares: {undeclared}')
 
 
 def test_every_yaml_block_addresses_a_real_node(params_file):
@@ -137,82 +174,220 @@ def test_perception_works_at_ground_level(params_file):
         "the overlay's fallback floor must match perception's expected floor")
 
 
-def test_standoff_keeps_the_whole_pocket_opening_in_frame(params_file):
-    """Derived in docs/SYSTEM.md. Seeing the pocket centre is not enough: the
-    rules measure the opening height, so the bottom lip must be in frame."""
+# Camera geometry, measured 2026-10-14 and used by several tests below.
+CAMERA_AHEAD = 0.390                  # m ahead of base_footprint
+CAMERA_HEIGHT = 0.398                 # m above the floor (tape)
+# The bottom row of the image is at atan((719 - cy) / fy) below the optical
+# axis, plus the 0.698 deg the camera is really pitched down by. NOT the
+# symmetric half-angle atan(360/fy): cy is 369.75, so using 360 describes the
+# TOP edge and makes the camera look 7 mm more capable than it is.
+CAMERA_DOWN_TAN = math.tan(math.radians(
+    math.degrees(math.atan((719 - 369.74566650390625) / 949.6732177734375)) + 0.698))
+BUMPER_X = 0.4625                     # front face of base_link's collision box
+
+
+def sides_of(params_file):
+    return params_file['/**']['ros__parameters']['pallet']['sides']
+
+
+def in_frame_from(height_above_floor):
+    """Closest face distance at which a feature this high is still in frame."""
+    return CAMERA_AHEAD + (CAMERA_HEIGHT - height_above_floor) / CAMERA_DOWN_TAN
+
+
+def test_standoff_clears_the_virtual_fork_tips(params_file):
+    """The tines must start OUTSIDE the pallet, or the run begins with the
+    forks already through the face.
+
+    This is what sets the standoff (D16). It replaces a test that required the
+    pocket opening's bottom lip to stay in frame -- an EPAL feature the
+    measured pallet does not have on its pocket face (D4).
+    """
+    shared = flatten(params_file['/**']['ros__parameters'])
     standoff = params_file['coordinator']['ros__parameters']['approach']['standoff_distance']
+    reach = shared['forks.carriage_x'] + shared['forks.tine_length']
+    assert standoff > reach, (
+        f'standoff {standoff} m is inside the fork tip reach {reach:.4f} m: the '
+        f'virtual tines would already be in the pallet before insertion starts')
+    assert standoff - reach >= 0.05, (
+        f'only {(standoff - reach) * 1000:.0f} mm between the tips and the face '
+        f'at the standoff')
+
+
+def test_standoff_keeps_the_pocket_band_in_frame(params_file):
+    """Perception has to be able to MEASURE the pockets at the standoff, which
+    is a stricter requirement than seeing the top edge of the opening.
+
+    Measured on pallet_s_071 (face at 1.172 m): the face was found to +10 mm
+    and zero pockets, because the detection band sits lower than the opening's
+    top edge and had already left the frame.
+    """
+    standoff = params_file['coordinator']['ros__parameters']['approach']['standoff_distance']
+    for name, side in sides_of(params_file).items():
+        band_bottom = side['band_center'] - side['band_half_height']
+        needed = in_frame_from(band_bottom)
+        assert standoff >= needed, (
+            f'at {standoff} m the {name} side band bottom ({band_bottom:.3f} m '
+            f'above the floor) is out of frame; needs {needed:.3f} m')
+
+
+def test_one_fork_setting_fits_both_faces(params_file):
+    """D27: the forks keep ONE spacing and height whichever face is entered.
+
+    That is only allowed because a single setting genuinely fits both, and the
+    windows are narrow enough that changing any pocket dimension could close
+    them. So this works out the window from the measured geometry rather than
+    checking the configured numbers against themselves -- if the long face's
+    bottom board grew to 45 mm, the height window would vanish and this fails.
+    """
     shared = flatten(params_file['/**']['ros__parameters'])
+    width = shared['forks.tine_width']
+    thickness = shared['forks.tine_thickness']
+    spacing = shared['forks.spacing']
+    underside = shared['forks.bottom_height']
 
-    camera_ahead = 0.390
-    camera_height_above_floor = 0.398        # tape-measured 2026-10-14
-    tan_half_fov = 360.0 / 949.6732177734375
-    # the bottom lip of the opening: deck boards split what is left of the
-    # pallet height above and below the pocket
-    pocket_bottom = (shared['pallet.pallet_height']
-                     - shared['pallet.pocket_nominal_height']) / 2
+    spacing_lo, spacing_hi = 0.0, float('inf')
+    height_lo, height_hi = 0.0, float('inf')
+    for name, side in sides_of(params_file).items():
+        inner = side['pocket_spacing'] / 2 - side['pocket_width'] / 2
+        outer = side['pocket_spacing'] / 2 + side['pocket_width'] / 2
+        spacing_lo = max(spacing_lo, 2 * (inner + width / 2))
+        spacing_hi = min(spacing_hi, 2 * (outer - width / 2))
+        height_lo = max(height_lo, side['opening_bottom'])
+        height_hi = min(height_hi, side['opening_top'] - thickness)
 
-    lowest_visible = camera_height_above_floor - (standoff - camera_ahead) * tan_half_fov
-    margin = pocket_bottom - lowest_visible
-    assert margin >= 0.015, (
-        f'standoff {standoff} m leaves only {margin * 1000:.0f} mm of margin on '
-        f'the pocket bottom lip; needs at least 15 mm')
+    assert spacing_lo <= spacing_hi, (
+        f'no single fork spacing fits both faces: short needs one window, long '
+        f'another, and they do not overlap')
+    assert height_lo <= height_hi, 'no single fork height fits both openings'
+    assert spacing_lo <= spacing <= spacing_hi, (
+        f'forks.spacing {spacing} is outside the {spacing_lo:.3f}-{spacing_hi:.3f} m '
+        f'window where one setting fits both faces')
+    assert height_lo <= underside <= height_hi, (
+        f'forks.bottom_height {underside} is outside the '
+        f'{height_lo:.3f}-{height_hi:.3f} m window')
 
 
-def test_fork_spacing_matches_the_pocket_spacing(params_file):
-    """The overlay is only a calibration check if the forks are where a real
-    fork carriage would be set."""
+def test_the_forks_are_centred_on_the_face_we_normally_enter(params_file):
+    """The short face is the default entry (pallet.entry_face), so the one
+    spacing we keep should centre on its pockets. On the long face the tines
+    then sit inboard, which is fine and is what the clearance test above
+    checks -- but being off-centre on the PRIMARY face would be a choice worth
+    arguing for, and nobody has."""
     shared = flatten(params_file['/**']['ros__parameters'])
-    assert shared['forks.spacing'] == pytest.approx(shared['pallet.pocket_nominal_spacing'])
+    expected = params_file['/**']['ros__parameters']['pallet']['entry_face']
+    primary = sides_of(params_file)[expected]
+    assert shared['forks.spacing'] == pytest.approx(primary['pocket_spacing']), (
+        f'forks.spacing {shared["forks.spacing"]} does not match the '
+        f'{expected} face\'s pocket spacing {primary["pocket_spacing"]}')
 
 
-def test_fork_fits_through_the_pocket(params_file):
+def test_fork_clearance_is_never_marginal(params_file):
+    """Worst-case clearance anywhere, so a tightening elsewhere shows up here
+    as a number rather than as forks catching on a board."""
     shared = flatten(params_file['/**']['ros__parameters'])
-    assert shared['forks.tine_width'] < shared['pallet.pocket_nominal_width']
-    assert shared['forks.tine_thickness'] < shared['pallet.pocket_nominal_height']
+    width, thickness = shared['forks.tine_width'], shared['forks.tine_thickness']
+    spacing, underside = shared['forks.spacing'], shared['forks.bottom_height']
+    worst = float('inf')
+    for name, side in sides_of(params_file).items():
+        inner = side['pocket_spacing'] / 2 - side['pocket_width'] / 2
+        outer = side['pocket_spacing'] / 2 + side['pocket_width'] / 2
+        worst = min(worst,
+                    (spacing / 2 - width / 2) - inner,
+                    outer - (spacing / 2 + width / 2),
+                    underside - side['opening_bottom'],
+                    side['opening_top'] - (underside + thickness))
+    assert worst >= 0.015, (
+        f'worst fork clearance across both faces is {worst * 1000:.0f} mm; '
+        f'below 15 mm the pallet\'s own build tolerance eats it')
+
+
+def test_insertion_stop_keeps_the_tips_inside_the_pallet(params_file):
+    """The binding constraint on the long side, and the reason its stop is
+    further out than the short side's (D21): that face is only 0.795 m deep, so
+    the short side's 0.700 m stop would drive the tips out of the back."""
+    shared = flatten(params_file['/**']['ros__parameters'])
+    reach = shared['forks.carriage_x'] + shared['forks.tine_length']
+    for name, side in sides_of(params_file).items():
+        stop = side['insertion_stop_face_x']
+        depth = reach - stop
+        assert depth < side['depth'], (
+            f'{name}: stopping at {stop} m inserts {depth:.4f} m into a '
+            f'{side["depth"]} m deep face -- the tips come out of the back')
+        assert side['depth'] - depth >= 0.10, (
+            f'{name}: tips only {(side["depth"] - depth) * 1000:.0f} mm short '
+            f'of the far edge')
+
+
+def test_insertion_stop_keeps_the_robot_off_the_pallet(params_file):
+    """The forks are imaginary; the robot is not. The stop must also sit where
+    the LiDAR can still see the face -- it loses it below a 0.204 m bumper gap
+    (D13), measured by tools/lidar_coverage.py."""
+    for name, side in sides_of(params_file).items():
+        gap = side['insertion_stop_face_x'] - BUMPER_X
+        assert gap >= 0.204, (
+            f'{name}: a {gap:.4f} m bumper gap is inside the LiDAR blind cone, '
+            f'so nothing can see the face when the stop fires')
 
 
 def test_pallet_geometry_is_self_consistent(params_file):
-    """The measured pallet must hang together as a pallet.
+    """Both faces must hang together as faces of one pallet.
 
-    These are tape measurements of the real pallet, not EPAL nominals, so they
-    will not be round numbers -- but the pocket still has to fit inside the
-    pallet with deck boards above and below it, and the two pockets still have
-    to fit across the face with blocks between and either side of them.
+    These are tape measurements, not EPAL nominals, so they will not be round
+    numbers -- but each pocket still has to fit inside its opening, and the two
+    pockets still have to fit across the face with material between and either
+    side of them.
     """
-    pallet = flatten(params_file['/**']['ros__parameters'])
-
-    height = pallet['pallet.pallet_height']
-    opening = pallet['pallet.pocket_nominal_height']
-    boards = height - opening
-    assert boards > 0.02, 'the pocket opening leaves no deck boards'
-    assert opening < height, 'the pocket cannot be taller than the pallet'
-
-    width = pallet['pallet.pallet_width']
-    pocket = pallet['pallet.pocket_nominal_width']
-    spacing = pallet['pallet.pocket_nominal_spacing']
-    # two pockets, centred `spacing` apart, must sit inside the face with
-    # material between them and at both ends
-    assert spacing > pocket, 'the two pockets would overlap'
-    assert spacing + pocket < width, 'the pockets run off the ends of the pallet'
-
-    # the band find_pockets samples must sit inside the opening, clear of the
-    # floor-removal margin below and the deck board above
+    shared = params_file['/**']['ros__parameters']['pallet']
+    height = shared['pallet_height']
     margin = flatten(params_file['pallet_perception']['ros__parameters'])['floor.removal_margin']
-    band_low = pallet['pallet.pocket_center_height'] - pallet['pallet.pocket_band_half_height']
-    band_high = pallet['pallet.pocket_center_height'] + pallet['pallet.pocket_band_half_height']
-    assert band_low > margin, (
-        f'the pocket band starts at {band_low:.3f} m, inside the {margin} m of '
-        f'floor that remove_floor deletes')
-    assert band_high < height - boards / 2, (
-        'the pocket band reaches up into the top deck board')
+
+    for name, side in sides_of(params_file).items():
+        opening = side['opening_top'] - side['opening_bottom']
+        assert opening > 0, f'{name}: the opening has no height'
+        assert side['opening_top'] < height, (
+            f'{name}: the opening reaches above the pallet')
+
+        assert side['pocket_spacing'] > side['pocket_width'], (
+            f'{name}: the two pockets would overlap')
+        assert side['pocket_spacing'] + side['pocket_width'] < side['face_width'], (
+            f'{name}: the pockets run off the ends of the face')
+
+        assert side['min_gap_width'] < side['pocket_width'] < side['max_gap_width'], (
+            f'{name}: a nominal {side["pocket_width"]} m pocket is outside its '
+            f'own accepted gap range '
+            f'{side["min_gap_width"]}-{side["max_gap_width"]} m')
+
+        band_low = side['band_center'] - side['band_half_height']
+        band_high = side['band_center'] + side['band_half_height']
+        assert band_low > margin, (
+            f'{name}: the band starts at {band_low:.3f} m, inside the {margin} m '
+            f'of floor that remove_floor deletes')
+        assert band_high < side['opening_top'], (
+            f'{name}: the band reaches up into the board above the opening')
 
 
-def test_the_slab_is_wider_than_the_face_is_uneven(params_file):
-    """Measured on the real pallet: its front surface spans 26 mm from the deck
-    boards to the lower blocks, so a slab narrower than that samples only part
-    of the face and starves the gap analysis."""
-    pallet = flatten(params_file['/**']['ros__parameters'])
-    assert pallet['pallet.pocket_slab_half_depth'] * 2 > 0.026
+def test_the_two_faces_are_far_enough_apart_to_tell_apart(params_file):
+    """D22. Classification is only safe while each side's tolerance window
+    excludes the other side's nominal."""
+    pallet = params_file['/**']['ros__parameters']['pallet']
+    classify = pallet['classify']
+    short, long_ = pallet['sides']['short'], pallet['sides']['long']
+
+    separation = abs(long_['pocket_spacing'] - short['pocket_spacing'])
+    assert classify['spacing_tolerance'] < separation / 2, (
+        f'a {classify["spacing_tolerance"]} m window around each of '
+        f'{short["pocket_spacing"]} and {long_["pocket_spacing"]} m overlaps, so '
+        f'one measurement could match both sides')
+
+    # the shared probe band must lie inside BOTH openings, or the pass that
+    # decides the side cannot see one of them
+    low = classify['band_center'] - classify['band_half_height']
+    high = classify['band_center'] + classify['band_half_height']
+    for name, side in sides_of(params_file).items():
+        assert side['opening_bottom'] <= low and high <= side['opening_top'], (
+            f'the classification band {low:.3f}-{high:.3f} m is not inside the '
+            f'{name} opening {side["opening_bottom"]}-{side["opening_top"]} m')
 
 
 def test_face_min_points_admits_a_real_face(params_file):
@@ -224,10 +399,20 @@ def test_face_min_points_admits_a_real_face(params_file):
     across the full width would reject every real estimate -- 300 did.
     """
     block = flatten(params_file['pallet_perception']['ros__parameters'])
-    shared = flatten(params_file['/**']['ros__parameters'])
-    one_row = shared['pallet.pallet_width'] / block['voxel_size']
+    narrowest = min(side['face_width'] for side in sides_of(params_file).values())
+    one_row = narrowest / block['voxel_size']
     assert block['face.min_points'] < 139, (
         f"face.min_points {block['face.min_points']} exceeds the 139 inliers "
         f"a real pallet face produced at 2 m")
     assert block['face.min_points'] >= one_row, (
         'below one voxel row across the face, almost anything vertical passes')
+
+
+def test_the_slab_is_wider_than_the_face_is_uneven(params_file):
+    """Measured on the real pallet: its front surface spans 26 mm from the deck
+    boards to the lower blocks, so a slab narrower than that samples only part
+    of the face and starves the gap analysis."""
+    pallet = flatten(params_file['/**']['ros__parameters'])
+    assert pallet['pallet.pocket_slab_half_depth'] * 2 > 0.026
+
+

@@ -75,6 +75,15 @@ def estimate_to_msg(estimate: PalletEstimate | None, header) -> PalletEstimateMs
                          z=float(estimate.normal[2]))
     msg.yaw = float(estimate.yaw)
     msg.face_inlier_count = int(estimate.face_inlier_count)
+    msg.side = str(estimate.side)
+    msg.side_reason = str(estimate.side_detail.get('reason', ''))
+    msg.face_width = float(estimate.face_width)
+    # NaN, not 0.0, when there is no floor fit. Zero would read as "the floor
+    # is at base_footprint's own origin", which is the one thing it is NOT:
+    # measured 2026-10-14, the real floor sits 25 mm below at -0.025. Until
+    # this line existed the field was never assigned at all and every estimate
+    # published 0.0 (caught by test_interfaces.py).
+    msg.floor_height = float(estimate.floor_height)
     if estimate.floor is not None:
         msg.floor_valid = True
         msg.floor_normal = Vector3(x=float(estimate.floor.normal[0]),

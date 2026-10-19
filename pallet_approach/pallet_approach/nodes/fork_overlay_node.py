@@ -88,8 +88,10 @@ class ForkOverlayNode(Node):
         self.declare_parameter('floor_z', -0.025)
         for name, default in (
             ('forks.tine_length', 1.150), ('forks.tine_width', 0.100),
-            ('forks.tine_thickness', 0.040), ('forks.spacing', 0.3725),
-            ('forks.bottom_height', 0.052), ('forks.carriage_x', 0.0),
+            ('forks.tine_thickness', 0.040), ('forks.carriage_x', 0.4625),
+            # One setting for both faces (D27), so there is nothing per-side
+            # to look up here any more.
+            ('forks.spacing', 0.365), ('forks.bottom_height', 0.040),
         ):
             self.declare_parameter(name, default)
         for name, default in (
@@ -102,6 +104,10 @@ class ForkOverlayNode(Node):
     def _params(self) -> dict:
         get = lambda n: self.get_parameter(n).value  # noqa: E731
         return {
+            # One fork setting for both faces (D27), so this is a plain read.
+            # The tines are built against this, not against the fitted floor:
+            # they are bolted to the robot. See fork_overlay.render.
+            'floor_z': get('floor_z'),
             'forks': {k: get(f'forks.{k}') for k in (
                 'tine_length', 'tine_width', 'tine_thickness', 'spacing',
                 'bottom_height', 'carriage_x')},

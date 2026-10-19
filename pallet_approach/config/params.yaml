@@ -42,6 +42,22 @@
       # SDK's self-calibration, so lookups must be stamped, with a short wait.
       tf_timeout: 0.15          # s
 
+      # [choice] false, and it must stay false for anything that drives.
+      #
+      # A bench workaround for a camera stamping on a different clock from
+      # /tf. Measured 2026-10-15: the ZED stamped depth at 2722 s while the
+      # system clock read 1792075135, with the image clock running 24.5 %
+      # fast, so every stamped lookup failed with "extrapolation into the
+      # past". With this true the node looks up the LATEST transform instead.
+      #
+      # Safe only while parked: the single moving link in the chain is the
+      # ZED's stereo self-calibration, which drifts by microradians, so
+      # "latest" and "at this frame" are the same number. It stops being safe
+      # the moment the robot moves, because composing a pallet pose with
+      # odometry needs to know when the pallet was seen -- and it makes every
+      # recorded bag unreplayable. Fix the camera's clock before stage 3.
+      tf_fallback_to_latest: false
+
       # Extrinsic correction for the camera mounting. The URDF says the optical
       # frame is level with base_footprint; measured 2026-10-14 against the
       # floor plane, it is pitched down 0.698 deg and rolled -0.516 deg, 0.868
@@ -72,8 +88,14 @@
         measured_floor_roll: -0.009005      # -0.516 deg
 
     topics:
-      # [measured] ros2 topic list -t on 2026-10-13. All RELIABLE/VOLATILE, so
-      # default rclpy QoS is compatible; do not switch to sensor-data QoS.
+      # [measured] ros2 topic list -t on 2026-10-13. The ZED topics and /odom
+      # are RELIABLE/VOLATILE, so default rclpy QoS is compatible with them and
+      # there is no reason to switch to sensor-data QoS for these.
+      #
+      # /ouster/points is NOT: it publishes BEST_EFFORT (measured 2026-10-15).
+      # A RELIABLE subscriber receives nothing from it at all. Whatever
+      # subscribes to the LiDAR in stage 2 and stage 6 has to ask for
+      # BEST_EFFORT. See docs/SYSTEM.md.
       depth: /zed2/zed_node/depth/depth_registered
       depth_camera_info: /zed2/zed_node/depth/camera_info
       left_image: /zed2/zed_node/rgb/color/rect/image
@@ -81,51 +103,174 @@
       odom: /odom
       cmd_vel: /cmd_vel                       # geometry_msgs/Twist, NOT stamped
 
-    # EPAL 1 / EUR pallet, nominal dimensions. [choice] nominal for now; the real
-    # pallet still has to be tape-measured and these corrected if it disagrees.
+    # The real pallet, tape-measured 2026-10-14 (D4, D19). NOT EPAL nominals --
+    # the two disagree in ways that matter, and the measurement wins.
+    #
+    # The two faces are different STRUCTURES, not two sizes of the same thing.
+    # A EUR pallet's three bottom boards run along the 1195 mm direction:
+    #   - enter the 795 mm face and the forks travel BETWEEN those boards, in
+    #     clear channels, so the opening starts at the floor;
+    #   - enter the 1195 mm face and the forks cross them, so the opening starts
+    #     above a 20 mm board.
+    # That is what "four-way entry" means, and it is why every pocket number
+    # below is per side rather than shared.
     pallet:
-      # Measured pallet (2026-10-14, tape)
-      pallet_width: 0.795            # pocket side
-      pallet_length: 1.195
-      pallet_height: 0.145
+      pallet_height: 0.145           # [measured] same from either side
 
-      # Pockets: 0.23 wide, 0.10 high, from the floor up; centres 0.365 apart
-      pocket_nominal_width: 0.23
-      pocket_nominal_height: 0.10
-      pocket_nominal_spacing: 0.365
-
+      # Which face we expect to meet. Perception classifies what it actually
+      # sees (pallet.classify below) and uses that side's numbers; this is the
+      # default when classification is off or undecided.
       entry_face: "short"
 
-      pocket_center_height: 0.055    # band 0.035–0.075: above the 0.03 floor margin, 2.5 cm below the board edge
-      pocket_band_half_height: 0.02
-      pocket_slab_half_depth: 0.06   # face slice thickness, for depth noise at ~2 m
-      pocket_min_points_per_bin: 2
-      pocket_min_gap_width: 0.15
-      pocket_max_gap_width: 0.32
+      # Shared by both sides.
+      pocket_slab_half_depth: 0.06   # face slice thickness: ZED depth at ~2 m
+                                     # scatters a few cm, so plane inliers miss
+                                     # much of the real face (D5)
+      pocket_min_points_per_bin: 2   # one stray point is not wood (D5)
 
-    # Virtual forks for the overlay: a standard ITA Class II forklift fork set,
-    # with the spacing set to match the pocket centres above.
-    # [choice] the robot has no forks; these are what a reach truck handling EUR
-    # pallets carries. All in base_link, x forward.
+      sides:
+        # ------------------------------------------------- the 795 mm face
+        # block 100 / pocket 230 / block 135 / pocket 230 / block 100.
+        # Opening runs from the FLOOR to 0.100 -- there is no bottom board on
+        # this face, which is why the old EPAL-derived 1.45 m standoff and
+        # 0.052 m fork underside were both wrong here (D16, D17).
+        short:
+          face_width: 0.795
+          depth: 1.195               # how far a fork travels once inserted
+          pocket_width: 0.230
+          pocket_spacing: 0.365      # centre to centre
+          opening_bottom: 0.000      # the floor itself
+          opening_top: 0.100
+          # Band 0.035-0.075: clear of the 0.03 floor removal margin below and
+          # 2.5 cm below the board edge at 0.100, which stray edge points
+          # otherwise split a pocket against (D5).
+          band_center: 0.055
+          band_half_height: 0.020
+          min_gap_width: 0.15
+          max_gap_width: 0.32
+          insertable: true
+          insertion_stop_face_x: 0.700   # bumper gap 0.2375; LiDAR holds 2 beams
+        # ------------------------------------------------ the 1195 mm face
+        # block 150 / pocket 385 / block 150 / pocket 365 / block 150, over a
+        # 20 mm bottom board with a 20 mm board above. The 2 cm difference
+        # between the two pockets is tape-level: EPAL is symmetric by design
+        # and its nominal (blocks 145, pockets 382.5) agrees to 5 mm.
+        long:
+          face_width: 1.195
+          depth: 0.795
+          pocket_width: 0.375
+          pocket_spacing: 0.525
+          opening_bottom: 0.020      # the bottom board
+          opening_top: 0.125
+          band_center: 0.0725        # centred in a 0.020-0.125 opening
+          band_half_height: 0.025
+          min_gap_width: 0.26
+          max_gap_width: 0.50
+          # [choice] D20: this pallet IS four-way entry, so refusing the long
+          # side outright would model a limitation it does not have. But whether
+          # a SITE allows it is policy, not geometry -- long-side entry loads the
+          # 20 mm bottom boards instead of the blocks, and many warehouses
+          # restrict it. Set false and CLASSIFYING returns NO-GO rather than
+          # proceeding.
+          insertable: true
+          # Further out than the short side's stop, and not for clearance: this
+          # face is only 0.795 m deep, so the short-side stop would drive the
+          # tips 0.118 m out of the BACK of the pallet (D21).
+          insertion_stop_face_x: 0.950   # bumper gap 0.4875; 5 LiDAR beams
+
+      # Telling the faces apart (D22). Four things differ; these are the two
+      # the pipeline measures.
+      #
+      # Pocket spacing is PRIMARY and face width only confirms, which is the
+      # opposite of what the roadmap first assumed. Width is the weakest signal:
+      # a clipped or partly occluded face measures short, and nothing then says
+      # whether a 0.9 m face is a foreshortened long side or a complete short
+      # one. Spacing separates the faces by 160 mm against a measured spacing
+      # error of ~13 mm, and it needs only the two pocket centres perception
+      # already finds.
+      classify:
+        enabled: true
+        # One pass with a band inside BOTH openings (0.050-0.070 lies in
+        # 0.000-0.100 and in 0.020-0.125) and gap limits spanning both, so the
+        # pockets can be found before the side is known. The side's own band
+        # and limits are then used to measure them properly.
+        band_center: 0.060
+        band_half_height: 0.010
+        min_gap_width: 0.15
+        max_gap_width: 0.50
+        # A side is a candidate if the measured spacing is within this of its
+        # nominal. 0.06 is under half the 0.16 m gap between the two sides, so
+        # the windows cannot overlap.
+        spacing_tolerance: 0.06
+        # Face width confirms only, so its window is loose: occlusion and ROI
+        # clipping both shorten it, and only a gross mismatch should veto.
+        width_tolerance: 0.20
+        # Both signals must pick the same side. Disagreement, or neither
+        # matching, publishes side=AMBIGUOUS with no pockets claimed, and the
+        # coordinator decides to stop (D22, decided 2026-10-15).
+
+    # Virtual forks: a standard ITA Class II fork set. The robot has none --
+    # these are what a reach truck handling EUR pallets carries. All in
+    # base_footprint, x forward. Spacing and underside height are PER SIDE
+    # (pallet.sides.*) because the two faces need different ones; what is here
+    # is what the two faces share. See D15.
     forks:
-      tine_length: 1.150        # standard for a 1200 mm deep pallet
-      tine_width: 0.100         # 64 mm clearance each side in a 227.5 mm pocket
-      tine_thickness: 0.040     # in a 100 mm high pocket
-      spacing: 0.365            # centre-to-centre, matching the MEASURED
-                                # pallet.pocket_nominal_spacing, not the
-                                # EPAL nominal 0.3725
-      # underside 0.052 m above the floor puts the tine centre at 0.072 m, exactly
-      # the pocket centre height.
-      bottom_height: 0.052
-      # the carriage sits at the base_link origin, so the tips reach x = 1.150 m.
-      # At the 1.30 m standoff below they stop 0.15 m short of the pallet face.
-      carriage_x: 0.0
+      tine_length: 1.150        # right for a 1.195 m deep pallet
+      tine_width: 0.100         # 65 mm clearance each side in a 230 mm pocket
+      tine_thickness: 0.040
+      # [measured] D15/D23: the carriage sits at the FRONT BUMPER, which is
+      # where a real one bolts on -- the front face of base_link's collision
+      # box, confirmed by tape (0.920 m bumper to bumper vs the URDF's 0.925).
+      # Carriage plus tine length is the only free parameter: they never appear
+      # except as their sum, the tip reach of 1.6125 m, and that sets the
+      # standoff below.
+      carriage_x: 0.4625
+
+      # [choice] D27: ONE setting for both faces, not one per face.
+      #
+      # D21 had these per side, matching each face's pocket centres. Athreya
+      # decided 2026-10-19 that the forks keep a single spacing whichever face
+      # is entered -- which is what a carriage without a hydraulic positioner
+      # actually does, and it removes a way for the overlay and the insertion
+      # to disagree about what the forks are.
+      #
+      # It only works because a single setting genuinely fits both. With a
+      # 0.100 wide, 0.040 thick tine:
+      #
+      #   spacing must be 0.250-0.495 m   (short face 0.235-0.495, long 0.250-0.800)
+      #   underside must be 0.020-0.060 m (short 0.000-0.060,       long 0.020-0.085)
+      #
+      # 0.365 is the measured short-side pocket spacing, so the tines sit dead
+      # centre in the face we normally enter; on the long face they are 80 mm
+      # inboard of the pocket centres, with 57 mm of clearance to the nearest
+      # edge. 0.040 is the middle of the height window, clearing the long
+      # face's 20 mm bottom board by 20 mm and the short face's board above by
+      # 20 mm. Worst clearance anywhere: 20 mm.
+      #
+      # test_params.py checks all of that, so changing a pocket dimension
+      # cannot silently make the forks stop fitting.
+      spacing: 0.365
+      bottom_height: 0.040
 
 # ---------------------------------------------------------------------------
 # pallet_perception (lifecycle node): depth -> pallet pose and pockets
 # ---------------------------------------------------------------------------
 pallet_perception:
   ros__parameters:
+
+    # [measured 2026-10-15] One frame costs ~90 ms on a laptop (14 ms voxel,
+    # 17 ms floor RANSAC, 37 ms DBSCAN, the rest small), so ~11 Hz there and
+    # less on the Jetson. The ZED publishes depth at ~37 Hz. The node therefore
+    # processes the NEWEST frame it has and drops the rest, at most this often.
+    #
+    # [choice] 5 Hz. The estimate is then never more than ~200 ms old, well
+    # inside the 0.50 s staleness limit the watchdog uses (D9), and it leaves
+    # headroom on the Jetson for the pipeline to be slower than the laptop
+    # without the rate collapsing. Raising it does not make the pallet move any
+    # faster; it just spends Jetson CPU re-measuring a stationary object.
+    max_rate: 5.0
+    # How often ~/diagnostics is published: timing, achieved rate, drops.
+    diagnostics_period: 1.0
 
     depth:
       # [choice] ZED min_depth is 0.30 m. The far limit is provisional: the Day 5
@@ -266,31 +411,36 @@ coordinator:
     action_name: pallet_task
 
     approach:
-      # [derived] base_footprint stops this far from the pallet face. The
-      # binding constraint is the camera's vertical FOV, not the fork length.
+      # [derived] base_footprint stops this far from the pallet face.
       #
-      # The camera is level, 0.390 m ahead of base_footprint and 0.398 m above
-      # the floor (measured 2026-10-14), with a 20.76 deg vertical half-FOV.
-      # Features low on the pallet fall out of the bottom of the image as the
-      # robot closes in, and the GO/NO-GO rules measure the pocket opening
-      # height against a 0.030 m tolerance -- so the bottom lip of the
-      # opening, 0.022 m above the floor, has to stay in frame:
+      # SUPERSEDED 2026-10-14 (D16). The old value of 1.45 m was derived from
+      # the camera's vertical FOV: the GO/NO-GO rules measure the pocket
+      # opening against a 0.030 m tolerance, so the opening's bottom lip -- the
+      # EPAL nominal puts it 0.022 m above the floor -- had to stay in frame.
+      # The measured pallet HAS NO BOTTOM LIP on the pocket face: the opening
+      # runs from the floor up. There is no lip to keep in frame, and the
+      # opening's lower bound is the fitted floor plane, which perception gets
+      # from the whole visible floor rather than from a strip at the face. The
+      # camera's requirement collapses to keeping the pocket DETECTION BAND in
+      # frame, whose top leaves at 1.24 m and whose bottom leaves at 1.34 m.
       #
-      #   standoff   lowest visible    margin on the      floor strip
-      #              above the floor   0.022 m lip        still in frame
-      #   1.38 m     +0.022 m           0 mm             none
-      #   1.40 m     +0.015 m          +7 mm             none
-      #   1.45 m     -0.004 m         +26 mm             4 mm
-      #   1.50 m     -0.023 m         +45 mm            23 mm
+      # So the camera no longer binds. The fork reach does: the virtual tines
+      # must start OUTSIDE the pallet, and with the carriage at the front
+      # bumper (0.4625) and 1.150 m tines the tips reach 1.6125 m.
       #
-      # 1.40 m leaves 7 mm, which is inside the noise once tyre compression,
-      # floor unevenness and a little pitch under braking are allowed for.
-      # 1.45 m gives 26 mm and brings the floor contact line just back into
-      # frame, so a floor fit is still possible at the standoff. Costs 5 px of
-      # pocket resolution (89 instead of 94). See docs/SYSTEM.md.
-      standoff_distance: 1.45
-      # the line-up point is a further this-much back along the face normal, so
-      # the robot turns onto the pocket centre line before driving in straight.
+      #   constraint                              minimum standoff
+      #   tine tips clear of the face              1.6125 m + clearance
+      #   whole detection band in frame            1.34 m
+      #   pocket top edge in frame                 1.17 m
+      #
+      # 1.75 m leaves the tips 0.1375 m clear of the face and is 0.41 m clear
+      # of the camera limit. Insertion then runs 1.05 m to the stop at 0.700 m
+      # (pallet.sides.short.insertion_stop_face_x), for 0.9125 m of depth --
+      # 76 % of the pallet, tips 0.2825 m short of the far end.
+      #
+      # Measured at this distance on 2026-10-15 (pallet_s_129): face x +5 mm,
+      # both pockets found, spacing -3 mm. See docs/dataset.md.
+      standoff_distance: 1.75
       lineup_extra: 0.50
 
     detecting:

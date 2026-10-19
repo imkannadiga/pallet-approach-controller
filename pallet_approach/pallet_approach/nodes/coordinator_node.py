@@ -110,8 +110,12 @@ class CoordinatorNode(Node):
             ('go_nogo.pocket_clearance_depth', 0.10),
             ('go_nogo.stability_frames', 5), ('go_nogo.max_position_spread', 0.030),
             ('go_nogo.max_yaw_spread', 0.035),
-            ('pallet.pocket_nominal_width', 0.23),
-            ('pallet.pocket_nominal_height', 0.100),
+            ('pallet.sides.short.pocket_width', 0.230),
+            ('pallet.sides.short.opening_top', 0.100),
+            ('pallet.sides.short.opening_bottom', 0.000),
+            ('pallet.sides.long.pocket_width', 0.375),
+            ('pallet.sides.long.opening_top', 0.125),
+            ('pallet.sides.long.opening_bottom', 0.020),
         ):
             self.declare_parameter(name, default)
 

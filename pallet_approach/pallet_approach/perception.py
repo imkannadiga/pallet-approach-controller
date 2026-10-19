@@ -413,6 +413,7 @@ def select_pallet_cluster(
     size_tolerance: float = 0.25,
     floor: Plane | None = None,
     min_points: int = 50,
+    widths: tuple[float, ...] = (),
 ) -> np.ndarray | None:
     """Pick the cluster that could be a pallet, or None.
 
@@ -462,7 +463,17 @@ def select_pallet_cluster(
         _, _, vt = np.linalg.svd(centred, full_matrices=False)
         along_axes = centred @ vt.T                     # coordinates along both axes
         extents = along_axes.max(axis=0) - along_axes.min(axis=0)
-        width_ok = np.any(np.abs(extents - pallet_width) <= pallet_width * size_tolerance)
+        # Match against EVERY face the pallet could be presenting, not just the
+        # one we expect. This gate runs before the side is known -- it has to,
+        # since classification needs a cluster to work on -- so gating on the
+        # expected side's width alone throws away pallets that are merely
+        # turned. Measured on pallet_s_129_45: a pallet at 45 deg gives extents
+        # that match neither nominal cleanly and was rejected outright, so the
+        # AMBIGUOUS path it exists to test could never be reached.
+        possible_widths = widths if widths else (pallet_width,)
+        width_ok = any(
+            np.any(np.abs(extents - possible) <= possible * size_tolerance)
+            for possible in possible_widths)
         if not width_ok:
             continue
  
@@ -590,6 +601,7 @@ def find_pockets(
     pocket_center_height: float,
     bin_width: float = 0.02,
     min_points_per_bin: int = 1,
+    opening_bottom: float = 0.0,
 ) -> tuple[Pocket, ...]:
     """Find the fork pockets as gaps in the face, left to right.
 
@@ -689,8 +701,26 @@ def find_pockets(
         gap_heights = heights[in_gap]
         below = gap_heights[gap_heights < pocket_center_height]
         above = gap_heights[gap_heights > pocket_center_height]
-        bottom = below.max() if len(below) else 0.0    # nothing below: opening reaches the floor margin
         top = above.min() if len(above) else np.nan    # nothing above: unknown
+
+        # The opening's LOWER edge is not observable on this pallet, from
+        # either face, so it is taken from the known geometry rather than from
+        # the points:
+        #
+        #   - short face: the opening starts at the floor. There is no lower
+        #     edge to see -- the floor runs continuously into the pocket.
+        #   - long face: the opening starts on a 20 mm bottom board, and
+        #     `remove_floor` has already deleted everything within the 0.03 m
+        #     floor margin, so the board's top edge went with it.
+        #
+        # So `opening_bottom` is the side's nominal (0.000 short, 0.020 long)
+        # and the measured quantity is the opening's TOP edge. Measuring down
+        # from the top to a known floor is the honest version of what the old
+        # `bottom = 0.0` fallback was doing by accident -- right for the short
+        # face, 20 mm short for the long one. If the lower edge ever has to be
+        # measured, the floor margin has to come down first (2.4 mm of floor
+        # RMS would allow ~0.015), and that is a change to argue for with data.
+        bottom = below.max() if len(below) else opening_bottom
         pocket_height = top - bottom
         center_height = (0.5 * (top + bottom) if np.isfinite(top)
                          else pocket_center_height)
@@ -708,6 +738,159 @@ def find_pockets(
     # Left to right as the robot sees it: left is +y in base_footprint.
     pockets.sort(key=lambda p: -p.center[1])
     return tuple(pockets)
+
+
+def face_axis(face_normal: np.ndarray, floor: Plane) -> np.ndarray:
+    """Unit vector along the face, horizontal in the floor's frame.
+
+    Perpendicular to both the floor normal and the face normal, which is what a
+    cross product gives. The face is only NEARLY vertical, so the result is
+    slightly shorter than 1 and has to be normalised, or every length measured
+    along the face comes out slightly too small.
+    """
+    along = np.cross(np.asarray(floor.normal, dtype=float), face_normal)
+    return along / np.linalg.norm(along)
+
+
+def face_extent(face_points: np.ndarray, face_normal: np.ndarray,
+                face_centroid: np.ndarray, floor: Plane) -> float:
+    """How wide the visible face is, measured along the face itself.
+
+    Along the face, not along y: a turned pallet's y-extent is its true width
+    times cos(yaw), which would read a square-on long face and a turned long
+    face as different objects.
+
+    This is a LOWER BOUND on the real width, never an upper one. Occlusion, the
+    ROI crop and the image edge can all cut a face short, and nothing can make
+    it look wider than it is. That asymmetry is why `classify_side` treats it as
+    confirmation only (D22).
+    """
+    if len(face_points) == 0:
+        return 0.0
+    along = face_axis(face_normal, floor)
+    s = (face_points - face_centroid) @ along
+    return float(s.max() - s.min())
+
+
+def flatten_side(side: dict) -> dict:
+    """One side's geometry under the flat names the pipeline stages take.
+
+    The stages each want one number -- `pocket_center_height`, not
+    `sides.short.band_center` -- because at the point of use there is only one
+    side in play. This is the single place that translates, so params.yaml can
+    stay grouped by face and the stage signatures stay readable.
+    """
+    return {
+        'pallet_width': side['face_width'],
+        'pallet_length': side['depth'],
+        'pocket_center_height': side['band_center'],
+        'pocket_band_half_height': side['band_half_height'],
+        'pocket_min_gap_width': side['min_gap_width'],
+        'pocket_max_gap_width': side['max_gap_width'],
+        'pocket_nominal_width': side['pocket_width'],
+        'pocket_nominal_height': side['opening_top'] - side['opening_bottom'],
+        'pocket_nominal_spacing': side['pocket_spacing'],
+        'pocket_opening_bottom': side['opening_bottom'],
+        'pocket_opening_top': side['opening_top'],
+    }
+
+
+def pocket_spacing(pockets, face_normal: np.ndarray,
+                   floor: Plane) -> float | None:
+    """Distance between two pocket centres, measured along the face.
+
+    None unless there are exactly two: with one the question does not arise,
+    and with three or more the scene is not a pallet face we understand, so
+    picking a pair would be inventing an answer.
+    """
+    if len(pockets) != 2:
+        return None
+    along = face_axis(face_normal, floor)
+    return float(abs((pockets[0].center - pockets[1].center) @ along))
+
+
+AMBIGUOUS = 'ambiguous'
+
+
+def classify_side(
+    pocket_spacing: float | None,
+    face_width: float,
+    sides: dict,
+    classify: dict,
+) -> tuple[str, dict]:
+    """Which face of the pallet is the robot looking at?
+
+    Concept: the two faces of this pallet are different structures, not two
+    sizes of one thing (D19), so four things differ between them. Two of them
+    the pipeline already measures:
+
+        =================  ==========  =========  ======
+                            short       long       ratio
+        face width          0.795       1.195      1.50
+        pocket spacing      0.365       0.525      1.44
+        =================  ==========  =========  ======
+
+    **Pocket spacing decides; face width only confirms.** That is the opposite
+    of the obvious choice, and the reason is that the two signals fail
+    differently. Width is a lower bound -- occlusion, the ROI crop and the image
+    edge all shorten it, nothing lengthens it -- so a 0.9 m reading could be a
+    complete short face or a clipped long one, and there is no way to tell from
+    the number. Spacing is a difference between two centres, so a clipped face
+    either yields both pockets or fewer than two, and fewer than two is a case
+    this function is told about rather than one it can be fooled by. Spacing
+    also separates the faces by 160 mm against a measured error of about 13 mm.
+
+    Both signals must agree. Disagreement means something is wrong with the
+    scene -- a damaged pallet, a load overhanging the face, two pallets pushed
+    together -- and guessing between two sets of nominals that differ by 160 mm
+    is how forks end up driven at the wrong geometry.
+
+    Args:
+        pocket_spacing: distance between the two pocket centres along the face,
+            or None if fewer than two pockets were found.
+        face_width: the visible face width from `face_extent`.
+        sides: {name: geometry}, as params.yaml's `pallet.sides`.
+        classify: tolerances, as params.yaml's `pallet.classify`.
+
+    Returns:
+        (name, detail). `name` is a key of `sides`, or `AMBIGUOUS`. `detail`
+        carries the evidence -- what each signal picked, and how far each side
+        was from each measurement -- so a refusal can be explained after the
+        run instead of being a bare "no".
+    """
+    spacing_tol = classify['spacing_tolerance']
+    width_tol = classify['width_tolerance']
+
+    spacing_fit = {name: (abs(pocket_spacing - cfg['pocket_spacing'])
+                          if pocket_spacing is not None else float('inf'))
+                   for name, cfg in sides.items()}
+    width_fit = {name: abs(face_width - cfg['face_width'])
+                 for name, cfg in sides.items()}
+
+    def sole_match(fit, tolerance):
+        """The one side within tolerance, or None if none or several are."""
+        within = [name for name, error in fit.items() if error <= tolerance]
+        return within[0] if len(within) == 1 else None
+
+    by_spacing = sole_match(spacing_fit, spacing_tol)
+    by_width = sole_match(width_fit, width_tol)
+
+    detail = {'by_spacing': by_spacing, 'by_width': by_width,
+              'spacing': pocket_spacing, 'face_width': face_width,
+              'spacing_error': spacing_fit, 'width_error': width_fit}
+
+    if by_spacing is None:
+        detail['reason'] = ('no pocket pair to measure spacing from'
+                            if pocket_spacing is None
+                            else f'spacing {pocket_spacing:.3f} m matches no side')
+        return AMBIGUOUS, detail
+    if by_width is not None and by_width != by_spacing:
+        detail['reason'] = (f'spacing says {by_spacing}, width says {by_width}')
+        return AMBIGUOUS, detail
+
+    detail['reason'] = ('spacing and width agree' if by_width == by_spacing
+                        else 'spacing decided; width inconclusive')
+    return by_spacing, detail
 
 
 def estimate_pallet(
@@ -770,10 +953,13 @@ def estimate_pallet(
     # 6-8. Delete the floor, group into objects, pick the pallet.
     points = remove_floor(points, floor, params['floor_margin'])
     labels = cluster_points(points, params['cluster_eps'], params['cluster_min_samples'])
+    # Every face the pallet could be showing. Which one it IS gets decided
+    # below, from the pockets; this gate only has to not throw the cluster away.
+    widths = tuple(cfg['face_width'] for cfg in params.get('sides', {}).values())
     pallet = select_pallet_cluster(
         points, labels, params['pallet_width'], params['pallet_height'],
         size_tolerance=params['size_tolerance'], floor=floor,
-        min_points=params['min_cluster_points'])
+        min_points=params['min_cluster_points'], widths=widths)
     if pallet is None:
         return None
  
@@ -787,19 +973,60 @@ def estimate_pallet(
  
     # 11. The holes. Fewer than two is NOT "no pallet": the estimate is still
     # returned, and go_nogo turns it into a NO-GO with a reason.
+    #
+    # find_pockets works on a SLAB around the face plane, not on the plane's
+    # RANSAC inliers. The real pallet's front surface spans 26 mm from the deck
+    # boards to the lower blocks, so a 15 mm inlier band samples mostly deck and
+    # starves the gap analysis -- it found one pocket instead of two on the
+    # first real bag (D5). The pockets stay empty inside the slab because they
+    # are deep.
     distance_from_face = (pallet - face_centroid) @ face_normal
     face_slice = pallet[np.abs(distance_from_face) < params['pocket_slab_half_depth']]
-    
+
+    min_per_bin = params.get('pocket_min_points_per_bin', 1)
+    width = face_extent(pallet[face_mask], face_normal, face_centroid, floor)
+
+    # 12. Which face are we looking at? The two differ enough that measuring
+    # one against the other's nominals is meaningless, so this has to happen
+    # before the pockets are measured -- but it needs pockets to decide with.
+    # Hence two passes: a probe with a band and gap limits wide enough to suit
+    # EITHER face, then the real measurement with the chosen face's own.
+    side, detail = params.get('entry_face', 'unknown'), {}
+    sides = params.get('sides')
+    classify = params.get('classify')
+    geometry = params
+    if sides and classify and classify.get('enabled', True):
+        probe = find_pockets(
+            face_slice, face_normal, face_centroid, floor,
+            classify['band_half_height'], classify['min_gap_width'],
+            classify['max_gap_width'], classify['band_center'],
+            bin_width=params['voxel_size'], min_points_per_bin=min_per_bin)
+        spacing = pocket_spacing(probe, face_normal, floor)
+        side, detail = classify_side(spacing, width, sides, classify)
+        if side == AMBIGUOUS:
+            # No defensible nominals to measure against, so nothing is claimed.
+            # The estimate still goes out: "a pallet, turned so I cannot tell
+            # which face" is different from "no pallet", and only the
+            # coordinator gets to decide what to do about it (D22).
+            return PalletEstimate(
+                position=face_centroid, normal=face_normal, yaw=yaw,
+                pockets=(), face_inlier_count=int(face_mask.sum()),
+                floor=floor, side=AMBIGUOUS, side_detail=detail,
+                face_width=width, stamp=stamp)
+        geometry = {**params, **flatten_side(sides[side])}
+
     pockets = find_pockets(
         face_slice, face_normal, face_centroid, floor,
-        params['pocket_band_half_height'], params['pocket_min_gap_width'],
-        params['pocket_max_gap_width'], params['pocket_center_height'],
-        bin_width=params['voxel_size'])
- 
+        geometry['pocket_band_half_height'], geometry['pocket_min_gap_width'],
+        geometry['pocket_max_gap_width'], geometry['pocket_center_height'],
+        bin_width=params['voxel_size'], min_points_per_bin=min_per_bin,
+        opening_bottom=geometry.get('pocket_opening_bottom', 0.0))
+
     # `position` and `normal` describe the front face; `face_inlier_count` is
     # the support the face fit had, which go_nogo checks before trusting it.
     return PalletEstimate(position=face_centroid, normal=face_normal, yaw=yaw,
                           pockets=pockets,
                           face_inlier_count=int(face_mask.sum()),
-                          floor=floor, stamp=stamp)
+                          floor=floor, side=side, side_detail=detail,
+                          face_width=width, stamp=stamp)
  

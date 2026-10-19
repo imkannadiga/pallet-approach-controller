@@ -191,21 +191,51 @@ def load_params(package_root: pathlib.Path) -> dict:
         'cluster_min_samples': block['cluster']['min_samples'],
         'min_cluster_points': block['cluster']['min_cluster_points'],
         'size_tolerance': block['cluster']['size_tolerance'],
-        'pallet_width': shared['pallet']['pallet_width'],
-        'pallet_length': shared['pallet']['pallet_length'],
         'pallet_height': shared['pallet']['pallet_height'],
         'face_distance_threshold': block['face']['ransac_distance'],
         'max_tilt_from_vertical': block['face']['max_tilt_from_vertical'],
         'face_min_points': block['face']['min_points'],
         'max_facing_angle': block['face']['max_facing_angle'],
-        'pocket_center_height': shared['pallet']['pocket_center_height'],
-        'pocket_band_half_height': shared['pallet']['pocket_band_half_height'],
         'pocket_slab_half_depth': shared['pallet']['pocket_slab_half_depth'],
-        'pocket_min_gap_width': shared['pallet']['pocket_min_gap_width'],
-        'pocket_max_gap_width': shared['pallet']['pocket_max_gap_width'],
         'pocket_min_points_per_bin': shared['pallet']['pocket_min_points_per_bin'],
-        'pocket_nominal_width': shared['pallet']['pocket_nominal_width'],
-        'pocket_nominal_height': shared['pallet']['pocket_nominal_height'],
-        'pocket_nominal_spacing': shared['pallet']['pocket_nominal_spacing'],
         'extrinsic_correction': dict(shared['frames']['extrinsic_correction']),
+        **side_params(shared['pallet']),
+    }
+
+
+def side_params(pallet: dict) -> dict:
+    """Per-side pallet geometry, plus the expected side's values flattened.
+
+    The pipeline's parameter dict is flat -- `pocket_center_height` and friends
+    name one number each, because at the point of use there is only one side in
+    play. But the two faces of this pallet need different numbers (D19/D21), and
+    which face the robot is looking at is not known until perception has
+    classified it. So: `sides` carries both, `classify` says how to tell them
+    apart, and the flat keys hold `entry_face`'s values as the starting point.
+    `estimate_pallet` swaps in the classified side's values once it knows.
+    """
+    sides = pallet['sides']
+    expected = sides[pallet['entry_face']]
+    return {
+        'sides': {name: dict(cfg) for name, cfg in sides.items()},
+        'classify': dict(pallet['classify']),
+        'entry_face': pallet['entry_face'],
+        **flatten_side(expected),
+    }
+
+
+def flatten_side(side: dict) -> dict:
+    """One side's geometry under the flat names the pipeline stages take."""
+    return {
+        'pallet_width': side['face_width'],
+        'pallet_length': side['depth'],
+        'pocket_center_height': side['band_center'],
+        'pocket_band_half_height': side['band_half_height'],
+        'pocket_min_gap_width': side['min_gap_width'],
+        'pocket_max_gap_width': side['max_gap_width'],
+        'pocket_nominal_width': side['pocket_width'],
+        'pocket_nominal_height': side['opening_top'] - side['opening_bottom'],
+        'pocket_nominal_spacing': side['pocket_spacing'],
+        'pocket_opening_bottom': side['opening_bottom'],
+        'pocket_opening_top': side['opening_top'],
     }

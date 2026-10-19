@@ -144,6 +144,33 @@ class PalletEstimate:
     parameter there, not to zero.
     """
 
+    side: str = 'unknown'
+    """Which face of the pallet this is: ``'short'``, ``'long'``,
+    ``'ambiguous'``, or ``'unknown'`` when classification was not run.
+
+    The two faces are different structures and need different pocket nominals,
+    fork spacing and insertion stop (D19/D21), so this is not a label -- it
+    selects the geometry everything downstream measures against.
+
+    ``'ambiguous'`` is a real answer, not a failure: the estimate is still
+    published, with `pockets` empty because there is no defensible set of
+    nominals to measure them against. The coordinator owns the decision to stop
+    (D22).
+    """
+
+    side_detail: dict = field(default_factory=dict)
+    """Evidence behind `side`: what each signal picked and how far each side
+    was from each measurement. Carried so a refusal can be explained after the
+    run rather than being a bare "no"."""
+
+    face_width: float = float('nan')
+    """Visible width of the face, measured along the face itself.
+
+    A LOWER bound: occlusion, the ROI crop and the image edge all shorten it and
+    nothing lengthens it. That is why it confirms the side rather than deciding
+    it.
+    """
+
     stamp: float = 0.0
     """Timestamp of the depth image this came from, seconds."""
 
