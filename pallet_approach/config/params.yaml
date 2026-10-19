@@ -241,6 +241,23 @@
         measured_floor_pitch: 0.012182      # +0.698 deg
         measured_floor_roll: -0.009005      # -0.516 deg
 
+    # BGR, by what the robot is DOING rather than one colour per state: looking
+    # (grey), driving towards the pallet (amber), committed with the forks going
+    # in (bright green), carrying (green), stopped because something was wrong
+    # (red). Shared, not under fork_overlay, because TWO nodes draw a state in
+    # this palette: fork_overlay's own panel and dashboard's HUD (D57). A node
+    # block is only visible to the node it is named after, so a value that two
+    # differently-named nodes must agree on has to live here or the two WILL
+    # drift -- test_params.py checks both nodes declare every key.
+    # The state-to-key mapping is STATE_COLOR_KEYS in dashboard.py.
+    colors:
+      idle: [160, 160, 160]
+      detecting: [160, 160, 160]
+      approaching: [0, 200, 255]
+      inserting: [128, 255, 0]
+      go: [0, 200, 0]
+      no_go: [0, 0, 220]
+
     topics:
       # [measured] ros2 topic list -t on 2026-10-13. The ZED topics and /odom
       # are RELIABLE/VOLATILE, so default rclpy QoS is compatible with them and
@@ -737,17 +754,57 @@ fork_overlay:
     line_thickness: 2
     draw_pockets: true
     draw_standoff_marker: true
-    # BGR, by what the robot is DOING rather than one colour per state: looking
-    # (grey), driving towards the pallet (amber), committed with the forks going
-    # in (bright green), carrying (green), stopped because something was wrong
-    # (red). The state-to-key mapping is STATE_COLORS in the node.
-    colors:
-      idle: [160, 160, 160]
-      detecting: [160, 160, 160]
-      approaching: [0, 200, 255]
-      inserting: [128, 255, 0]
-      go: [0, 200, 0]
-      no_go: [0, 0, 220]
+# ---------------------------------------------------------------------------
+# dashboard: composites fork_overlay's image with a HUD of everything that is
+# NOT face geometry -- health, the tracker, the controller, the forks, why.
+# Publishes /dashboard/image, which video_stream.launch.py streams to a
+# browser over WebRTC (D57). See dashboard.py for the layout.
+# ---------------------------------------------------------------------------
+dashboard:
+  ros__parameters:
+
+    # [choice] Matches fork_overlay's publish_rate: there is no point drawing
+    # the HUD faster than the base image it sits on top of changes. Driven by
+    # a timer rather than the image callback, so the HUD panel keeps updating
+    # (and can show the image itself going stale) even if fork_overlay's feed
+    # stalls -- see stale_after.image below.
+    publish_rate: 5.0
+
+    # [choice] Used only until the first fork_overlay frame arrives, or if it
+    # stops arriving entirely -- the placeholder is drawn at this size so the
+    # output frame is the same size whether or not a camera image has ever
+    # existed. Matches fork_overlay.debug_width/debug_height; kept as a
+    # separate pair here (not read from the fork_overlay block) because this
+    # node has no reason to depend on that one's parameters existing.
+    placeholder_size: [640, 360]
+
+    # [choice] How long each source may go quiet before the HUD stops trusting
+    # its colour and fades the value to grey (dashboard.py's `_stale`).
+    # Roughly 3-5x each source's own publish period, the same reasoning as the
+    # watchdog's own staleness limits (D9) applied to a HUD instead of a
+    # safety stop: long enough that one missed message does not flicker the
+    # display, short enough that a genuinely dead source goes grey inside a
+    # couple of seconds rather than sitting there looking current.
+    stale_after:
+      image: 1.0           # fork_overlay publishes at 5 Hz
+      coordinator: 1.0      # /coordinator/status publishes at 20 Hz
+      health: 1.5           # /health publishes at 2 Hz
+      tracked: 1.0           # /pallet_tracker/tracked publishes at perception's 5 Hz
+      controller: 0.5        # /approach_controller/status publishes at 20 Hz,
+                             # but it is a LIFECYCLE publisher and only
+                             # delivers while the controller is active; outside
+                             # the four driving states it goes stale on
+                             # purpose, which is the correct thing to show
+      forks: 1.0             # /virtual_forks/state publishes at 10 Hz
+
+    # Panel geometry. The widget grid and the reason strip below the image are
+    # sized from these three numbers alone (dashboard.frame_size), never from
+    # how much text a frame happens to have -- so the published image size
+    # never changes frame to frame. test_dashboard.py checks the checked-in
+    # defaults here against video_stream.launch.py's declared stream height.
+    pad: 8
+    line_height: 15
+    font_scale: 0.40
 
 # ---------------------------------------------------------------------------
 # watchdog: measures whether the stack is healthy, and stops the robot when it

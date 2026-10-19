@@ -806,6 +806,72 @@ fall back to the one that does.
 This was a decided requirement (ROADMAP, lab session B) that the stage 7 work
 left unimplemented. (Stage 7)
 
+## 2026-10-19 (the video dashboard)
+
+**D57. One video stream, watchable from the laptop, carries everything -- not
+just the camera.** Athreya built the transport (GStreamer -> MediaMTX ->
+WebRTC, `video_stream.py`/`video_streamer.py`/`config/mediamtx.yaml`) and
+asked for "literally all information" about the pipeline on the one screen it
+serves. Decided here is what that becomes in practice: `dashboard_node`
+subscribes LOCALLY to `/fork_overlay/image` and five telemetry topics, draws a
+HUD panel underneath the existing fork/pocket overlay, and republishes the
+composite on `/dashboard/image`, which is the stream `video_stream.launch.py`
+points a browser at by default. The camera stream (`/zed`) stays available
+separately for checking the camera itself.
+
+Five things worth recording about how it is built, because each one is a
+place a HUD like this normally goes quietly wrong:
+
+- **Every value is shown as of when it arrived, not assumed current.**
+  `dashboard.Snapshot` tracks a `*_at` timestamp per source alongside its
+  value, the same shape as `health.py`'s age tracking, and a value older than
+  `dashboard.stale_after.<source>` fades to grey with its age rather than
+  sitting there looking live. This project has reintroduced the same bug
+  (silent fallback, D-many) often enough that a HUD -- the place it is most
+  tempting, because a frozen number still looks like a number -- gets it built
+  in from the start rather than added after someone is fooled by it.
+- **The camera frame itself gets the same treatment.** If `/fork_overlay/image`
+  stops updating, the picture is still a picture; nothing else about the
+  design would show that. A red border and an age tag appear directly on the
+  image when it goes stale, and a grey placeholder with "NO CAMERA FEED"
+  replaces it if none has arrived at all -- so the dashboard degrades to
+  telemetry-only rather than to a frozen or blank frame that looks fine.
+- **The output frame size is fixed, never data-dependent.** Every widget is
+  exactly a title line and two value lines; a reason too long to fit is
+  truncated with an ellipsis rather than growing the panel. `dashboard.
+  frame_size` computes the total canvas size from configuration alone, with no
+  image or text content involved, so `video_stream.launch.py`'s declared
+  stream resolution can match it exactly -- `test_dashboard.py` checks the
+  checked-in default against that computation and fails if they drift.
+- **The state-colour palette moved to the shared `/**` block in params.yaml,**
+  because two differently-named nodes (`fork_overlay`, `dashboard`) now draw
+  in it, and a node's own parameter block is only visible to that node --
+  `fork_overlay` and `dashboard` would otherwise have needed two copies that
+  could silently disagree. While doing this, `fork_overlay_node` turned out to
+  be missing `colors.inserting` entirely: `_params()` read it with an
+  f-string-built key (`get(f'colors.{k}')`), which the static declared/read
+  scraper in `test_params.py` cannot see, so the gap was invisible to the one
+  test built to catch exactly this. The overlay's own guard against a
+  rendering bug taking the node down ("an overlay bug must not take the node
+  down") caught the resulting exception every time, which meant **the fork
+  overlay silently stopped updating during INSERTING and LIFTING** -- the two
+  states where its colour change matters most -- since the first frame after
+  Day 8. Fixed two ways: the missing declaration, and rewriting every colour
+  read in both nodes as one explicit literal `get('colors.X')` call instead of
+  a loop over an f-string, so the scraper can verify every one of them and
+  this class of bug cannot reach either node again unnoticed.
+- **A new topic, `/coordinator/status`, publishes the live reason continuously
+  (20 Hz).** `/coordinator/state` (plain `String`, just the state name) stays
+  as it is, because `fork_overlay` already keys its colour off it. Before this,
+  the *reason* a state was what it was only reached an action goal's own
+  feedback -- invisible to anything that was not the caller of that specific
+  goal, including a HUD, rqt, or an operator who started watching mid-run.
+
+Decided by Claude under the "pure engineering" allowance (CLAUDE.md hard rule
+1): nothing here changes what the robot does or any safety behaviour: it is
+read-only observability built on topics that already existed, plus one new
+read-only status topic. (Stage 8, video streaming)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

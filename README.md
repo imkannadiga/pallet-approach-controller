@@ -109,13 +109,9 @@ Three safety properties are worth stating because they have no exceptions:
 Everything runs on the Jetson, next to the camera: depth never crosses the
 network, only `/cmd_vel`, `/tf` and odometry do.
 
-```bash
-./docker/build_and_run.sh build
-./docker/build_and_run.sh launch
-```
-
-One entry point. `up` starts every node and then waits — nothing moves, and
-nothing will until a run is triggered:
+One entry point. `up` starts every node — including MediaMTX and the video
+streams, by default — and then waits: nothing moves, and nothing will until a
+run is triggered:
 
 ```bash
 ./docker/build_and_run.sh build
@@ -140,6 +136,17 @@ inserting nothing. An unknown mode is refused, not defaulted. A run is refused
 if the stack is unhealthy when the trigger arrives, naming the sensor that is
 stale or slow, and the refusal is published on `/pallet_approach/result` as
 well as logged — nothing is waiting on a return value.
+
+Watch it from a laptop on the robot's Wi-Fi, no ROS install needed:
+
+    http://<jetson-ip>:8889/dashboard   forks, pockets, health, tracker,
+                                         controller, forks, and why
+    http://<jetson-ip>:8889/zed         the raw camera, unannotated
+
+Nothing on that page is a ROS topic over the network — the composite image is
+built on the Jetson and sent out as H.264/WebRTC (`docs/SYSTEM.md` has the
+pipeline and why, including the one time a remote ROS subscriber brought the
+whole camera node to its knees).
 
 The action server does the same thing with live feedback, and is the better way
 to run one by hand:

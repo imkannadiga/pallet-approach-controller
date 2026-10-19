@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Health.msg"
   "msg/ForkState.msg"
   "msg/TrackedPallet.msg"
+  "msg/CoordinatorStatus.msg"
   "msg/DriveCommand.msg"
   "msg/DriveStatus.msg"
   "action/PalletTask.action"

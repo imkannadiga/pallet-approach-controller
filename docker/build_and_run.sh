@@ -238,18 +238,25 @@ case "${1:-}" in
       dry)
         docker run "${ARGS[@]}" "$IMAGE" bash -lc \
           'source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py cmd_vel:=/cmd_vel_dry'
+        JETSON_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
         echo
         echo "started $CONTAINER with the wheels DISCONNECTED."
         echo "  commands go to /cmd_vel_dry; the base will not see them."
         echo "  ./docker/build_and_run.sh logs"
+        echo
+        echo "watch it: http://${JETSON_IP:-<jetson-ip>}:8889/dashboard"
         ;;
       up)
         docker run "${ARGS[@]}" "$IMAGE"
+        JETSON_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
         echo
         echo "started $CONTAINER. Nothing moves until a run is triggered:"
         echo "  ros2 topic pub --once /pallet_approach/start std_msgs/String \"{data: approach_only}\""
         echo "  ros2 topic echo /pallet_approach/result"
         echo "  ./docker/build_and_run.sh logs"
+        echo
+        echo "watch it: http://${JETSON_IP:-<jetson-ip>}:8889/dashboard"
+        echo "  (video_stream:=false to skip MediaMTX if it is not wanted)"
         ;;
       *)
         docker run "${ARGS[@]}" "$IMAGE" ;;

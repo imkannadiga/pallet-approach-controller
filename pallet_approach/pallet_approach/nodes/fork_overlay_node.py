@@ -22,6 +22,13 @@ still 8.4 px after halving, which is plenty to see.
 
 The fork height comes from the virtual fork simulator, so the lowering and the
 lift are visible on the image rather than only in a log line.
+
+This was "the only image this stack publishes" until 2026-10-19. It no longer
+is: `dashboard_node.py` subscribes to this one, adds a HUD of everything that
+is NOT face geometry (health, the tracker, the controller, the forks, why),
+and republishes a second, taller image on `/dashboard/image`. That one, not
+this one, is what `video_stream.launch.py` points a browser at by default --
+see `docs/SYSTEM.md`. This node's own job is unchanged.
 """
 
 from __future__ import annotations
@@ -39,6 +46,7 @@ from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach import fork_overlay
 from pallet_approach.calibration import correct_transform, correction_matrix
+from pallet_approach.dashboard import STATE_COLOR_KEYS as STATE_COLORS
 from pallet_approach.model import Plane
 from pallet_approach.nodes._common import image_to_array, intrinsics_from_camera_info
 from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matrix
@@ -48,21 +56,11 @@ SENSOR_QOS = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
 # Coordinator state -> the key in the fork_overlay.colors parameter block.
 # Grouped by what the robot is doing rather than one colour per state: looking
 # (grey), driving towards the pallet (amber), committed with the forks in or
-# going in (green), and stopped because something was wrong (red).
-STATE_COLORS = {
-    'IDLE': 'idle',
-    'CONFIRMING': 'detecting',
-    'CLASSIFYING': 'detecting',
-    'BACKING_OFF': 'approaching',
-    'CLOSING': 'approaching',
-    'CHECKING': 'approaching',
-    'LOWERING': 'go',
-    'INSERTING': 'inserting',
-    'LIFTING': 'inserting',
-    'BACKING_OUT': 'go',
-    'DONE': 'idle',
-    'ABORTED': 'no_go',
-}
+# going in (green), and stopped because something was wrong (red). Moved to
+# dashboard.py (STATE_COLOR_KEYS) on 2026-10-19, imported back here under the
+# old name, so the HUD panel on /dashboard/image can use the exact same
+# mapping for its own state text without this file changing anything it
+# draws.
 
 
 class ForkOverlayNode(Node):
@@ -135,8 +133,21 @@ class ForkOverlayNode(Node):
             self.declare_parameter(name, default)
         for name, default in (
             ('colors.idle', [160, 160, 160]), ('colors.detecting', [160, 160, 160]),
-            ('colors.approaching', [0, 200, 255]), ('colors.go', [0, 200, 0]),
-            ('colors.no_go', [0, 0, 220]),
+            ('colors.approaching', [0, 200, 255]),
+            # 'inserting' was missing here until 2026-10-19: get(f'colors.
+            # inserting') in _params() below reads it on every INSERTING or
+            # LIFTING frame, and since that read used an f-string the static
+            # declared/read scraper (test_params.py) could not see it either --
+            # so the bug was invisible to the one test built to catch exactly
+            # this. It raised ParameterNotDeclaredException, caught by this
+            # node's own "an overlay bug must not take the node down" guard,
+            # which means the overlay silently stopped updating for the two
+            # states where its colour change matters most. Fixed two ways:
+            # the missing declaration, and switching _params() to one
+            # explicit get() call per key so the scraper can never miss this
+            # again.
+            ('colors.inserting', [128, 255, 0]),
+            ('colors.go', [0, 200, 0]), ('colors.no_go', [0, 0, 220]),
         ):
             self.declare_parameter(name, default)
 
@@ -158,9 +169,17 @@ class ForkOverlayNode(Node):
                 bottom_height=(get('forks.bottom_height')
                                if self._fork_height is None
                                else self._fork_height)),
-            'colors': {k: tuple(int(v) for v in get(f'colors.{k}')) for k in (
-                'idle', 'detecting', 'approaching', 'inserting', 'go',
-                'no_go')},
+            # Explicit literal calls to get(), not a loop over an f-string
+            # key -- see the comment on 'colors.inserting' in _declare above
+            # for why that distinction is load-bearing here, not just style.
+            'colors': {
+                'idle': tuple(int(v) for v in get('colors.idle')),
+                'detecting': tuple(int(v) for v in get('colors.detecting')),
+                'approaching': tuple(int(v) for v in get('colors.approaching')),
+                'inserting': tuple(int(v) for v in get('colors.inserting')),
+                'go': tuple(int(v) for v in get('colors.go')),
+                'no_go': tuple(int(v) for v in get('colors.no_go')),
+            },
             'alpha': get('alpha'),
             'line_thickness': get('line_thickness'),
             'draw_pockets': get('draw_pockets'),

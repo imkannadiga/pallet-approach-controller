@@ -32,6 +32,7 @@ NODE_NAMES = {
     'watchdog_node.py': 'watchdog',
     'tracker_node.py': 'pallet_tracker',
     'forks_node.py': 'virtual_forks',
+    'dashboard_node.py': 'dashboard',
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")
@@ -546,31 +547,42 @@ def test_the_slab_is_wider_than_the_face_is_uneven(params_file):
 def test_the_overlay_has_a_colour_for_every_coordinator_state(params_file):
     """A join nothing else checks, in both directions.
 
-    The overlay maps coordinator states to colour keys and the keys come from
-    params.yaml. A state the map misses draws grey, which looks deliberate; a
-    key the map names and the YAML lacks raises in a callback, which does not.
-    Read statically, because the node imports rclpy.
+    `STATE_COLOR_KEYS` lives in `dashboard.py` (moved there 2026-10-19 so
+    `dashboard_node`'s HUD and `fork_overlay_node`'s panel share one mapping
+    rather than two that can drift apart) and has no ROS import, so this
+    imports it directly instead of scraping the source -- more direct than the
+    regex this test used while the dict lived inside a node file, and exactly
+    as reliable. A state the mapping misses draws grey, which looks
+    deliberate; a key it names that params.yaml lacks raises in a callback,
+    which does not.
 
     This is the same shape as the three runtime failures of 2026-10-15 -- a
     parameter declared on one side only, a message field assigned but not
-    declared, a tool reading a key that had moved -- and it is checked the same
-    way.
+    declared, a tool reading a key that had moved -- and it is checked the
+    same way.
     """
     from pallet_approach.coordinator import State
-
-    source = strip_comments((NODES / 'fork_overlay_node.py').read_text())
-    block = source[source.index('STATE_COLORS = {'):]
-    block = block[:block.index('}')]
-    mapped = dict(re.findall(r"""['"](\w+)['"]\s*:\s*['"](\w+)['"]""", block))
+    from pallet_approach.dashboard import STATE_COLOR_KEYS
 
     missing = sorted(state.value for state in State
-                     if state.value not in mapped)
+                     if state.value not in STATE_COLOR_KEYS)
     assert not missing, (
-        f'the overlay has no colour for {missing}, so those states draw as '
-        f'whatever the fallback is and look deliberate')
+        f'STATE_COLOR_KEYS has no entry for {missing}, so those states draw '
+        f'as whatever the fallback is and look deliberate')
 
-    configured = set(params_file['fork_overlay']['ros__parameters']['colors'])
-    unknown = sorted(set(mapped.values()) - configured)
+    # Shared (D57): both fork_overlay and dashboard draw in this palette, so
+    # it lives in /**, not in either node's own block.
+    configured = set(params_file['/**']['ros__parameters']['colors'])
+    unknown = sorted(set(STATE_COLOR_KEYS.values()) - configured)
     assert not unknown, (
-        f'the overlay maps states to colour keys {unknown}, which params.yaml '
-        f'does not define -- the node raises on the first frame')
+        f'STATE_COLOR_KEYS maps states to colour keys {unknown}, which '
+        f'params.yaml does not define -- whichever node reads it raises on '
+        f'the first frame')
+
+    # fork_overlay_node has to be using THIS mapping, not a stale copy of its
+    # own -- read statically, because the node imports rclpy.
+    source = strip_comments((NODES / 'fork_overlay_node.py').read_text())
+    assert re.search(r'from pallet_approach\.dashboard import STATE_COLOR_KEYS',
+                     source), (
+        'fork_overlay_node no longer imports the shared state-colour mapping; '
+        'check it has not gone back to defining its own')

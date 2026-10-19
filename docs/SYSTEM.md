@@ -620,18 +620,43 @@ is the better way to run one by hand.
 | `/virtual_forks/state` | `ForkState` | 10 Hz | carriage height, loaded |
 | `/health` | `Health` | 2 Hz | sensor ages and rates |
 | `/diagnostics` | `DiagnosticArray` | 2 Hz | the same, for rqt |
-| `/coordinator/state` | `String` | on change | the sequence state |
+| `/coordinator/state` | `String` | on change | the sequence state alone, for fork_overlay's colour |
+| `/coordinator/status` | `CoordinatorStatus` | 20 Hz | state, mode, side, **live reason**, outcome, elapsed (D57) |
 | `/pallet_approach/result` | `PalletTask_Result` | per run | the outcome, for a topic-started run |
-| `/fork_overlay/image` | `Image` | **5 Hz, 640×360** | the only image; see below |
+| `/fork_overlay/image` | `Image` | 5 Hz, 640×360 | forks + pockets drawn on the camera frame |
+| `/dashboard/image` | `Image` | 5 Hz, 640×520 | the overlay image plus a HUD of everything else (D57) |
 
-**The two point clouds and the overlay image must not be subscribed to from the
-main PC.** Measured 2026-10-13: one subscriber to a raw ZED image topic from the
-other machine dropped the whole ZED node to about 0.2 Hz. The clouds are
-purpose-built and small (a few thousand points each), and they exist because two
-GO/NO-GO rules take points rather than an estimate and treat missing data as a
-NO-GO; they travel between two nodes a process apart on the Jetson. The overlay
-is already downscaled and decimated for remote viewing, and it is the only image
-this stack publishes at all.
+**None of the images or point clouds above may be subscribed to from the main
+PC as ROS topics.** Measured 2026-10-13: one subscriber to a raw ZED image
+topic from the other machine dropped the whole ZED node to about 0.2 Hz. The
+two point clouds are purpose-built and small (a few thousand points each), and
+exist because two GO/NO-GO rules take points rather than an estimate and treat
+missing data as a NO-GO; they travel between two nodes a process apart on the
+Jetson. Both images are downscaled and decimated for the same reason.
+
+**Watching `/dashboard/image` from another machine is still fine** -- it goes
+out over MediaMTX/WebRTC (`video_stream.launch.py`), not as a ROS topic
+subscription. `dashboard_node` subscribes to `/fork_overlay/image` and the five
+telemetry topics above LOCALLY, composites a HUD panel onto the camera frame
+(health, the tracker's confidence and LiDAR cross-check, what the controller is
+driving and measuring, the forks, and the live reason), and republishes the
+result; `video_streamer` then re-encodes THAT to H.264 and hands it to
+MediaMTX. The browser never touches a ROS topic at all. See
+`pallet_approach/dashboard.py` for the HUD layout and `video_stream.py` for the
+encoding pipeline.
+
+    http://<jetson-ip>:8889/dashboard   everything: forks, pockets, health,
+                                         tracker, controller, forks, why
+    http://<jetson-ip>:8889/zed         the raw camera, for checking the
+                                         camera itself
+
+Every value on the dashboard is shown as of when it arrived, not assumed
+current: a field whose source has never published reads `--` in grey, and one
+older than its configured `stale_after` limit fades to grey with its age
+rather than sitting there looking live. The camera frame itself gets the same
+treatment -- a red border and an age tag if `/fork_overlay/image` has stopped
+updating, because a frozen picture is the one piece of stale data that looks
+most like it is still live.
 
 ## What has and has not been tested on the robot
 

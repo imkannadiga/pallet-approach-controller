@@ -197,3 +197,32 @@ def test_the_coordinator_sets_only_action_fields_that_exist():
     assert not problems, (
         'coordinator_node uses PalletTask fields that do not exist:\n  '
         + '\n  '.join(problems))
+
+
+def test_coordinator_status_assigns_only_declared_fields():
+    """The same join as `test_ros_conversions_assigns_no_field_the_msg_lacks`,
+    for `CoordinatorStatus` -- the newest message, and so the one most likely
+    to have a field renamed on one side and not the other before anyone
+    notices. Checked both directions for the reason that test gives: a
+    declared-but-unassigned field publishes a plausible wrong value forever
+    (NaN or '' here, which at least look like "unset"), while an
+    assigned-but-undeclared one throws inside `_tick`, at 20 Hz, which the
+    node's exception handling does NOT wrap -- unlike perception's per-frame
+    guard, a crash in `_tick` takes the whole coordinator down.
+    """
+    msg = INTERFACES / 'msg' / 'CoordinatorStatus.msg'
+    source = (INTERFACES.parent / 'pallet_approach' / 'pallet_approach' / 'nodes'
+              / 'coordinator_node.py').read_text()
+    declared = set(declared_fields(msg)) - {'header'}
+    start = source.index('def _publish_status')
+    end = source.index('\n    def ', start + 1)
+    body = source[start:end]
+    assigned = set(re.findall(r'\bstatus\.([a-z_][a-z0-9_]*)\s*=', body))
+    undeclared = sorted(assigned - declared)
+    unassigned = sorted(declared - assigned)
+    assert not undeclared, (
+        f'_publish_status assigns {undeclared}, which CoordinatorStatus.msg '
+        f'does not declare -- AttributeError at 20 Hz')
+    assert not unassigned, (
+        f'CoordinatorStatus.msg declares {unassigned}, which _publish_status '
+        f'never sets -- every message publishes it as a silent default')

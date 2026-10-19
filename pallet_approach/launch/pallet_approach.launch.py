@@ -20,7 +20,13 @@ Arguments:
                          disconnected. See below.
     twist_mux:=false     do not start the mux (then the controller refuses to
                          configure, so a goal fails immediately)
+    video_stream:=false  do not start MediaMTX or the video streamers (no
+                         GStreamer/MediaMTX needed then -- useful on a
+                         desk/CI box that has neither installed)
+    encoder:=x264        forwarded to video_stream.launch.py: auto | nvenc |
+                         x264 | vp8
     overlay:=false       skip the fork overlay
+    dashboard:=false     skip the HUD dashboard (needs overlay:=true)
     watchdog:=false      skip the watchdog -- for bench work only
     log_level:=debug
 
@@ -36,8 +42,13 @@ so the base never receives a command and the robot cannot move. Watch it with:
 
     ros2 topic echo /cmd_vel_dry
     ros2 topic echo /approach_controller/status
-    ros2 topic echo /coordinator/state
+    ros2 topic echo /coordinator/status
     ros2 topic echo /health
+
+Or watch it as video: run video_stream.launch.py alongside this file and open
+http://<jetson-ip>:8889/dashboard in a browser -- the dashboard shows every
+one of those topics composited onto the camera image, which is a much faster
+way to watch a dry run than six terminals of `ros2 topic echo`.
 
 The robot stays still, so the closing loop never arrives and the run ends on
 the 240 s timeout with the pallet still 3 m away. That is the expected outcome
@@ -51,8 +62,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode, Node
 
@@ -65,7 +77,10 @@ def generate_launch_description():
     params = LaunchConfiguration('params')
     cmd_vel = LaunchConfiguration('cmd_vel')
     overlay = LaunchConfiguration('overlay')
+    dashboard = LaunchConfiguration('dashboard')
     watchdog = LaunchConfiguration('watchdog')
+    video_stream = LaunchConfiguration('video_stream')
+    encoder = LaunchConfiguration('encoder')
     mux = LaunchConfiguration('twist_mux')
     log_level = LaunchConfiguration('log_level')
     arguments = ['--ros-args', '--log-level', log_level]
@@ -80,10 +95,19 @@ def generate_launch_description():
                         'disconnected'),
         DeclareLaunchArgument('overlay', default_value='true',
                               description='run the fork overlay'),
+        DeclareLaunchArgument(
+            'dashboard', default_value='true',
+            description='composite health/tracker/controller/fork telemetry '
+                        'onto the overlay image; needs overlay:=true'),
         DeclareLaunchArgument('watchdog', default_value='true',
                               description='run the health watchdog and safety stop'),
         DeclareLaunchArgument('twist_mux', default_value='true',
                               description='run twist_mux; without it nothing drives'),
+        DeclareLaunchArgument(
+            'video_stream', default_value='true',
+            description='start MediaMTX and the WebRTC video streams'),
+        DeclareLaunchArgument('encoder', default_value='x264',
+                              description='forwarded to video_stream.launch.py'),
         DeclareLaunchArgument('log_level', default_value='info'),
 
         # Arbitration: safety stop > pallet controller > Nav2 (D3, D10, D30).
@@ -146,5 +170,29 @@ def generate_launch_description():
             name='fork_overlay', output='screen',
             parameters=[params], arguments=arguments,
             condition=IfCondition(overlay),
+        ),
+        # Subscribes to fork_overlay's image, so it has nothing to draw on if
+        # overlay:=false -- it still runs and still publishes the HUD panel on
+        # a placeholder (dashboard.render's "NO CAMERA FEED" path), which is
+        # more useful than crashing but is not what dashboard:=true is for.
+        # The launch file does not enforce overlay:=true here; it is on the
+        # operator to not turn one off without the other.
+        Node(
+            package='pallet_approach', executable='dashboard',
+            name='dashboard', output='screen',
+            parameters=[params], arguments=arguments,
+            condition=IfCondition(dashboard),
+        ),
+
+        # MediaMTX plus both video streams (dashboard, raw camera). A separate
+        # launch file (video_stream.launch.py) because it can also be run on
+        # its own against an already-running stack; included here so that `up`
+        # genuinely starts everything in one command, which is the point of
+        # having one entry point at all.
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                os.path.join(share, 'launch', 'video_stream.launch.py')]),
+            launch_arguments={'encoder': encoder}.items(),
+            condition=IfCondition(video_stream),
         ),
     ])

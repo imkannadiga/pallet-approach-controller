@@ -73,6 +73,7 @@ from std_msgs.msg import Bool, Empty, String
 
 from pallet_approach_interfaces.action import PalletTask
 from pallet_approach_interfaces.msg import (
+    CoordinatorStatus,
     DriveCommand,
     DriveStatus,
     ForkState,
@@ -138,6 +139,12 @@ class CoordinatorNode(Node):
         """Has the current outcome been published on `~/result` yet? True to
         begin with, because there is no outcome to report before the first
         run."""
+        self._run_started_at: float | None = None
+        """When the current run was triggered, for `CoordinatorStatus.elapsed`.
+        `None`, not 0.0, while no run has ever started -- 0.0 is a clock
+        reading `Coordinator.started_at` itself uses internally, and reusing
+        it here as an "unset" sentinel is the exact mistake `health.py` and
+        `rate_limit.FrameGate` were both written to rule out."""
         self._active_nodes = {name: False for name in MANAGED}
 
         self._drive_pub = self.create_publisher(
@@ -145,6 +152,8 @@ class CoordinatorNode(Node):
         self._fork_pub = self.create_publisher(
             String, '/virtual_forks/command', RELIABLE)
         self._state_pub = self.create_publisher(String, '~/state', RELIABLE)
+        self._status_pub = self.create_publisher(
+            CoordinatorStatus, '~/status', RELIABLE)
         self._lock_pub = self.create_publisher(
             Bool, self._get('topics.nav_lock'), RELIABLE)
         self._pose_pub = self.create_publisher(PoseStamped, '~/pallet_pose', RELIABLE)
@@ -436,6 +445,7 @@ class CoordinatorNode(Node):
         self._last_outcome = None
         self._last_reason = ''
         self._reported = False
+        self._run_started_at = self._now()
         if not self._configure_all():
             return False
         self._apply(self._machine.trigger(self._now(), mode))
@@ -509,6 +519,27 @@ class CoordinatorNode(Node):
                 self._result(self._last_outcome, self._last_reason))
             if self._goal_handle is None:
                 self._apply(self._machine.to_idle(now))
+
+        self._publish_status(now)
+
+    def _publish_status(self, now: float) -> None:
+        """The live telemetry an action goal's feedback cannot reach: a
+        passive observer (the dashboard, rqt, a log) that was not the one who
+        sent the goal, or was watching before any goal existed at all.
+        Published every tick (D55's `/coordinator/status`) -- cheap, and the
+        only way anything downstream can see the CURRENT reason rather than
+        only the final one on `~/result`.
+        """
+        status = CoordinatorStatus()
+        status.header.stamp = self.get_clock().now().to_msg()
+        status.state = self._machine.state.value
+        status.mode = self._machine.mode
+        status.side = self._machine.side
+        status.reason = self._machine.last_reason
+        status.outcome = self._last_outcome.value if self._last_outcome else ''
+        status.elapsed = (float('nan') if self._run_started_at is None
+                          else float(now - self._run_started_at))
+        self._status_pub.publish(status)
 
     # -------------------------------------------------------------- GO/NO-GO
 
