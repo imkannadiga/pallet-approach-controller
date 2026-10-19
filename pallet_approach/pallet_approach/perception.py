@@ -893,12 +893,19 @@ def classify_side(
     return by_spacing, detail
 
 
+def _face_axis_of(normal: np.ndarray) -> np.ndarray:
+    """Horizontal unit vector along a face, perpendicular to its normal."""
+    axis = np.array([-normal[1], normal[0], 0.0])
+    return axis / float(np.linalg.norm(axis))
+
+
 def estimate_pallet(
     depth: np.ndarray,
     intrinsics: dict,
     camera_to_base: np.ndarray,
     params: dict,
     stamp: float = 0.0,
+    decision_points: dict | None = None,
 ) -> PalletEstimate | None:
     """Run the whole pipeline on one depth frame. None means "no pallet here".
 
@@ -913,6 +920,13 @@ def estimate_pallet(
         camera_to_base: (4, 4) base_footprint <- camera_optical, from tf at
             `stamp`. Note the target frame: ground level, not the body frame.
         params: the `pallet_perception` block of params.yaml, as a dict.
+        decision_points: optional dict, filled in with `cluster` (the selected
+            pallet cluster) and `scene` (floor-removed points in a box around
+            the face). Two GO/NO-GO rules need points rather than an estimate
+            -- `check_overhang` and `check_pocket_clearance` -- and both treat
+            missing data as a NO-GO rather than a pass, so without this the
+            coordinator refuses every run. The node publishes what lands here;
+            the coordinator passes it to the rules.
         stamp: image timestamp in seconds, copied into the estimate.
 
     Returns:
@@ -970,6 +984,23 @@ def estimate_pallet(
         return None
     face_normal, face_centroid, face_mask = face
     yaw = face_yaw(face_normal)
+
+    if decision_points is not None:
+        # The cluster, for the overhang rule, and a BOX AROUND THE FACE for the
+        # pocket clearance rule -- not the whole scene. The clearance boxes are
+        # `pocket_clearance_depth` deep and no wider than a pocket, so points
+        # outside this box cannot affect either rule, and publishing the whole
+        # ROI instead would be hundreds of kilobytes a second for information
+        # nothing reads.
+        decision_points['cluster'] = pallet
+        lateral = max([cfg['face_width'] for cfg in params.get('sides', {}).values()]
+                      or [params['pallet_width']]) / 2.0 + 0.20
+        ahead = (points - face_centroid) @ face_normal
+        sideways = (points - face_centroid) @ _face_axis_of(face_normal)
+        near_face = ((ahead > -0.10) & (ahead < 0.60)
+                     & (np.abs(sideways) <= lateral)
+                     & (floor.height_of(points) < 0.60))
+        decision_points['scene'] = points[near_face]
  
     # 11. The holes. Fewer than two is NOT "no pallet": the estimate is still
     # returned, and go_nogo turns it into a NO-GO with a reason.

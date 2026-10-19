@@ -407,14 +407,32 @@ class DivergenceDetector:
     The first is safe and the second is not, and only the trend tells them
     apart.
 
-    Both conditions have to hold, because consecutive growth alone fires on
-    noise once the error is small: five frames of 1 mm steps at the standoff is
-    measurement scatter, not divergence.
+    Three conditions have to hold, and the third was added after the offline
+    harness measured the first two aborting runs that were working perfectly.
+
+    Monotone growth is a fragile statistic under measurement noise. Five
+    strictly increasing samples happen by chance once in 120 windows of white
+    noise, and a converged robot driving a long run-up produces hundreds of
+    windows of near-constant offset for the noise to work on. Measured in
+    `test_sequence.py` at 10 mm of position noise: from a 9 m run-up the
+    detector aborted **3 runs in 12** at five frames, and none at eight.
+    `min_growth` barely helped, because the growth accumulates over the window.
+
+    So: eight frames rather than five, and **nothing is judged while the error
+    is inside `min_offset`** -- a 15 mm error wobbling by 5 mm is measurement
+    scatter whichever direction it wobbles, and the closing loop deliberately
+    stops correcting down there anyway (`straighten_offset`).
+
+    The cost is latency: eight frames at 5 Hz is 1.6 s rather than 1.0 s, which
+    at the 0.10 m/s closing speed is 160 mm of extra travel before a real
+    divergence is caught. Worth it against a one-in-four chance of aborting a
+    good run.
     """
 
-    def __init__(self, frames: int, min_growth: float):
+    def __init__(self, frames: int, min_growth: float, min_offset: float = 0.0):
         self.frames = int(frames)
         self.min_growth = float(min_growth)
+        self.min_offset = float(min_offset)
         self.reset()
 
     def reset(self) -> None:
@@ -425,6 +443,13 @@ class DivergenceDetector:
     def update(self, offset: float) -> tuple[bool, str]:
         """Offer one frame's lateral offset. Returns (diverging, detail)."""
         magnitude = abs(float(offset))
+        if magnitude < self.min_offset:
+            # Already where it needs to be. Growth down here is noise, and the
+            # servo is not trying to correct it either.
+            self._last = None
+            self._start = None
+            self.consecutive = 0
+            return False, ''
         if self._last is None or magnitude <= self._last:
             self._last = magnitude
             self._start = magnitude

@@ -47,8 +47,9 @@ from tf2_ros import Buffer, TransformListener
 
 from pallet_approach_interfaces.msg import DriveCommand, DriveStatus, TrackedPallet
 
-from pallet_approach import closing, insertion
-from pallet_approach.controller import ZERO, Command, RateLimiter
+from pallet_approach import closing
+from pallet_approach.controller import ZERO, RateLimiter
+from pallet_approach.drive import MODES, DriveExecutor, Request, Result
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     command_to_twist,
@@ -61,8 +62,6 @@ from pallet_approach.ros_conversions import (
 RELIABLE = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
 BEST_EFFORT = QoSProfile(depth=2, reliability=ReliabilityPolicy.BEST_EFFORT)
 
-MODES = ('STOP', 'CLOSE', 'REVERSE', 'INSERT', 'BACKOUT')
-
 
 class ControllerNode(LifecycleNode):
 
@@ -71,7 +70,6 @@ class ControllerNode(LifecycleNode):
         self._declare()
         self._active = False
         self._pose = None
-        self._mode = 'STOP'
         self._command = None
         self._command_at = 0.0
         self._tracked = None
@@ -84,17 +82,11 @@ class ControllerNode(LifecycleNode):
         self._last_tick = None
         self._buffer = None
         self._listener = None
-
-        # per-move state, reset on every new command
         self._start_pose = None
-        self._travelled = 0.0
-        self._phase = closing.Phase.CLOSING
-        self._plan = None
-        self._unmeasured = 0
-        self._divergence = None
-        self._done = False
-        self._abort = False
-        self._reason = 'idle'
+        self._executor = None
+        """The per-move logic, in `drive.py`. Separate so that the join between
+        the sequence and the control laws can be run at a desk against
+        `test/simulate.py` instead of on a robot."""
 
     # ------------------------------------------------------------- params
 
@@ -230,6 +222,12 @@ class ControllerNode(LifecycleNode):
 
         self._limiter = RateLimiter(self._get('limits.max_linear_accel'),
                                     self._get('limits.max_angular_accel'))
+        self._executor = DriveExecutor({
+            'limits': self._limits(),
+            'closing': self._closing_params(),
+            'reverse': self._reverse_params(),
+            'insert': self._insert_params(),
+        })
         self.get_logger().info(
             f'configured; commands go to {topic} '
             f'({self.count_subscribers(topic)} subscriber(s)); '
@@ -249,7 +247,8 @@ class ControllerNode(LifecycleNode):
         return self.count_subscribers(topic) > 0
 
     def on_activate(self, state: State) -> TransitionCallbackReturn:
-        self._reset('STOP', 'activated, waiting for a drive command')
+        self._executor.start(Request('STOP'))
+        self._start_pose = self._pose
         self._command = None
         self._limiter.reset()
         self._last_tick = None
@@ -299,7 +298,7 @@ class ControllerNode(LifecycleNode):
     # ------------------------------------------------------------ callbacks
 
     def _on_odom(self, msg: Odometry):
-        """Accumulate PATH LENGTH, not displacement.
+        """Feed the executor PATH LENGTH, not displacement.
 
         A move that curves covers more ground than it displaces, and the
         insertion stop is about how far the wheels turned. Publishing both
@@ -307,9 +306,9 @@ class ControllerNode(LifecycleNode):
         them shows up as the robot curving when it was told not to.
         """
         pose = pose2d_from_odometry(msg)
-        if self._pose is not None:
-            self._travelled += math.hypot(pose.x - self._pose.x,
-                                          pose.y - self._pose.y)
+        if self._pose is not None and self._executor is not None:
+            self._executor.advance(math.hypot(pose.x - self._pose.x,
+                                              pose.y - self._pose.y))
         self._pose = pose
 
     def _on_tracked(self, msg: TrackedPallet):
@@ -324,40 +323,29 @@ class ControllerNode(LifecycleNode):
 
     def _on_drive(self, msg: DriveCommand):
         self._command_at = self._now()
-        if msg.mode == self._mode and self._command is not None:
+        if msg.mode == self._executor.mode and self._command is not None:
             # A repeat of the move in progress, which is how the coordinator
             # keeps the command fresh. Refreshing the timestamp is all it does;
             # restarting the move would reset `travelled` every frame and the
             # robot would drive for ever.
             return
         if msg.mode not in MODES:
-            self._reset('STOP', f'unknown drive mode {msg.mode!r}')
-            self._abort = True
+            self._executor.start(Request('STOP'))
+            self._executor.abort = True
+            self._executor.reason = f'unknown drive mode {msg.mode!r}'
             self.get_logger().error(
                 f'unknown drive mode {msg.mode!r}; stopping. Known: '
                 f'{", ".join(MODES)}')
             return
         self._command = msg
-        self._reset(msg.mode, f'{msg.mode} requested')
+        self._executor.start(Request(mode=msg.mode, distance=msg.distance,
+                                     side=msg.side))
+        self._start_pose = self._pose
+        if self._limiter is not None:
+            self._limiter.reset()
         self.get_logger().info(
             f'{msg.mode}' + (f' {msg.distance:.3f} m' if msg.distance else '')
             + (f' into the {msg.side} face' if msg.side else ''))
-
-    def _reset(self, mode: str, reason: str):
-        self._mode = mode
-        self._start_pose = self._pose
-        self._travelled = 0.0
-        self._phase = closing.Phase.CLOSING
-        self._plan = None
-        self._unmeasured = 0
-        self._done = False
-        self._abort = False
-        self._reason = reason
-        self._divergence = closing.DivergenceDetector(
-            self._get('closing.divergence_frames'),
-            self._get('closing.min_divergence_growth'))
-        if self._limiter is not None:
-            self._limiter.reset()
 
     # --------------------------------------------------------------- lidar
 
@@ -386,200 +374,96 @@ class ControllerNode(LifecycleNode):
         dt = 0.0 if self._last_tick is None else now - self._last_tick
         self._last_tick = now
 
+        result, note = self._evaluate(now)
+
         status = DriveStatus()
         status.header.stamp = self.get_clock().now().to_msg()
-        status.mode = self._mode
-        status.phase = self._phase.value if self._mode == 'CLOSE' else ''
-        status.face_range = float('nan')
-        status.lateral_offset = float('nan')
-        status.heading_error = float('nan')
-        status.rear_clearance = float('nan')
-
-        command = self._decide(now, status)
-
-        status.arrived = bool(self._done)
-        status.abort = bool(self._abort)
-        status.blocked = bool(command.is_zero() and not self._done
-                              and self._mode != 'STOP')
-        status.reason = self._reason
-        status.travelled = float(self._travelled)
+        status.mode = self._executor.mode
+        status.phase = result.phase
+        status.arrived = bool(result.arrived)
+        status.abort = bool(result.abort)
+        status.blocked = bool(result.blocked and self._executor.mode != 'STOP')
+        status.reason = note or result.reason
+        status.travelled = float(self._executor.travelled)
         status.displacement = float(self._displacement())
+        status.face_range = float(result.face_range)
+        status.lateral_offset = float(result.lateral_offset)
+        status.heading_error = float(result.heading_error)
+        status.rear_clearance = float(result.rear_clearance)
         self._status_pub.publish(status)
 
-        self._publish(self._limiter.limit(command, dt) if dt > 0.0 else ZERO)
+        self._publish(self._limiter.limit(result.command, dt) if dt > 0.0 else ZERO)
+
+    def _evaluate(self, now: float):
+        """One frame of the executor, plus the refusals only the node can make.
+
+        Returns (result, note); `note` overrides the reason when the node
+        itself is the thing refusing, so that "the drive command is stale" does
+        not get reported as whatever the control law last said.
+        """
+        stop = Result(ZERO, False, False, '')
+
+        if self._executor.mode == 'STOP' or self._command is None:
+            return stop, self._executor.reason if self._command else 'no command'
+
+        age = now - self._command_at
+        if age > float(self._get('target_timeout')):
+            note = f'drive command is {age:.2f} s old; stopping'
+            self.get_logger().warning(note, throttle_duration_sec=1.0)
+            return stop, note
+
+        if self._pose is None:
+            return stop, 'no odometry yet'
+        if self._start_pose is None:
+            # The move was requested before any odometry arrived, so it has no
+            # origin to measure from. Take this pose as the origin rather than
+            # measuring from wherever the robot was when the node woke up.
+            self._start_pose = self._pose
+
+        geometry, note = self._geometry(now)
+        points = self._lidar_in_ground()
+        result = self._executor.step(geometry=geometry, lidar_points=points)
+        if result.arrived and not result.abort:
+            self.get_logger().info(f'{self._executor.mode} complete: '
+                                   f'{result.reason}',
+                                   throttle_duration_sec=5.0)
+        if result.abort:
+            self.get_logger().error(f'{self._executor.mode} aborted: '
+                                    f'{result.reason}',
+                                    throttle_duration_sec=5.0)
+        return result, note
+
+    def _geometry(self, now: float):
+        """This frame's pallet geometry, or (None, why not).
+
+        Only CLOSE needs it; the straight moves do not, and demanding it would
+        stop the insertion the moment the pockets left the camera's view, which
+        happens by design 0.58 m in (D16).
+        """
+        if self._executor.mode not in ('CLOSE', 'INSERT'):
+            return None, ''
+        if self._tracked is None:
+            return None, 'no pallet estimate yet'
+        age = now - self._tracked_at
+        if age > float(self._get('target_timeout')):
+            note = f'pallet estimate is {age:.2f} s old'
+            if self._executor.mode == 'CLOSE':
+                self.get_logger().warning(f'{note}; stopping',
+                                          throttle_duration_sec=1.0)
+                return None, f'{note}; stopping'
+            return None, ''
+        estimate, confirmed = self._tracked
+        if not confirmed and self._executor.mode == 'CLOSE':
+            # Driving on an unconfirmed track is exactly what the tracker
+            # exists to prevent.
+            return None, 'the track is not confirmed'
+        return closing.geometry_of(estimate), ''
 
     def _displacement(self) -> float:
         if self._pose is None or self._start_pose is None:
             return 0.0
         return math.hypot(self._pose.x - self._start_pose.x,
                           self._pose.y - self._start_pose.y)
-
-    def _decide(self, now: float, status) -> Command:
-        """Work out this tick's command. Returns ZERO for every refusal."""
-        if self._mode == 'STOP' or self._command is None:
-            self._reason = self._reason if self._mode == 'STOP' else 'no command'
-            return ZERO
-
-        if now - self._command_at > float(self._get('target_timeout')):
-            self._reason = (f'drive command is {now - self._command_at:.2f} s old; '
-                            f'stopping')
-            self.get_logger().warning(self._reason, throttle_duration_sec=1.0)
-            return ZERO
-
-        if self._done or self._abort:
-            return ZERO
-
-        if self._pose is None:
-            self._reason = 'no odometry yet'
-            return ZERO
-
-        if self._start_pose is None:
-            # The move was requested before any odometry had arrived, so it has
-            # no origin to measure from. Take this pose as the origin rather
-            # than measuring the travel from wherever the robot happened to be
-            # when the node woke up.
-            self._start_pose = self._pose
-            self._travelled = 0.0
-
-        if self._mode == 'CLOSE':
-            return self._close(now, status)
-        if self._mode in ('REVERSE', 'BACKOUT'):
-            return self._straight(status)
-        if self._mode == 'INSERT':
-            return self._insert(status)
-
-        self._reason = f'unhandled mode {self._mode!r}'
-        self._abort = True
-        return ZERO
-
-    def _close(self, now: float, status) -> Command:
-        if self._tracked is None:
-            self._reason = 'no pallet estimate yet'
-            return ZERO
-        age = now - self._tracked_at
-        if age > float(self._get('target_timeout')):
-            self._reason = f'pallet estimate is {age:.2f} s old; stopping'
-            self.get_logger().warning(self._reason, throttle_duration_sec=1.0)
-            return ZERO
-        estimate, confirmed = self._tracked
-        if not confirmed:
-            # Driving on an unconfirmed track is exactly what the tracker
-            # exists to prevent.
-            self._reason = 'the track is not confirmed'
-            return ZERO
-
-        params = self._closing_params()
-        geometry = closing.geometry_of(estimate)
-        status.face_range = float(geometry.range)
-        status.lateral_offset = float(geometry.offset)
-        status.heading_error = float(geometry.heading)
-
-        diverging, detail = self._divergence.update(geometry.offset)
-        if diverging:
-            self._reason = f'diverging: {detail}'
-            self._abort = True
-            self.get_logger().error(self._reason)
-            return ZERO
-
-        command, phase, reason = closing.closing_command(
-            geometry, self._phase, params, self._limits())
-        self._phase = phase
-        self._reason = reason
-        if phase is closing.Phase.ARRIVED:
-            self._done = True
-            self.get_logger().info(reason)
-        return command
-
-    def _straight(self, status) -> Command:
-        distance = -abs(float(self._command.distance))
-        params = self._reverse_params()
-
-        points = self._lidar_in_ground()
-        clearance, detail = closing.rear_clearance(points, params)
-        if clearance is not None:
-            status.rear_clearance = float(clearance)
-            remaining = abs(distance) - self._travelled
-            if clearance < remaining + float(params['clearance_margin']):
-                self._reason = (f'obstacle {clearance:.2f} m behind and '
-                                f'{remaining:.2f} m still to reverse: {detail}')
-                self._abort = True
-                self.get_logger().error(self._reason)
-                return ZERO
-
-        command, done, reason = closing.straight_command(
-            self._travelled, distance, float(params['speed']), self._limits())
-        self._reason = reason
-        if done:
-            self._done = True
-            self.get_logger().info(f'{self._mode} complete: {reason}')
-        return command
-
-    def _insert(self, status) -> Command:
-        params = self._insert_params()
-
-        if self._plan is None:
-            face = self._measured_face(params)
-            if face is None:
-                self._reason = 'cannot measure the face to plan the insertion'
-                return ZERO
-            try:
-                self._plan = insertion.plan_insertion(
-                    face, self._command.side or 'short', params)
-            except ValueError as error:
-                self._reason = f'insertion refused: {error}'
-                self._abort = True
-                self.get_logger().error(self._reason)
-                return ZERO
-            self.get_logger().info(
-                f'inserting {self._plan.travel:.3f} m into the '
-                f'{self._plan.side} face, stopping with it at '
-                f'{self._plan.stop_face_x:.3f} m, tips {self._plan.depth:.3f} m in')
-
-        points = self._lidar_in_ground()
-        face_x, lateral, detail = insertion.face_distance_ahead(
-            points, params['lidar'])
-        self._unmeasured = 0 if face_x is not None else self._unmeasured + 1
-        if face_x is not None:
-            status.face_range = float(face_x)
-            status.lateral_offset = float(lateral)
-
-        decision = insertion.stop_decision(
-            self._travelled, face_x, self._unmeasured, self._plan, params)
-        self._reason = decision.reason
-        if decision.abort:
-            self._abort = True
-            self._done = True
-            self.get_logger().error(f'insertion aborted: {decision.reason}')
-            return ZERO
-        if decision.stop:
-            self._done = True
-            self.get_logger().info(f'insertion complete: {decision.reason}')
-            return ZERO
-
-        command, _, _ = closing.straight_command(
-            self._travelled, self._plan.travel, float(params['speed']),
-            self._limits())
-        return command
-
-    def _measured_face(self, params) -> float | None:
-        """Face distance at the moment the insertion starts.
-
-        The LiDAR first, because it is the sensor that will be watching for the
-        whole drive and planning from a different source than the one that
-        stops you is how a 50 mm disagreement becomes a surprise. Perception's
-        estimate is the fallback, and if neither has an answer the insertion is
-        not planned at all.
-        """
-        points = self._lidar_in_ground()
-        face_x, _, detail = insertion.face_distance_ahead(points, params['lidar'])
-        if face_x is not None:
-            return face_x
-        self.get_logger().warning(
-            f'no LiDAR face measurement to plan from ({detail}); falling back '
-            f'to the camera estimate', throttle_duration_sec=2.0)
-        if self._tracked is None:
-            return None
-        return float(closing.geometry_of(self._tracked[0]).range)
 
 
 def main(args=None):

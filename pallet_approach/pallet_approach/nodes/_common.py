@@ -55,3 +55,36 @@ def intrinsics_from_camera_info(msg) -> dict:
 def nested(node, prefix: str, keys) -> dict:
     """Read a nested parameter block declared as `prefix.key` into a dict."""
     return {key: node.get_parameter(f'{prefix}.{key}').value for key in keys}
+
+
+def points_to_cloud(points, frame_id: str, stamp):
+    """(N, 3) NumPy array -> sensor_msgs/PointCloud2, xyz float32.
+
+    Written out rather than using `point_cloud2.create_cloud_xyz32`, for the
+    same reason as `image_to_array` above: the Humble build of that helper is
+    compiled against NumPy 1.x, which is exactly what breaks inside the ZED
+    container (docs/SYSTEM.md).
+
+    Unordered (height 1), dense, little-endian, 12 bytes a point. The
+    corresponding reader is `pallet_approach.pointcloud.unpack_cloud`, and
+    `test_pointcloud.py` puts a cloud through both.
+    """
+    from sensor_msgs.msg import PointCloud2, PointField
+
+    array = np.ascontiguousarray(np.asarray(points, dtype=np.float32).reshape(-1, 3))
+    cloud = PointCloud2()
+    cloud.header.stamp = stamp
+    cloud.header.frame_id = frame_id
+    cloud.height = 1
+    cloud.width = len(array)
+    cloud.fields = [
+        PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+        PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+        PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+    ]
+    cloud.is_bigendian = False
+    cloud.point_step = 12
+    cloud.row_step = 12 * len(array)
+    cloud.is_dense = True
+    cloud.data = array.tobytes()
+    return cloud

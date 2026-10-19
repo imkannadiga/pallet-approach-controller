@@ -39,8 +39,11 @@ class ForksNode(Node):
         self._declare()
         self._forks = ForkSimulator({
             'park_height': self.get_parameter('park_height').value,
-            'insert_height': self.get_parameter('insert_height').value,
-            'lift_travel': self.get_parameter('lift_travel').value,
+            # The shared ones, not copies: forks.bottom_height is what the
+            # overlay draws and what the pocket clearances in D27 are measured
+            # from, so the simulator must lower to exactly that.
+            'insert_height': self.get_parameter('forks.bottom_height').value,
+            'lift_travel': self.get_parameter('forks.lift_travel').value,
             'speed': self.get_parameter('speed').value,
             'tine_thickness': self.get_parameter('forks.tine_thickness').value,
         })
@@ -55,9 +58,9 @@ class ForksNode(Node):
     def _declare(self):
         self.declare_parameter('publish_rate', 10.0)
         self.declare_parameter('park_height', 0.150)
-        self.declare_parameter('insert_height', 0.040)
-        self.declare_parameter('lift_travel', 0.070)
         self.declare_parameter('speed', 0.05)
+        self.declare_parameter('forks.bottom_height', 0.040)
+        self.declare_parameter('forks.lift_travel', 0.070)
         self.declare_parameter('forks.tine_thickness', 0.040)
 
     def _now(self) -> float:

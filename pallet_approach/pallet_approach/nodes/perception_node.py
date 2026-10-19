@@ -17,7 +17,7 @@ import rclpy
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, PointCloud2
 from tf2_ros import Buffer, TransformListener
 
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
@@ -29,6 +29,7 @@ from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.nodes._common import (
     image_to_array,
     intrinsics_from_camera_info,
+    points_to_cloud,
 )
 from pallet_approach.ros_conversions import estimate_to_msg, transform_to_matrix
 
@@ -248,6 +249,18 @@ class PerceptionNode(LifecycleNode):
         # subscriber to raw depth dropped the ZED node to 0.2 Hz).
         self._diag_pub = self.create_lifecycle_publisher(
             DiagnosticArray, '~/diagnostics', 1)
+        # Two GO/NO-GO rules need points rather than an estimate --
+        # `check_overhang` and `check_pocket_clearance` -- and both treat
+        # missing data as a NO-GO rather than a pass, so without these the
+        # coordinator refuses every run with "no points to check the load
+        # against". The clouds are purpose-built and small: the pallet cluster
+        # (a few thousand voxels) and a box around the face, not the ROI. They
+        # stay on the Jetson, between two nodes a process apart; nothing
+        # subscribes to them from the main PC and nothing should.
+        self._cluster_pub = self.create_lifecycle_publisher(
+            PointCloud2, '~/cluster_points', 1)
+        self._scene_pub = self.create_lifecycle_publisher(
+            PointCloud2, '~/scene_points', 1)
         self._info_sub = self.create_subscription(
             CameraInfo, self.get_parameter('topics.depth_camera_info').value,
             self._on_camera_info, SENSOR_QOS)
@@ -425,10 +438,12 @@ class PerceptionNode(LifecycleNode):
         if self._correction is not None:
             camera_to_ground = correct_transform(camera_to_ground, self._correction)
 
+        decision_points = {}
         try:
             estimate = perception.estimate_pallet(
                 depth, self._intrinsics, camera_to_ground,
-                self._params(), stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
+                self._params(), stamp=msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+                decision_points=decision_points)
         except NotImplementedError:
             self._last_skip = 'estimate_pallet is not implemented'
             if not self._warned:
@@ -444,6 +459,13 @@ class PerceptionNode(LifecycleNode):
             return
 
         self._last_age = self._now() - stamp
+
+        ground = self.get_parameter('frames.ground').value
+        for key, publisher in (('cluster', self._cluster_pub),
+                               ('scene', self._scene_pub)):
+            points = decision_points.get(key)
+            if points is not None:
+                publisher.publish(points_to_cloud(points, ground, msg.header.stamp))
 
         if estimate is None:
             self._last_side = 'none'

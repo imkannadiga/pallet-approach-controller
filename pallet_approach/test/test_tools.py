@@ -24,6 +24,7 @@ import yaml
 
 PACKAGE = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = PACKAGE / 'tools'
+TESTS = PACKAGE / 'test'
 PARAMS = PACKAGE / 'config' / 'params.yaml'
 
 SCRIPTS = sorted(p for p in TOOLS.glob('*.py') if not p.name.startswith('_'))
@@ -66,9 +67,17 @@ def third_party_imports(script):
             if name in sys.stdlib_module_names:
                 continue
             sibling = TOOLS / f'{name}.py'
+            harness = TESTS / f'{name}.py'
             package = PACKAGE / 'pallet_approach' / f'{name}.py'
             if sibling.exists():
                 queue.append(sibling)
+            elif harness.exists():
+                # `tools/sequence.py` runs the offline harness that lives in
+                # test/. Without this the harness reads as a missing
+                # third-party module, the --help check skips, and the tool is
+                # never exercised at all -- which is the failure this whole
+                # file exists for.
+                queue.append(harness)
             elif name == 'pallet_approach':
                 continue          # the package itself; its deps are declared
             elif package.exists():

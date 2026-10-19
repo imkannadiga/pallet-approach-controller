@@ -53,7 +53,7 @@ def yaml_params():
 def closing(yaml_params):
     """Exactly the dict the controller node will hand `closing_command`."""
     shared = yaml_params['/**']['ros__parameters']
-    block = dict(yaml_params['approach_controller']['ros__parameters']['closing'])
+    block = dict(shared['closing'])
     block['target_range'] = shared['standoff_distance']
     block['carriage_x'] = shared['forks']['carriage_x']
     block['tine_length'] = shared['forks']['tine_length']

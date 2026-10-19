@@ -24,9 +24,15 @@ def yaml_params():
 
 @pytest.fixture
 def params(yaml_params):
-    shared = yaml_params['/**']['ros__parameters']
+    """What the node hands the simulator. The insertion height and the lift
+    travel come from the shared `forks` block, not from the node's own: the
+    overlay draws `forks.bottom_height` and the pocket clearances in D27 are
+    measured from it, so the simulator has to lower to exactly that."""
+    shared = yaml_params['/**']['ros__parameters']['forks']
     block = dict(yaml_params['virtual_forks']['ros__parameters'])
-    block['tine_thickness'] = shared['forks']['tine_thickness']
+    block['insert_height'] = shared['bottom_height']
+    block['lift_travel'] = shared['lift_travel']
+    block['tine_thickness'] = shared['tine_thickness']
     return block
 
 
@@ -69,8 +75,10 @@ def test_lowering_takes_time(forks, params):
 
 
 def test_the_insertion_height_is_the_one_the_overlay_draws(params, yaml_params):
-    """Two numbers for one height is how a simulator and an overlay come to
-    disagree about where the forks are."""
+    """It is the same parameter now, not two that agree. The node used to keep
+    its own copy, which is how a simulator and an overlay come to disagree
+    about where the forks are."""
+    assert 'insert_height' not in yaml_params['virtual_forks']['ros__parameters']
     assert params['insert_height'] == pytest.approx(
         yaml_params['/**']['ros__parameters']['forks']['bottom_height'])
 

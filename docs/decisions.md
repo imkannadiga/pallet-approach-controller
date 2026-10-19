@@ -657,6 +657,108 @@ for the whole travel, so the drift *is* observable, and the decision about
 whether to correct it needs a number. Lab session C produces that number; until
 then the behaviour is unchanged and the data is collected. (Stage 6)
 
+## 2026-10-19 (stage 7: the coordinator, and what the harness found)
+
+**D48. The full sequence, as eleven states plus ABORTED.** IDLE, CONFIRMING,
+CLASSIFYING, BACKING_OFF, CLOSING, CHECKING, LOWERING, INSERTING, LIFTING,
+BACKING_OUT, DONE, ABORTED. The controller may be told to move in exactly four
+of them (`DRIVING_STATES`), and `test_coordinator.py` asserts that over every
+event from every state -- so a state added later without thinking about the
+list cannot drive, which is the right default. (Stage 7)
+
+**D49. An aborted insertion stops where it is. It does not reverse out.** The
+robot's body is at least 0.204 m clear of the face at any legal stop (D13,
+D16), so standing still is safe, and driving after an abort contradicts the one
+rule with no exceptions. Recovery is the operator's, with the reason in the
+result. *Why this is worth stating:* the tempting behaviour is to back out
+automatically, and it would usually work. But "the robot must stop in every
+terminal state" cannot have a special case for the state where the robot is
+closest to the pallet and something has just gone wrong. (Stage 7)
+
+**D50. Only NO-GOs about where the robot is standing are retried.** `yaw`,
+`lateral_offset` and `stability` -- `retryable_checks` in params.yaml. A pocket
+that measures the wrong size, a face with no support behind the fit, an
+obstruction in a pocket and a load overhanging the face are all properties of
+the *pallet*, and driving the same approach again would measure the same
+pallet. A mixed failure is not retried either: if the pallet is wrong as well
+as the robot, the pallet does not change. One retry (Athreya, 2026-10-19), and
+it always reverses at least `min_retry_backoff` so that "retry" means a
+genuinely new approach rather than a twitch. (Stage 7)
+
+**D51. Perception publishes the two point sets the GO/NO-GO rules need.** New
+topics `~/cluster_points` and `~/scene_points`, filled by an optional
+`decision_points` dict that `estimate_pallet` now populates. *Why:*
+`check_overhang` and `check_pocket_clearance` take points rather than an
+estimate, and both treat missing data as a NO-GO rather than a pass -- a
+decided behaviour, and the conservative one. Nothing was supplying them, so
+**every run returned NO_GO with "no points to check the load against"**, found
+by the offline harness on its first complete run. The clouds are purpose-built
+and small: the pallet cluster (a few thousand voxels) and a box around the face
+rather than the ROI, because the clearance boxes are 0.10 m deep and no wider
+than a pocket, so nothing outside that box can affect either rule. Both stay on
+the Jetson between two nodes a process apart; nothing subscribes to them from
+the main PC and nothing should. (Stages 1a, 4, 7)
+
+**D52. The stability rule is evaluated only on frames taken standing still.**
+The coordinator clears its estimate buffer on entering CHECKING. *Why:* the
+rule compares the face position across five frames against a 30 mm limit, and
+five frames taken while closing at 0.10 m/s span 100 mm of real travel. The
+harness measured exactly that -- a clean noisy run refused with "stability:
+face position moved 118 mm across 5 frames". An earlier version of the node
+dodged this by repeating the latest estimate five times, which made the rule
+measure one frame against itself and therefore **unable to fail**: a safety
+rule that cannot fail is worse than one that is absent, because it reports a
+pass. (Stages 4, 7)
+
+**D53. The divergence detector needs eight frames, not five, and ignores
+errors inside `residual_target`.** Athreya's mechanism is unchanged -- abort
+after N consecutive growing frames (2026-10-19) -- but N and its exposure are
+now measured rather than guessed. **At five frames and 10 mm of per-frame
+noise, the offline harness aborted 3 runs in 12 from a 9 m run-up and 1 in 12
+from 6 m, with the robot converging perfectly.** Monotone growth is a fragile
+statistic: five strictly increasing samples happen by chance once in 120
+windows of white noise, and a converged robot on a long run-up offers hundreds
+of windows. `min_divergence_growth` barely helped, because the growth
+accumulates across the window. At eight frames plus a floor at
+`residual_target`: none, in every case tried.
+
+The cost is 1.6 s rather than 1.0 s to notice a real divergence, which at the
+closing speed is 160 mm of extra travel. **Open for Athreya:** if that is too
+slow, the alternative is a model-based check -- compare the error against what
+the servo's own decay model predicts after the distance travelled -- which is
+robust to noise over a long baseline and would catch a divergence in half the
+frames. That is a different mechanism, so it is a decision, not a tweak.
+(Stage 3)
+
+**D54. The run-up requirement has a tolerance, and the reverse overshoots
+it.** `closing.run_up_tolerance: 0.05`, applied both ways. *Why:* the reverse
+stops within its own 10 mm window and odometry path length is never shorter
+than the displacement, so a reverse computed exactly finishes about a
+centimetre short of the requirement. Without the tolerance the robot then asks
+for another centimetre, and after `max_backoffs` the run dies with
+"still only 2.99 m from the pallet after 2 reverse(s); 3.00 m is needed" --
+having done everything right. Found by the offline harness. (Stage 3)
+
+## Open, with numbers attached
+
+Two predictions the offline harness makes about the real robot. Both are
+measurements for lab session B, and both would change a decided tolerance if
+they come out badly -- so neither has been pre-emptively changed.
+
+**The stability rule may be too tight.** `go_nogo.max_position_spread: 0.030`
+over five frames. Swept in the harness, the rule refuses runs at **8 mm** of
+independent per-frame position noise (11 of 12 completed) and **every** run at
+15 mm; up to 5 mm it refuses none. What is unknown is whether the real sensor
+is that noisy *frame to frame*: `docs/dataset.md` records accuracy against a
+tape (face position within 5-10 mm), which is a different quantity, because
+depth noise is strongly correlated between consecutive frames of a stationary
+scene. Nobody has measured the per-frame spread. If it is above ~5 mm, the
+tolerance is wrong and that is a decision to take with the number in hand.
+
+**The LiDAR cross-check's `min_points: 20` is arithmetic, not a measurement.**
+See D37. The tier-1 bags carry `/ouster/points`; the achieved counts go in
+`docs/dataset.md`.
+
 ## Pending (to be decided at the start of each stage)
 
 See the stage lists in `docs/ROADMAP.md`. Stage 5a is closed (D15–D18); the

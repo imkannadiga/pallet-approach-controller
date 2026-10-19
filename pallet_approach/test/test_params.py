@@ -10,9 +10,11 @@ This test is a static check -- it reads the node sources and the YAML, so it
 needs neither ROS nor a robot.
 """
 
+import io
 import math
 import pathlib
 import re
+import tokenize
 
 import pytest
 import yaml
@@ -61,22 +63,59 @@ def params_file():
     return yaml.safe_load(PARAMS_FILE.read_text())
 
 
+def strip_comments(source: str) -> str:
+    """Blank out comments, keeping line structure.
+
+    The scraper reads text, so it cannot tell code from a comment ABOUT code --
+    and a comment in `coordinator_node._declare` explaining that the side
+    parameters are written out rather than built from an f-string over
+    `('short', 'long')` was duly reported as a parameter named `short`. Amusing
+    once; a reason to distrust the check if left in.
+    """
+    lines = source.splitlines(keepends=True)
+    try:
+        comments = [token for token in
+                    tokenize.generate_tokens(io.StringIO(source).readline)
+                    if token.type == tokenize.COMMENT]
+    except (tokenize.TokenError, IndentationError):
+        # A fragment of a file does not always tokenize. Fall back to the raw
+        # text rather than silently scanning nothing, which would make every
+        # check above pass vacuously.
+        return source
+    for token in comments:
+        row, column = token.start[0] - 1, token.start[1]
+        line = lines[row]
+        lines[row] = line[:column] + ' ' * len(token.string) + line[token.end[1]:]
+    return ''.join(lines)
+
+
 @pytest.fixture(scope='module')
 def declared():
     """{node name: set of declared parameter names}, read from the sources.
 
-    Only the `_declare` method is scanned. Scanning the whole file picks up any
-    tuple of strings as a parameter name -- the ROI key list in `_params()`, for
-    instance -- and reports phantom parameters.
+    Only the `_declare` method is scanned, and comments are stripped first.
+    Scanning the whole file picks up any tuple of strings as a parameter name
+    -- the ROI key list in `_params()`, for instance -- and reports phantom
+    parameters; so does a comment that mentions one.
     """
     out = {}
     for filename, node_name in NODE_NAMES.items():
         source = (NODES / filename).read_text()
         start = source.index('def _declare')
         end = source.index('\n    def ', start)
-        block = source[start:end]
+        block = strip_comments(source[start:end])
         out[node_name] = set(DECLARE.findall(block)) | set(TUPLE_NAME.findall(block))
     return out
+
+
+def test_the_scraper_ignores_comments():
+    """Guards the fixture above: if comment stripping broke, every phantom
+    parameter would come back and the real checks would drown in them."""
+    block = "def _declare(self):\n    # ('short', 'long') are the faces\n" \
+            "    self.declare_parameter('real.one', 1.0)\n"
+    stripped = strip_comments(block)
+    assert 'real.one' in set(DECLARE.findall(stripped))
+    assert 'short' not in set(TUPLE_NAME.findall(stripped))
 
 
 @pytest.fixture(scope='module')
@@ -156,9 +195,11 @@ def test_every_phase_speed_is_inside_the_limits(params_file):
     tripwire -- a per-phase speed above the limit would simply be clamped and
     the intent would be silently lost."""
     block = flatten(params_file['approach_controller']['ros__parameters'])
+    shared = flatten(params_file['/**']['ros__parameters'])
     ceiling = block['limits.max_linear']
-    phases = {'closing.closing_speed': block['closing.closing_speed'],
-              'reverse.speed': block['reverse.speed']}
+    phases = {'closing.closing_speed': shared['closing.closing_speed'],
+              'reverse.speed': shared['reverse.speed'],
+              'insert.speed': block['insert.speed']}
     for name, speed in phases.items():
         assert 0.0 < speed <= ceiling, (
             f'{name} is {speed} m/s against a {ceiling} m/s limit')
@@ -173,9 +214,10 @@ def test_the_closing_loop_can_reach_its_own_arrival_tolerance(params_file):
     tolerance tighter than that is one the square-up can never satisfy, and the
     robot would turn back and forth at the standoff until the run timed out."""
     block = flatten(params_file['approach_controller']['ros__parameters'])
-    granularity = block['limits.min_angular'] / block['closing.k_heading']
-    assert block['closing.arrival_yaw'] > granularity, (
-        f"closing.arrival_yaw {block['closing.arrival_yaw']} is inside the "
+    shared = flatten(params_file['/**']['ros__parameters'])
+    granularity = block['limits.min_angular'] / shared['closing.k_heading']
+    assert shared['closing.arrival_yaw'] > granularity, (
+        f"closing.arrival_yaw {shared['closing.arrival_yaw']} is inside the "
         f"base's own {granularity:.4f} rad turn granularity")
 
 
@@ -185,11 +227,10 @@ def test_the_run_up_target_fits_the_pockets(params_file):
     GO/NO-GO lateral rule, or a run that performs exactly as designed is
     refused at the standoff."""
     shared = flatten(params_file['/**']['ros__parameters'])
-    block = flatten(params_file['approach_controller']['ros__parameters'])
     rules = flatten(params_file['coordinator']['ros__parameters'])
     slack = min((side['pocket_width'] - shared['forks.tine_width']) / 2.0
                 for side in sides_of(params_file).values())
-    target = block['closing.residual_target']
+    target = shared['closing.residual_target']
     assert target < slack / 2.0, (
         f'a {target * 1000:.0f} mm residual target against {slack * 1000:.0f} mm '
         f'of pocket slack leaves no room for the measurement to be wrong')
@@ -201,10 +242,9 @@ def test_the_minimum_run_up_is_outside_the_fork_tips(params_file):
     """3.0 m is a long way outside, but the check costs nothing and the
     alternative is a run-up that starts with the tines already in the pallet."""
     shared = flatten(params_file['/**']['ros__parameters'])
-    block = flatten(params_file['approach_controller']['ros__parameters'])
     reach = shared['forks.carriage_x'] + shared['forks.tine_length']
-    assert block['closing.min_run_up'] > reach
-    assert block['closing.min_run_up'] > shared['standoff_distance']
+    assert shared['closing.min_run_up'] > reach
+    assert shared['closing.min_run_up'] > shared['standoff_distance']
 
 
 def test_the_forks_are_mounted_at_the_bumper(params_file):

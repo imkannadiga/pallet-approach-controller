@@ -1,4 +1,4 @@
-# One pallet approach run, triggered manually.
+# One virtual pickup, triggered manually.
 #
 # NO BACKSLASHES ANYWHERE IN THIS FILE, not even in a comment. rosidl_adapter
 # copies these comments into the generated IDL and the result is decoded with
@@ -7,16 +7,42 @@
 # minutes into a container build, on the robot. test_interfaces.py checks this.
 #
 # To run one (one line, or wrap it in your shell's history):
-#   ros2 action send_goal /pallet_task pallet_approach_interfaces/action/PalletTask "{mode: pallet_orientation}" --feedback
+#   ros2 action send_goal /pallet_task pallet_approach_interfaces/action/PalletTask "{mode: pickup}" --feedback
 
 # ---------------- Goal ----------------
-string mode                           # "pallet_orientation" (the only mode for now)
+string mode                           # "pickup" (the only mode for now)
 ---
 # ---------------- Result ----------------
-string outcome                        # GO, NO_GO, NO_PALLET or ABORTED
-string reason                         # why, e.g. "yaw beyond limit"
-geometry_msgs/PoseStamped pallet_pose # last accepted estimate, frame_id = odom
+# INSERTED  the whole sequence completed: forks in, lifted, backed out
+# NO_GO     the rules refused, or the face could not be identified, or there
+#           was not enough room to approach and the reverse could not be
+#           justified. `reason` says which.
+# NO_PALLET nothing was confirmed within the timeout
+# ABORTED   cancelled, an unhealthy stack, a lost pallet, a controller abort
+# GO        reserved for a run asked to stop at the GO/NO-GO decision
+string outcome
+string reason                         # why, with the numbers in it
+
+# Which face was entered. "short" or "long"; empty if it never got that far.
+# Not a label: it selects the pocket nominals, the fork geometry and the
+# insertion stop (D21/D22).
+string side
+
+# What the run ACHIEVED, not that it finished. insertion_depth is how far the
+# robot drove into the pallet; pallet_lift is how far the pallet came off the
+# floor, which is the carriage travel minus the slack above the tines and so
+# differs between the two faces (D44). Both zero unless the outcome is
+# INSERTED.
+float32 insertion_depth
+float32 pallet_lift
+
+geometry_msgs/PoseStamped pallet_pose # last accepted estimate
 ---
 # ---------------- Feedback ----------------
-string phase                          # DETECTING, APPROACHING or CHECKING
-float32 distance_to_standoff          # metres, base_link to the standoff point
+# CONFIRMING, CLASSIFYING, BACKING_OFF, CLOSING, CHECKING, LOWERING,
+# INSERTING, LIFTING, BACKING_OUT
+string phase
+string reason                         # what the phase is waiting for
+float32 distance_to_standoff          # metres still to close; negative = past it
+float32 lateral_offset                # metres from the pocket centre line
+float32 confidence                    # the tracker's, 0 to 1

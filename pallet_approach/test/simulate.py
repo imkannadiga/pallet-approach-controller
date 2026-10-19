@@ -39,6 +39,9 @@ from pallet_approach.model import PalletEstimate, Plane, Pocket
 FLOOR = Plane(np.array([0.0, 0.0, 1.0]), 0.025)
 """The measured floor: z = -0.025 in base_footprint."""
 
+PALLET_HEIGHT = 0.145
+"""Measured, same from either face (D4)."""
+
 
 @dataclass
 class Pallet:
@@ -114,13 +117,21 @@ def facing(distance: float, offset: float = 0.0, yaw_error: float = 0.0) -> Robo
 
 
 def observe(robot: Robot, pallet: Pallet | None = None, noise: float = 0.0,
-            yaw_noise: float = 0.005, rng=None) -> PalletEstimate:
+            yaw_noise: float | None = None, rng=None) -> PalletEstimate:
     """What perception would report, in `base_footprint`.
 
-    `noise` is the standard deviation of the position error in metres and
-    `yaw_noise` of the face normal's angle in radians. The real numbers to put
-    here come from `docs/dataset.md`: the face position was within 5-10 mm and
-    the pocket spacing within ~13 mm on the first bags.
+    `noise` is the standard deviation of the position error in metres;
+    `yaw_noise` is the face normal's angular error in radians and defaults to
+    half of `noise` per radian, which is roughly what the first real bags
+    showed. The real numbers come from `docs/dataset.md`: the face position was
+    within 5-10 mm and the pocket spacing within ~13 mm.
+
+    `yaw_noise` DERIVES from `noise` rather than having a default of its own,
+    so that `noise=0` means noiseless. It had a default of 0.005 rad, and a
+    caller asking for a clean run got 5 mrad of normal error anyway -- which at
+    3.5 m is 17 mm of apparent lateral offset, enough to make a noiseless test
+    measure the noise. The same shape as every other default on this project
+    that was chosen silently and never reported.
     """
     pallet = pallet or Pallet()
     rotation = _rotation(-robot.yaw)
@@ -131,9 +142,12 @@ def observe(robot: Robot, pallet: Pallet | None = None, noise: float = 0.0,
 
     center = rotation @ (center_world - np.array([robot.x, robot.y]))
     normal = rotation @ normal_world
+    if yaw_noise is None:
+        yaw_noise = noise / 2.0
     if noise or yaw_noise:
         rng = rng or np.random.default_rng(0)
-        center = center + rng.normal(0.0, noise, 2) if noise else center
+        if noise:
+            center = center + rng.normal(0.0, noise, 2)
         if yaw_noise:
             angle = math.atan2(normal[1], normal[0]) + rng.normal(0.0, yaw_noise)
             normal = np.array([math.cos(angle), math.sin(angle)])
@@ -160,6 +174,62 @@ def observe(robot: Robot, pallet: Pallet | None = None, noise: float = 0.0,
 def _rotation(angle: float) -> np.ndarray:
     cos_a, sin_a = math.cos(angle), math.sin(angle)
     return np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+
+
+def pallet_points(robot: Robot, pallet: Pallet | None = None,
+                  spacing: float = 0.02,
+                  estimate: PalletEstimate | None = None) -> np.ndarray:
+    """A plausible pallet cluster in `base_footprint`, for the GO/NO-GO rules.
+
+    Two of the nine rules take points rather than an estimate --
+    `check_overhang` and `check_pocket_clearance` -- and both treat missing
+    data as a NO-GO rather than a pass, so a harness that does not supply them
+    cannot reach GO at all. That is how the end-to-end run first came back
+    NO_GO with "no points to check the load against".
+
+    What it builds: the three block faces and the top deck, all ON the face
+    plane. Nothing in front of it and nothing inside the pockets, which is what
+    an unloaded, undamaged pallet looks like to those two rules. A test that
+    wants a load or an obstruction adds points of its own.
+
+    `estimate` is which face the points are built against, and passing the
+    NOISY one matters. On the robot the points and the pocket positions come
+    out of the same cloud, so they agree by construction; building points from
+    the truth while the rules measure against a noisy estimate makes the two
+    disagree, and the clearance box slides laterally onto a block. That showed
+    up as "28 points in front of pocket 0" on a pallet with nothing in front of
+    it at all.
+    """
+    pallet = pallet or Pallet()
+    estimate = estimate if estimate is not None else truth(robot, pallet)
+    position = np.asarray(estimate.position, dtype=float)
+    normal = np.asarray(estimate.normal, dtype=float)
+    axis = np.array([-normal[1], normal[0], 0.0])
+
+    half = pallet.pocket_spacing / 2.0
+    pocket_half = pallet.pocket_width / 2.0
+    opening_top = pallet.center_height + pallet.pocket_height / 2.0
+
+    rows = []
+    # block faces: the material between and either side of the pockets
+    solid = [(-0.3975, -half - pocket_half), (-half + pocket_half,
+                                              half - pocket_half),
+             (half + pocket_half, 0.3975)]
+    for low, high in solid:
+        if high <= low:
+            continue
+        for offset in np.arange(low, high + 1e-9, spacing):
+            for height in np.arange(0.035, opening_top, spacing):
+                rows.append((offset, height))
+    # the top deck, above the opening
+    for offset in np.arange(-0.3975, 0.3975 + 1e-9, spacing):
+        for height in np.arange(opening_top, PALLET_HEIGHT + 1e-9, spacing):
+            rows.append((offset, height))
+
+    floor_z = FLOOR.height_on_axis
+    return np.array([position + axis * offset
+                     + np.array([0.0, 0.0, floor_z + height - position[2]])
+                     for offset, height in rows])
 
 
 def truth(robot: Robot, pallet: Pallet | None = None) -> PalletEstimate:
