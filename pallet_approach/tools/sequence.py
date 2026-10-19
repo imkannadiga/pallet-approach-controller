@@ -11,6 +11,7 @@ can run in a second:
     python3 tools/sequence.py --yaw 15              # the pallet turned
     python3 tools/sequence.py --no-lidar            # the insertion refuses
     python3 tools/sequence.py --break-gain          # a sign error in the servo
+    python3 tools/sequence.py --mode approach_only  # stop at the decision
 
 It drives the real state machine, the real tracker, the real control laws, the
 real fork simulator and the real GO/NO-GO rules through `test/simulate.py`'s
@@ -44,7 +45,7 @@ def one(args, seed: int):
                 lidar=not args.no_lidar)
     robot = S.on_line(pallet, args.range, args.offset,
                       math.radians(args.yaw_error))
-    return rig.run(robot)
+    return rig.run(robot, mode=args.mode)
 
 
 def main() -> int:
@@ -66,6 +67,9 @@ def main() -> int:
                         help='no LiDAR at all, to see the insertion refuse')
     parser.add_argument('--break-gain', action='store_true',
                         help='flip the servo gain, to see the divergence abort')
+    parser.add_argument('--mode', default='pickup',
+                        choices=('pickup', 'approach_only'),
+                        help='approach_only stops at the GO/NO-GO decision')
     parser.add_argument('--quiet', action='store_true',
                         help='one line per run instead of the full trace')
     args = parser.parse_args()
@@ -93,7 +97,8 @@ def main() -> int:
     if args.seeds > 1:
         print('outcomes: ' + ', '.join(f'{count} x {name}'
                                        for name, count in sorted(outcomes.items())))
-    return 0 if 'INSERTED' in outcomes else 1
+    wanted = 'GO' if args.mode == 'approach_only' else 'INSERTED'
+    return 0 if wanted in outcomes else 1
 
 
 if __name__ == '__main__':

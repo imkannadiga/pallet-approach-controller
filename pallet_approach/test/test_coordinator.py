@@ -18,7 +18,10 @@ import pytest
 import yaml
 
 from pallet_approach.coordinator import (
+    APPROACH_ONLY,
     DRIVING_STATES,
+    MODES,
+    PICKUP,
     TERMINAL_STATES,
     Coordinator,
     DriveInfo,
@@ -95,9 +98,9 @@ def no_go(*failed):
 
 # -------------------------------------------------------- run helpers
 
-def confirming(params):
+def confirming(params, mode=PICKUP):
     machine = Coordinator(params)
-    machine.trigger(0.0)
+    machine.trigger(0.0, mode)
     return machine
 
 
@@ -126,6 +129,62 @@ def inserting(params):
     transition = machine.on_forks(forks('INSERT_HEIGHT'), 7.0)
     assert transition.state is State.INSERTING
     return machine
+
+
+# ------------------------------------------------------------------ modes
+
+def test_approach_only_stops_at_the_decision(params):
+    """What the first driving session runs: ROADMAP says session B is
+    "approach and GO/NO-GO only. Insertion is NOT enabled." A goal mode rather
+    than a configuration flag, so the same stack can do a dry approach and then
+    a full pickup without a restart."""
+    machine = confirming(params, APPROACH_ONLY)
+    machine.on_track(track(), 1.0)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 2.0 + 0.2 * i)
+    machine.on_drive(arrived('CLOSE'), 3.0)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
+    transition = machine.on_decision(GO, 4.0)
+    assert transition.outcome is Outcome.GO
+    assert transition.state is State.DONE
+    assert transition.stop_robot and transition.drive is None
+    assert transition.fork is None, 'nothing may be lowered'
+    assert 'nothing was inserted' in transition.reason
+
+
+def test_approach_only_still_reports_a_no_go(params):
+    """The dry approach has to be able to fail, or it proves nothing about the
+    rules it exists to exercise."""
+    machine = confirming(params, APPROACH_ONLY)
+    machine.on_track(track(), 1.0)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 2.0 + 0.2 * i)
+    machine.on_drive(arrived('CLOSE'), 3.0)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
+    transition = machine.on_decision(no_go('pocket_count'), 4.0)
+    assert transition.outcome is Outcome.NO_GO
+
+
+def test_pickup_is_the_default_mode(params):
+    machine = Coordinator(params)
+    machine.trigger(0.0)
+    assert machine.mode == PICKUP
+
+
+def test_an_unknown_mode_is_refused_rather_than_defaulted(params):
+    """The difference between the modes is whether the robot drives into the
+    pallet, so a typo must not fall back to the one that does."""
+    machine = Coordinator(params)
+    transition = machine.trigger(0.0, 'pallet_orientation')
+    assert not transition.changed
+    assert machine.state is State.IDLE
+    assert 'unknown mode' in transition.reason
+
+
+def test_the_modes_are_the_ones_the_action_documents(params):
+    assert MODES == (PICKUP, APPROACH_ONLY)
 
 
 # ----------------------------------------------------------- the happy path

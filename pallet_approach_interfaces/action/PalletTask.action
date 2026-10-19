@@ -6,11 +6,18 @@
 # comment line is an invalid escape and the whole package fails to build --
 # minutes into a container build, on the robot. test_interfaces.py checks this.
 #
-# To run one (one line, or wrap it in your shell's history):
+# Two ways to start one. The topic is the operational path (Nav2 finishes, then
+# a script triggers this); the action is the better one by hand, because it
+# streams feedback and Ctrl-C cancels:
+#   ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: pickup}"
 #   ros2 action send_goal /pallet_task pallet_approach_interfaces/action/PalletTask "{mode: pickup}" --feedback
 
 # ---------------- Goal ----------------
-string mode                           # "pickup" (the only mode for now)
+# "pickup"         the whole sequence, ending with the forks loaded
+# "approach_only"  stop at the GO/NO-GO decision and report it; insert nothing.
+#                  This is what the first driving session runs.
+# An empty string means "pickup".
+string mode
 ---
 # ---------------- Result ----------------
 # INSERTED  the whole sequence completed: forks in, lifted, backed out
@@ -19,9 +26,11 @@ string mode                           # "pickup" (the only mode for now)
 #           justified. `reason` says which.
 # NO_PALLET nothing was confirmed within the timeout
 # ABORTED   cancelled, an unhealthy stack, a lost pallet, a controller abort
-# GO        reserved for a run asked to stop at the GO/NO-GO decision
+# GO        the rules passed and the run was asked to stop there
+#           (mode "approach_only"); nothing was inserted
 string outcome
 string reason                         # why, with the numbers in it
+string mode                           # which mode this run was asked for
 
 # Which face was entered. "short" or "long"; empty if it never got that far.
 # Not a label: it selects the pocket nominals, the fork geometry and the

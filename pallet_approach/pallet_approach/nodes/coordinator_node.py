@@ -13,14 +13,45 @@ can be tested without ROS at all.
 
 Two things it owns that the machine cannot:
 
-**The health gate (D12).** A goal is refused if the stack is unhealthy when it
-arrives, with the failing source named. A run that starts unhealthy fails later
-and more expensively, next to a pallet.
+**The health gate (D12).** A run is refused if the stack is unhealthy when the
+trigger arrives, with the failing source named. A run that starts unhealthy
+fails later and more expensively, next to a pallet.
 
 **The navigation lock (D30).** Published at 10 Hz for the length of a run, so
 `twist_mux` blocks Nav2 while we drive. It expires 0.5 s after this node stops
 publishing it, so a coordinator that dies hands navigation back rather than
 locking the robot out.
+
+## Two ways to start a run, and why both exist
+
+The operational flow is sequential (D55): Nav2 drives the robot in front of a
+pallet and **finishes**, and only then is this pipeline triggered. So the
+trigger is a topic, because the thing doing the triggering is a script or a
+behaviour tree that has just finished a navigation goal and has nothing to wait
+for:
+
+    ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: pickup}"
+    ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: approach_only}"
+    ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty "{}"
+
+A topic trigger is fire-and-forget, which means two things have to exist
+alongside it that an action gives for free:
+
+* **`/pallet_approach/cancel`.** "The robot must stop on cancel" has no
+  exceptions, and a run started from a topic has no action goal to cancel. This
+  is not a convenience.
+* **`/pallet_approach/result`.** The outcome has to go somewhere. It carries
+  the action's own Result message, so there is exactly one definition of what a
+  result is and the topic and the action cannot drift apart.
+
+The action server stays, and is the better way to run one by hand: it streams
+feedback, it reports the result to the caller, and Ctrl-C on `send_goal`
+cancels. Both paths go through `_start_run`, so there is one code path for
+"begin a run" and the health gate cannot apply to only one of them.
+
+The start subscription is deliberately **VOLATILE, depth 1**. A latched
+trigger would start a run the moment this node came up, from a message
+published before it existed.
 """
 
 from __future__ import annotations
@@ -36,9 +67,9 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import PointCloud2
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Empty, String
 
 from pallet_approach_interfaces.action import PalletTask
 from pallet_approach_interfaces.msg import (
@@ -53,6 +84,8 @@ from pallet_approach import go_nogo
 from pallet_approach.approach import pocket_center
 from pallet_approach.closing import geometry_of
 from pallet_approach.coordinator import (
+    MODES,
+    PICKUP,
     Coordinator,
     DriveInfo,
     ForkInfo,
@@ -70,6 +103,13 @@ from pallet_approach.ros_conversions import (
 )
 
 RELIABLE = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+
+# VOLATILE and shallow, on purpose. A latched trigger would start a run the
+# moment this node came up, from a message published before it existed; a deep
+# queue would start a second run as soon as the first finished.
+TRIGGER = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                     durability=DurabilityPolicy.VOLATILE)
+
 MANAGED = ('pallet_perception', 'approach_controller')
 
 
@@ -94,6 +134,10 @@ class CoordinatorNode(Node):
         self._goal_handle = None
         self._last_outcome = None
         self._last_reason = ''
+        self._reported = True
+        """Has the current outcome been published on `~/result` yet? True to
+        begin with, because there is no outcome to report before the first
+        run."""
         self._active_nodes = {name: False for name in MANAGED}
 
         self._drive_pub = self.create_publisher(
@@ -104,6 +148,15 @@ class CoordinatorNode(Node):
         self._lock_pub = self.create_publisher(
             Bool, self._get('topics.nav_lock'), RELIABLE)
         self._pose_pub = self.create_publisher(PoseStamped, '~/pallet_pose', RELIABLE)
+        self._result_pub = self.create_publisher(
+            PalletTask.Result, '/pallet_approach/result', RELIABLE)
+
+        self.create_subscription(String, '/pallet_approach/start',
+                                 self._on_start, TRIGGER,
+                                 callback_group=self._group)
+        self.create_subscription(Empty, '/pallet_approach/cancel',
+                                 self._on_cancel_topic, TRIGGER,
+                                 callback_group=self._group)
 
         self.create_subscription(Odometry, self._get('topics.odom'),
                                  self._on_odom, RELIABLE,
@@ -343,6 +396,58 @@ class CoordinatorNode(Node):
             self._apply(self._machine.on_unhealthy(
                 self._now(), '; '.join(msg.failures) or 'unknown'))
 
+    def _on_start(self, msg: String):
+        """The trigger topic. Fire and forget, so every refusal is logged AND
+        published on `~/result` -- there is nobody waiting on a return value."""
+        mode = (msg.data or '').strip() or PICKUP
+        if self._machine.state not in (State.IDLE, State.DONE, State.ABORTED):
+            self.get_logger().warning(
+                f'ignoring a start on {mode!r}: a run is already in progress '
+                f'({self._machine.state.value}). Cancel it first.')
+            return
+        if mode not in MODES:
+            self._refuse(f'unknown mode {mode!r}; known: {", ".join(MODES)}')
+            return
+        reason = self._unhealthy_reason() if self._get('require_healthy_to_start') else ''
+        if reason:
+            self._refuse(reason)
+            return
+        if not self._start_run(mode):
+            self._refuse('could not configure the managed nodes')
+
+    def _on_cancel_topic(self, msg: Empty):
+        """Stop a run started from the trigger topic.
+
+        Not a convenience: a topic-started run has no action goal, so without
+        this there would be no way to honour a cancel -- and that rule has no
+        exceptions.
+        """
+        self.get_logger().info('cancel requested on the topic')
+        self._apply(self._machine.cancel(self._now()))
+
+    def _start_run(self, mode: str) -> bool:
+        """Begin a run. The one path both the topic and the action take, so
+        the health gate and the configure step cannot apply to only one."""
+        self._estimate = None
+        self._tracked = None
+        self._cluster_points = None
+        self._scene_points = None
+        self._checking_estimates.clear()
+        self._last_outcome = None
+        self._last_reason = ''
+        self._reported = False
+        if not self._configure_all():
+            return False
+        self._apply(self._machine.trigger(self._now(), mode))
+        return True
+
+    def _refuse(self, reason: str) -> None:
+        self.get_logger().error(f'refusing to start: {reason}')
+        self._last_outcome = Outcome.ABORTED
+        self._last_reason = reason
+        self._reported = True
+        self._result_pub.publish(self._result(Outcome.ABORTED, reason))
+
     def _on_cluster_points(self, msg: PointCloud2):
         self._cluster_points = unpack_cloud(msg)
 
@@ -395,6 +500,16 @@ class CoordinatorNode(Node):
         if self._machine.ready_to_decide(now):
             self._apply(self._machine.on_decision(self._decide(), now))
 
+        # Terminal handling lives here rather than in the action callback, so
+        # that a run started from the topic reports its outcome and returns to
+        # IDLE exactly like one started from a goal.
+        if self._last_outcome is not None and not self._reported:
+            self._reported = True
+            self._result_pub.publish(
+                self._result(self._last_outcome, self._last_reason))
+            if self._goal_handle is None:
+                self._apply(self._machine.to_idle(now))
+
     # -------------------------------------------------------------- GO/NO-GO
 
     def _decide(self) -> Decision:
@@ -437,8 +552,10 @@ class CoordinatorNode(Node):
         if self._machine.state not in (State.IDLE, State.DONE, State.ABORTED):
             self.get_logger().warning('rejecting goal: a run is already in progress')
             return GoalResponse.REJECT
-        if goal_request.mode not in ('pickup', 'pallet_orientation', ''):
-            self.get_logger().warning(f'rejecting unknown mode {goal_request.mode!r}')
+        if (goal_request.mode or '').strip() not in MODES + ('',):
+            self.get_logger().warning(
+                f'rejecting unknown mode {goal_request.mode!r}; known: '
+                f'{", ".join(MODES)}')
             return GoalResponse.REJECT
         if self._get('require_healthy_to_start'):
             reason = self._unhealthy_reason()
@@ -466,24 +583,22 @@ class CoordinatorNode(Node):
         return CancelResponse.ACCEPT
 
     def _execute(self, goal_handle):
-        self._goal_handle = goal_handle
-        self._estimate = None
-        self._tracked = None
-        self._cluster_points = None
-        self._scene_points = None
-        self._last_outcome = None
-        self._last_reason = ''
+        """The action path. Same run, with feedback and a return value.
 
-        if not self._configure_all():
+        It waits on `_last_outcome` rather than on the state, because `_tick`
+        owns the terminal handling and may already have published the result by
+        the time this loop looks again.
+        """
+        self._goal_handle = goal_handle
+        mode = (goal_handle.request.mode or '').strip() or PICKUP
+
+        if not self._start_run(mode):
+            self._goal_handle = None
             goal_handle.abort()
             return self._result(Outcome.ABORTED,
                                 'could not configure the managed nodes')
 
-        self._apply(self._machine.trigger(self._now()))
-
-        while rclpy.ok():
-            if self._machine.state in (State.DONE, State.ABORTED):
-                break
+        while rclpy.ok() and self._last_outcome is None:
             if goal_handle.is_cancel_requested:
                 self._apply(self._machine.cancel(self._now()))
                 break
@@ -527,6 +642,7 @@ class CoordinatorNode(Node):
         result.side = self._machine.side
         result.insertion_depth = 0.0
         result.pallet_lift = 0.0
+        result.mode = self._machine.mode
         if outcome is Outcome.INSERTED and self._machine.side in self._sides():
             # Report what the run achieved, not that it finished. The lift is
             # the carriage travel minus the slack above the tines, which

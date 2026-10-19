@@ -17,6 +17,7 @@ transitions, drive commands, action feedback and velocity commands.
     CLOSING       servo onto the pocket centre line, stop at the standoff
      v
     CHECKING      stopped; the GO/NO-GO rules            -> NO_GO (or one retry)
+     |  GO, and mode is approach_only -> DONE, outcome GO
      v  GO
     LOWERING      forks to pocket height
      v
@@ -57,7 +58,22 @@ from pallet_approach.model import Decision
 
 __all__ = ['State', 'Outcome', 'DriveRequest', 'TrackInfo', 'DriveInfo',
            'ForkInfo', 'Transition', 'Coordinator', 'DRIVING_STATES',
-           'TERMINAL_STATES']
+           'TERMINAL_STATES', 'MODES', 'PICKUP', 'APPROACH_ONLY']
+
+PICKUP = 'pickup'
+"""The whole thing: approach, check, lower, insert, lift, back out."""
+
+APPROACH_ONLY = 'approach_only'
+"""Stop at the GO/NO-GO decision and report it. Nothing is inserted.
+
+This is what lab session B runs (ROADMAP: "first driving: approach and GO/NO-GO
+only. Insertion is **not** enabled."). It is a goal mode rather than a
+configuration flag because it is a property of one run, not of the robot --
+the same stack, triggered twice, should be able to do a dry approach and then a
+full pickup without a restart.
+"""
+
+MODES = (PICKUP, APPROACH_ONLY)
 
 
 class State(Enum):
@@ -92,7 +108,7 @@ class Outcome(Enum):
     """The whole sequence completed: forks in, lifted, backed out."""
 
     GO = 'GO'
-    """Reserved for a run asked to stop at the GO/NO-GO decision."""
+    """The rules passed and the run was asked to stop there (APPROACH_ONLY)."""
 
     NO_GO = 'NO_GO'
     NO_PALLET = 'NO_PALLET'
@@ -183,6 +199,7 @@ class Coordinator:
         self.track: TrackInfo | None = None
         self.history: deque = deque(maxlen=20)
         self.side = ''
+        self.mode = PICKUP
         self.retries = 0
         self.backoffs = 0
         self.insertion_travel = 0.0
@@ -255,10 +272,19 @@ class Coordinator:
 
     # -------------------------------------------------------------- events
 
-    def trigger(self, now: float) -> Transition:
-        """A goal arrived. Only legal from IDLE or a terminal state."""
+    def trigger(self, now: float, mode: str = PICKUP) -> Transition:
+        """A goal arrived. Only legal from IDLE or a terminal state.
+
+        `mode` is PICKUP or APPROACH_ONLY; an unknown mode is refused here
+        rather than defaulting, because the difference between the two is
+        whether the robot drives into the pallet.
+        """
         if self.state not in (State.IDLE, *TERMINAL_STATES):
             return self._stay('a run is already in progress')
+        if mode not in MODES:
+            return self._stay(f'unknown mode {mode!r}; known: '
+                              f'{", ".join(MODES)}')
+        self.mode = mode
         self.started_at = now
         self.last_track_at = now
         self.outcome = None
@@ -271,7 +297,7 @@ class Coordinator:
         self.pending_backoff = 0.0
         return self._at(State.CONFIRMING, now, stop=True, drive=None,
                         fork='PARK', perception=True,
-                        reason='looking for a pallet')
+                        reason=f'looking for a pallet ({mode})')
 
     def cancel(self, now: float) -> Transition:
         if self.state in (State.IDLE, *TERMINAL_STATES):
@@ -374,6 +400,11 @@ class Coordinator:
         if self.state is not State.CHECKING:
             return self._stay()
         if decision.go:
+            if self.mode == APPROACH_ONLY:
+                return self._finish(
+                    now, Outcome.GO,
+                    f'GO: {decision.reason}. Stopping at the decision, as '
+                    f'asked -- nothing was inserted.')
             return self._at(State.LOWERING, now, stop=True, drive=None,
                             fork='LOWER', perception=True,
                             reason=f'GO: {decision.reason}')

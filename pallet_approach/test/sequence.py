@@ -211,7 +211,8 @@ class Rig:
         run ever exceeded the limits rather than trusting the clamp."""
 
     def run(self, robot: S.Robot, frame_rate: float = 5.0,
-            command_rate: float = 20.0, limit: float = 400.0) -> Run:
+            command_rate: float = 20.0, limit: float = 400.0,
+            mode: str = 'pickup') -> Run:
         dt = 1.0 / command_rate
         frame_dt = 1.0 / frame_rate
         command = (0.0, 0.0)
@@ -220,7 +221,7 @@ class Rig:
         last_state = None
         odom = Pose2D(robot.x, robot.y, robot.yaw)
 
-        self._note(self.machine.trigger(now), states, trace, now)
+        self._note(self.machine.trigger(now, mode), states, trace, now)
 
         while now < limit and self.machine.state not in (State.DONE,
                                                          State.ABORTED):

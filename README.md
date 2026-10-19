@@ -114,7 +114,35 @@ network, only `/cmd_vel`, `/tf` and odometry do.
 ./docker/build_and_run.sh launch
 ```
 
-Nothing moves on launch. Start one run:
+One entry point. `up` starts every node and then waits — nothing moves, and
+nothing will until a run is triggered:
+
+```bash
+./docker/build_and_run.sh build
+./docker/build_and_run.sh dry      # FIRST TIME: wheels disconnected
+./docker/build_and_run.sh up       # for real
+./docker/build_and_run.sh logs
+./docker/build_and_run.sh stop
+```
+
+The flow is sequential: Nav2 drives the robot in front of a pallet and
+**finishes**, and only then is the pipeline triggered.
+
+```bash
+ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: approach_only}"
+ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: pickup}"
+ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty  "{}"
+ros2 topic echo /pallet_approach/result
+```
+
+`approach_only` runs the whole approach and stops at the GO/NO-GO decision,
+inserting nothing. An unknown mode is refused, not defaulted. A run is refused
+if the stack is unhealthy when the trigger arrives, naming the sensor that is
+stale or slow, and the refusal is published on `/pallet_approach/result` as
+well as logged — nothing is waiting on a return value.
+
+The action server does the same thing with live feedback, and is the better way
+to run one by hand:
 
 ```bash
 ros2 action send_goal /pallet_task \
@@ -122,9 +150,7 @@ ros2 action send_goal /pallet_task \
     "{mode: pickup}" --feedback
 ```
 
-Cancel at any time with Ctrl-C on that command; the robot stops. A goal is
-refused outright if the stack is unhealthy when it arrives, naming the sensor
-that is stale or slow.
+Ctrl-C on that command cancels; the robot stops.
 
 ## Running a whole pickup without a robot
 

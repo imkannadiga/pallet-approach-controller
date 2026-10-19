@@ -739,6 +739,73 @@ for another centimetre, and after `max_backoffs` the run dies with
 "still only 2.99 m from the pallet after 2 reverse(s); 3.00 m is needed" --
 having done everything right. Found by the offline harness. (Stage 3)
 
+## 2026-10-19 (operational flow)
+
+**D55. The flow is strictly sequential, and the trigger is a topic.** Decided
+by Athreya 2026-10-19. Nav2 drives the robot in front of a pallet and
+**finishes its goal**; only then is this pipeline triggered, and Nav2 does not
+participate in the run. Every node is already up and waiting.
+
+    docker run (one entry point)  ->  nine nodes up, nothing moving
+    Nav2 goal  ->  Nav2 finishes
+    /pallet_approach/start  ->  the run
+    /pallet_approach/result  ->  the outcome
+
+*Why it is a topic:* the thing doing the triggering is a script or a behaviour
+tree that has just finished a navigation goal and has nothing to wait for. An
+action is the wrong shape for that. The action server stays, because it is the
+better way to run one by hand -- it streams feedback and Ctrl-C cancels -- and
+both paths go through one `_start_run`, so the health gate (D12) cannot apply
+to only one of them.
+
+Three consequences that are not optional:
+
+- **`/pallet_approach/cancel` exists.** A topic trigger is fire-and-forget, so
+  a run started that way has no action goal to cancel -- and "the robot must
+  stop on cancel" has no exceptions. This is a safety requirement, not a
+  convenience.
+- **`/pallet_approach/result` exists**, carrying the action's own Result
+  message rather than a second definition of one. One definition means the
+  topic and the action cannot drift apart, and it means a refusal (unknown
+  mode, unhealthy stack) is reported somewhere, which a fire-and-forget trigger
+  otherwise has no way to do.
+- **The start subscription is VOLATILE, depth 1.** Latched, it would start a
+  run the moment the coordinator came up, from a message published before it
+  existed. Deep, it would start a second run the instant the first finished.
+
+**What this changes about arbitration.** D3 assumed Nav2 and this stack might
+overlap, and D30 built `twist_mux` for it. With a sequential flow they never
+overlap in time, so the mux's *priority* between `/cmd_vel_pallet` and
+`/cmd_vel_nav` stops mattering. Two things it does keep doing, both worth the
+config file:
+
+1. the watchdog's `/cmd_vel_safety` outranks our own controller, which is the
+   mechanism by which a wedged coordinator still leaves a stationary robot;
+2. it is insurance against Nav2 publishing when nobody expected it to -- an
+   operator sending a goal mid-run, or a recovery behaviour firing.
+
+**But (2) only works once Nav2 is remapped to `/cmd_vel_nav`.** Until then Nav2
+publishes straight to `/cmd_vel`, which is the mux's *output*, and the nav lock
+blocks an input nothing is using: it is inert. That is acceptable under this
+flow and it was a blocker under the old one, so the remap moves from "before
+the first driving session" to "when convenient". Stated here rather than left
+implied, because an inert safety mechanism that looks active is worse than an
+absent one.
+
+**D56. `approach_only` is a goal mode, not a configuration flag.** `mode:
+approach_only` runs the whole approach and stops at the GO/NO-GO decision with
+outcome `GO`, inserting nothing. `pickup` runs the whole sequence. An unknown
+mode is **refused**, not defaulted. *Why a mode:* ROADMAP's lab session B is
+"first driving: approach and GO/NO-GO only, insertion **not** enabled", and
+that is a property of one run rather than of the robot -- the same stack,
+triggered twice, should be able to do a dry approach and then a full pickup
+without a restart. *Why refused rather than defaulted:* the difference between
+the two modes is whether the robot drives into the pallet, so a typo must not
+fall back to the one that does.
+
+This was a decided requirement (ROADMAP, lab session B) that the stage 7 work
+left unimplemented. (Stage 7)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

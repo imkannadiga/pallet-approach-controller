@@ -2,9 +2,31 @@
 # Build and run our container on the Jetson.
 #
 #   ./docker/build_and_run.sh build      # build the image
+#   ./docker/build_and_run.sh up         # start it and leave it running
+#   ./docker/build_and_run.sh dry        # the same, with the wheels disconnected
+#   ./docker/build_and_run.sh logs       # follow a running stack
+#   ./docker/build_and_run.sh stop       # stop it
+#   ./docker/build_and_run.sh launch     # launch in the foreground (Ctrl-C ends it)
 #   ./docker/build_and_run.sh shell      # interactive shell, stack not launched
-#   ./docker/build_and_run.sh launch     # launch the stack
 #   ./docker/build_and_run.sh dds        # show the DDS settings it would use
+#
+# ONE ENTRY POINT. `up` starts every node and then waits: nothing moves, and
+# nothing will until a run is triggered on a topic. The sequence is
+#
+#   Nav2 drives the robot in front of a pallet and FINISHES
+#   ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: pickup}"
+#   ros2 topic echo /pallet_approach/result
+#
+# and `cancel` stops it at any point:
+#   ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty "{}"
+#
+# `up` restarts the container if it exits, so a crashed stack comes back
+# waiting rather than staying down. It does NOT resume a run: a restart leaves
+# the robot stopped and IDLE, which is the only safe thing a restart can do.
+#
+# USE `dry` FOR THE FIRST BRING-UP. Everything runs and twist_mux arbitrates
+# exactly as it will for real, but its output goes to /cmd_vel_dry, which the
+# base is not listening to. The robot cannot move. See the launch file.
 #
 # Host networking is required: DDS discovery between the Jetson and the robot PC
 # will not work through docker's bridge. Nothing else is shared with the host.
@@ -29,6 +51,7 @@
 set -euo pipefail
 
 IMAGE=pallet_approach:jetson
+CONTAINER=pallet_approach
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---------------------------------------------------------------- DDS discovery
@@ -160,11 +183,38 @@ case "${1:-}" in
     fi
     ;;
 
-  shell|launch)
+  logs)
+    docker logs -f "$CONTAINER"
+    ;;
+
+  stop)
+    # Stop, then remove, so `up` can be run again without a name clash. A
+    # stopped container with a restart policy comes back on daemon restart,
+    # which is not what "stop" should mean.
+    docker stop "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm "$CONTAINER" >/dev/null 2>&1 || true
+    echo "stopped and removed $CONTAINER"
+    ;;
+
+  shell|launch|up|dry)
     resolve_dds "$1"
-    ARGS=(--rm -it --network host --ipc host
+    ARGS=(--network host --ipc host
           -e ROS_DOMAIN_ID=10 -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp
           -v "$REPO_ROOT:/workspace:ro")
+    case "$1" in
+      up|dry)
+        # Detached, named, and restarted if it exits. One entry point: start
+        # this and the whole stack is up and waiting for a trigger.
+        ARGS+=(-d --name "$CONTAINER" --restart unless-stopped)
+        if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER"; then
+          echo "REFUSING: a container named $CONTAINER already exists." >&2
+          echo "  ./docker/build_and_run.sh stop    # then try again" >&2
+          echo "  ./docker/build_and_run.sh logs    # or just look at it" >&2
+          exit 1
+        fi
+        ;;
+      *) ARGS+=(--rm -it) ;;
+    esac
     if [ -n "${DDS_HOST_DIR:-}" ]; then
       ARGS+=(-v "$DDS_HOST_DIR:/dds:ro"
              -e "FASTRTPS_DEFAULT_PROFILES_FILE=/dds/$DDS_PROFILE_NAME")
@@ -182,13 +232,30 @@ case "${1:-}" in
         echo "  discovered but carry no data." >&2
       fi
     fi
-    if [ "$1" = "shell" ]; then
-      docker run "${ARGS[@]}" "$IMAGE" bash
-    else
-      docker run "${ARGS[@]}" "$IMAGE"
-    fi
+    case "$1" in
+      shell)
+        docker run "${ARGS[@]}" "$IMAGE" bash ;;
+      dry)
+        docker run "${ARGS[@]}" "$IMAGE" bash -lc \
+          'source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py cmd_vel:=/cmd_vel_dry'
+        echo
+        echo "started $CONTAINER with the wheels DISCONNECTED."
+        echo "  commands go to /cmd_vel_dry; the base will not see them."
+        echo "  ./docker/build_and_run.sh logs"
+        ;;
+      up)
+        docker run "${ARGS[@]}" "$IMAGE"
+        echo
+        echo "started $CONTAINER. Nothing moves until a run is triggered:"
+        echo "  ros2 topic pub --once /pallet_approach/start std_msgs/String \"{data: approach_only}\""
+        echo "  ros2 topic echo /pallet_approach/result"
+        echo "  ./docker/build_and_run.sh logs"
+        ;;
+      *)
+        docker run "${ARGS[@]}" "$IMAGE" ;;
+    esac
     ;;
 
   *)
-    sed -n '2,27p' "$0"; exit 2 ;;
+    sed -n '2,48p' "$0"; exit 2 ;;
 esac

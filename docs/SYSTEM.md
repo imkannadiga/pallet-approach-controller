@@ -564,17 +564,48 @@ mux's `cmd_vel_out` onto `/cmd_vel`. Every input has a 0.5 s timeout, because
 
 **Unverified on the robot.** The schema is the documented Humble one and
 `test_arbitration.py` checks its shape against `params.yaml`, but nothing in
-this repository runs `twist_mux`. Two things to confirm in the lab:
+this repository runs `twist_mux`. Confirm in the lab that the mux reads this
+file and relays `/cmd_vel_pallet` to `/cmd_vel`.
 
-1. the mux reads this file and relays `/cmd_vel_pallet` to `/cmd_vel`;
-2. **Nav2's controller is remapped to `/cmd_vel_nav`.** Until it is, Nav2
-   publishes straight to the mux's *output* and arbitration is bypassed. That
-   is survivable only because Nav2 is measured silent while idle (D10) — a
-   window, not a design.
+**What the mux is for under the sequential flow (D55).** Nav2 finishes before
+the pipeline is triggered, so the priority between `/cmd_vel_pallet` and
+`/cmd_vel_nav` never decides anything. What the mux still does is let the
+watchdog's `/cmd_vel_safety` outrank our own controller — the mechanism by
+which a wedged coordinator still leaves a stationary robot — and insure against
+Nav2 publishing when nobody expected it to.
+
+**The nav lock is inert until Nav2 is remapped to `/cmd_vel_nav`.** Nav2
+currently publishes straight to `/cmd_vel`, which is the mux's *output*, so the
+lock blocks an input nothing is using. Under the sequential flow that is
+acceptable; it is recorded here because an inert safety mechanism that looks
+active is worse than an absent one.
 
 The controller refuses to configure if nothing subscribes to its output topic,
 so the failure mode "twist_mux is not running and the robot silently never
 moves" produces a loud refusal instead.
+
+## Starting a run
+
+Every node is up and waiting from the moment the container starts. A run begins
+on a topic, because Nav2 has finished by then and the trigger comes from a
+script with nothing to wait for (D55):
+
+```bash
+ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: pickup}"
+ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: approach_only}"
+ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty  "{}"
+ros2 topic echo /pallet_approach/result
+```
+
+`approach_only` runs the whole approach and stops at the GO/NO-GO decision,
+inserting nothing. An unknown mode is refused, not defaulted — the difference
+between the modes is whether the robot drives into the pallet. A run is also
+refused if the stack is unhealthy when the trigger arrives, and the refusal is
+published on `/pallet_approach/result` as well as logged, because nothing is
+waiting on a return value.
+
+The action server (`/pallet_task`) does the same thing with live feedback and
+is the better way to run one by hand.
 
 ## Topics this stack publishes
 
@@ -590,6 +621,7 @@ moves" produces a loud refusal instead.
 | `/health` | `Health` | 2 Hz | sensor ages and rates |
 | `/diagnostics` | `DiagnosticArray` | 2 Hz | the same, for rqt |
 | `/coordinator/state` | `String` | on change | the sequence state |
+| `/pallet_approach/result` | `PalletTask_Result` | per run | the outcome, for a topic-started run |
 | `/fork_overlay/image` | `Image` | **5 Hz, 640×360** | the only image; see below |
 
 **The two point clouds and the overlay image must not be subscribed to from the
