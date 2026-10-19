@@ -26,13 +26,18 @@ def image_to_array(msg) -> np.ndarray:
     dtype, channels = ENCODINGS[msg.encoding]
     itemsize = np.dtype(dtype).itemsize
     expected_step = msg.width * channels * itemsize
-    buffer = np.frombuffer(bytes(msg.data), dtype=np.uint8)
+
+    expected_bytes = msg.height * msg.step
+    buffer = np.frombuffer(bytes(msg.data), dtype=np.uint8)[:expected_bytes]
     if msg.step == expected_step:
         array = buffer.view(dtype).reshape(msg.height, msg.width, channels)
     else:
         rows = buffer.reshape(msg.height, msg.step)[:, :expected_step]
         array = np.ascontiguousarray(rows).view(dtype).reshape(
             msg.height, msg.width, channels)
+
+    if channels == 4:
+        array = array[:, :, :3]  # Strip the alpha channel (bgra8 -> bgr8)
     if channels == 1:
         array = array[:, :, 0]
     if msg.encoding == 'rgb8':

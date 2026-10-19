@@ -193,7 +193,7 @@ class CoordinatorNode(Node):
                                  self._on_scene_points, 1,
                                  callback_group=self._group)
 
-        self._clients = {
+        self._managed_clients = {
             name: self.create_client(ChangeState, f'/{name}/change_state',
                                      callback_group=self._group)
             for name in MANAGED
@@ -307,7 +307,7 @@ class CoordinatorNode(Node):
     # -------------------------------------------------- lifecycle plumbing
 
     def _transition(self, node_name: str, transition_id: int) -> bool:
-        client = self._clients[node_name]
+        client = self._managed_clients[node_name]
         if not client.wait_for_service(timeout_sec=2.0):
             self.get_logger().error(f'{node_name}/change_state is not available')
             return False

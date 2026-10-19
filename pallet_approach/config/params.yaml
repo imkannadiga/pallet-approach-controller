@@ -8,6 +8,8 @@
 /**:
   ros__parameters:
 
+    use_sim_time: false
+
     # [measured 2026-10-14] Where the real floor is in frames.ground. NOT zero:
     # the URDF's base_footprint joint is 25 mm out (its wheel geometry is right
     # to 0.2 mm). Shared, because three nodes need the same number -- the
@@ -463,6 +465,8 @@
 pallet_perception:
   ros__parameters:
 
+    use_sim_time: false
+
     # [measured 2026-10-15] One frame costs ~90 ms on a laptop (14 ms voxel,
     # 17 ms floor RANSAC, 37 ms DBSCAN, the rest small), so ~11 Hz there and
     # less on the Jetson. The ZED publishes depth at ~37 Hz. The node therefore
@@ -574,6 +578,8 @@ pallet_perception:
 approach_controller:
   ros__parameters:
 
+    use_sim_time: false
+
     # [measured+choice] 0.2 m/s is the lab limit for autonomous runs. Angular is
     # a choice, deliberately low. NEVER raise either without being asked.
     limits:
@@ -644,8 +650,9 @@ approach_controller:
 coordinator:
   ros__parameters:
 
-    action_name: pallet_task
+    use_sim_time: false
 
+    action_name: pallet_task
     # ------------------------------------------------------------ timeouts
     # Each one is "how long should this phase take, plus room for it to be
     # slow", and each expiry stops the robot.
@@ -734,6 +741,8 @@ coordinator:
 # ---------------------------------------------------------------------------
 fork_overlay:
   ros__parameters:
+
+    use_sim_time: false
     # [choice] 5 Hz and 640x360, and NOT a preference. Measured 2026-10-13: one
     # subscriber to a raw ZED image topic from the main PC dropped the whole
     # ZED node to ~0.2 Hz, and even compressed full-rate images were unusable
@@ -762,6 +771,8 @@ fork_overlay:
 # ---------------------------------------------------------------------------
 dashboard:
   ros__parameters:
+
+    use_sim_time: false
 
     # [choice] Matches fork_overlay's publish_rate: there is no point drawing
     # the HUD faster than the base image it sits on top of changes. Driven by
@@ -814,6 +825,8 @@ dashboard:
 watchdog:
   ros__parameters:
 
+    use_sim_time: false
+
     publish_rate: 2.0           # Hz, /health and /diagnostics
     # Matches approach_controller.command_rate. The safety stop has to arrive
     # at least as often as the command it is overriding, or the mux alternates
@@ -864,6 +877,8 @@ watchdog:
 # ---------------------------------------------------------------------------
 pallet_tracker:
   ros__parameters:
+
+    use_sim_time: false
 
     # [choice] Frames the confidence is measured over. 10 at perception's 5 Hz
     # (D24) is two seconds, so the confidence reacts inside the 1.0 s
@@ -963,6 +978,8 @@ pallet_tracker:
 # ---------------------------------------------------------------------------
 virtual_forks:
   ros__parameters:
+
+    use_sim_time: false
 
     publish_rate: 10.0
     # [choice] Travel height. Clear of a 0.03 m floor-removal margin and of
