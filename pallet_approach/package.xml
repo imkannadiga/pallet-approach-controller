@@ -29,6 +29,13 @@
   <exec_depend>python3-sklearn</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <!-- video_stream.py / nodes/video_streamer.py: the GStreamer pipeline that
+       feeds MediaMTX. The GStreamer plugin packages themselves (gstreamer1.0-*)
+       are not rosdep-tracked Python dependencies, so the Dockerfile installs
+       them directly via apt rather than through this file; python3-gi is
+       listed here too for documentation, since it is the one of the group
+       that is actually `import`ed from Python. -->
+  <exec_depend>python3-gi</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

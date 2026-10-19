@@ -35,6 +35,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-twist-mux \
     && rm -rf /var/lib/apt/lists/*
 
+# GStreamer for the H.264 streamer (video_stream.py), and MediaMTX for WebRTC.
+# Adds roughly 100-200 MB; the Jetson disk is tight, so check `df -h` first.
+# Every package name below was checked against the Ubuntu 22.04 archive
+# (apt-cache policy) rather than assumed -- gstreamer1.0-rtsp in particular is
+# easy to mistake for a made-up name, since the element this pipeline actually
+# uses (rtspclientsink) ships in gstreamer1.0-plugins-bad, not this package;
+# it is still needed for RTSP protocol support underneath that element.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates \
+        python3-gi gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+        gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+        gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-rtsp \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG MEDIAMTX_VERSION=v1.9.3
+RUN curl -sSL "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_arm64v8.tar.gz" \
+    | tar xz -C /usr/local/bin mediamtx
+
+# Running the video stream needs --network host (browsers connect to ports
+# 8889/tcp and 8189/udp -- see config/mediamtx.yaml). For the hardware
+# encoder, also run with --runtime nvidia, then check inside:
+#     gst-inspect-1.0 nvv4l2h264enc
+# If that element is missing, the streamer falls back to x264 by itself.
+
 RUN python3 -c "import numpy; assert numpy.__version__.startswith('1.'), numpy.__version__; print('numpy', numpy.__version__)"
 
 WORKDIR /ros2_ws

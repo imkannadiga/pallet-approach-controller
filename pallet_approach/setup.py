@@ -13,6 +13,12 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        # mediamtx.yaml and video_stream.launch.py are already caught by the
+        # two globs above -- these two extra entries named 'mediamtx.yml'
+        # (wrong extension; the file is .yaml) pointed at a path that does not
+        # exist, which would have failed the package build the first time
+        # anyone actually ran it from an installed share/ directory rather
+        # than from the source tree.
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -30,6 +36,8 @@ setup(
             'pallet_tracker = pallet_approach.nodes.tracker_node:main',
             'virtual_forks = pallet_approach.nodes.forks_node:main',
             'fork_overlay = pallet_approach.nodes.fork_overlay_node:main',
+            'dashboard = pallet_approach.nodes.dashboard_node:main',
+            'video_streamer = pallet_approach.nodes.video_streamer:main',
         ],
     },
 )

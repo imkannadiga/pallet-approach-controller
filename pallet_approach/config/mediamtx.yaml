@@ -1,0 +1,36 @@
+# MediaMTX for the robot's video streams (tested with v1.9.3).
+# Our streamer publishes over RTSP on the Jetson itself; browsers on the
+# laptop watch over WebRTC at  http://<jetson-ip>:8889/<path>
+# Keys left out keep MediaMTX's defaults.
+
+logLevel: info
+
+# Publishing side (local only: our streamer on the same machine)
+rtsp: yes
+rtspAddress: :8554
+protocols: [tcp]
+
+# Viewing side
+webrtc: yes
+webrtcAddress: :8889          # web page + signalling (HTTP)
+webrtcLocalUDPAddress: :8189  # the video itself (UDP); open this port if a firewall is active
+# The Jetson has several network interfaces. MediaMTX offers all of them to the
+# browser by default, and the browser picks one that works. If the video does
+# not start, list only the interface on the robot's Wi-Fi, e.g. [wlan0], or
+# add the Jetson's Wi-Fi IP to webrtcAdditionalHosts.
+webrtcIPsFromInterfaces: yes
+webrtcIPsFromInterfacesList: []
+webrtcAdditionalHosts: []
+
+# Not needed
+rtmp: no
+hls: no
+srt: no
+
+paths:
+  # Explicit empty mapping, not a bare key with nothing after it -- the latter
+  # parses as YAML null rather than "accept the defaults for every path",
+  # which is what the empty-mapping form in MediaMTX's own example config
+  # means. Untested which one this build actually accepts; {} is the
+  # documented form, so it is the one to ship.
+  all_others: {}
