@@ -297,6 +297,29 @@ def test_find_pockets_returns_nothing_for_a_solid_face():
 
 # ---------------------------------------------------------- estimate_pallet
 
+
+def _face_window(truth, distance):
+    """Pixel rows and columns the pallet's front face projects into.
+
+    Derived from the face's corners in base_footprint through the same
+    extrinsic and intrinsics the synthetic renderer uses, then inset slightly
+    so the window is inside the face rather than straddling its edge.
+    """
+    half = truth['face_width'] / 2
+    floor_z = truth['floor_z']
+    corners = np.array([[distance, -half, floor_z],
+                        [distance, half, floor_z],
+                        [distance, -half, floor_z + S.PALLET_HEIGHT],
+                        [distance, half, floor_z + S.PALLET_HEIGHT]])
+    cam = S.base_to_camera_matrix()
+    pts = corners @ cam[:3, :3].T + cam[:3, 3]
+    u = S.FX * pts[:, 0] / pts[:, 2] + S.CX
+    v = S.FY * pts[:, 1] / pts[:, 2] + S.CY
+    inset = 4
+    return (slice(int(v.min()) + inset, int(v.max()) - inset),
+            slice(int(u.min()) + inset, int(u.max()) - inset))
+
+
 def test_estimate_pallet_end_to_end(params, intrinsics):
     """The whole pipeline on a synthetic depth image, against known truth.
 
@@ -311,8 +334,14 @@ def test_estimate_pallet_end_to_end(params, intrinsics):
     # the floor can be coarse because RANSAC needs support, not resolution,
     # while clustering needs the face dense relative to its `eps`. Check the
     # window the face projects into rather than the global fraction.
-    face_rows = slice(500, 620)      # pocket height to deck, at this range
-    face_cols = slice(400, 860)      # the 0.8 m face at 1.6 m
+    #
+    # Computed from the pallet's own geometry rather than hard-coded pixels.
+    # The hard-coded window was calibrated against the EPAL synthetic and went
+    # stale the moment the measured pallet replaced it -- 5 mm narrower, and an
+    # opening that reaches the floor -- which showed up as a 49.9 % reading
+    # against a 50 % threshold, looking like a sparsity problem rather than a
+    # window that no longer framed the face.
+    face_rows, face_cols = _face_window(truth, distance=2.0)
     face_valid = float(np.isfinite(depth[face_rows, face_cols]).mean())
     assert face_valid > 0.5, (
         f'only {100 * face_valid:.0f} % of the pallet face region is valid; the '

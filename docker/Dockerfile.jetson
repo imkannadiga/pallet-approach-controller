@@ -31,6 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-humble-rosbag2-storage-mcap \
         ros-humble-lifecycle-msgs \
         ros-humble-rclpy \
+        ros-humble-diagnostic-msgs \
+        ros-humble-twist-mux \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -c "import numpy; assert numpy.__version__.startswith('1.'), numpy.__version__; print('numpy', numpy.__version__)"

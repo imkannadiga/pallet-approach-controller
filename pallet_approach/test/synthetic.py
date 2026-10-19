@@ -1,53 +1,126 @@
-"""Synthetic EUR pallet point clouds and depth images, with known ground truth.
+"""Synthetic pallet point clouds and depth images, with known ground truth.
 
-Used by the unit tests so that every perception stage can be checked against an
+Used by the unit tests so every perception stage can be checked against an
 exact answer before it ever sees real data. Nothing here depends on ROS or on a
-camera, so the tests run anywhere, in well under a second.
+camera, so the tests run anywhere in well under a second.
 
-The pallet modelled is an EPAL 1 / EUR pallet seen from its 800 mm face, which
-is the face the forks enter. Looking at that face, at pocket height, the block
-layout across the 800 mm is:
+**The pallet modelled is the one that was measured, not an EPAL nominal.**
+Until 2026-10-19 this file built an EPAL 1: 1200 x 800, pockets 227.5 wide at
+372.5 centres, over a 22 mm bottom board. The real pallet is 1195 x 795 with
+230 mm pockets at 365 centres and **no bottom board on the pocket face**, and
+tolerances tuned against the wrong synthetic would have been wrong by exactly
+the amount the measurement corrected (D4, D19).
 
-    |<-100->|<--- 227.5 --->|<--145-->|<--- 227.5 --->|<-100->|
-      block       pocket       block       pocket       block
-    -0.400  -0.300        -0.0725    0.0725         0.300  0.400     (metres)
+Both faces are modelled, because they are different structures rather than two
+sizes of one thing. A EUR pallet's three bottom boards run along the 1195 mm
+direction:
 
-so the pocket centres land at -+0.18625 m from the centreline, 0.3725 m apart,
-which is what params.yaml says and what `find_pockets` has to recover.
+  SHORT face, 795 mm -- the forks travel BETWEEN those boards, down clear
+  channels, so the opening runs from the floor:
+
+      |<-100->|<--- 230 --->|<-135->|<--- 230 --->|<-100->|
+        block      pocket     block     pocket      block
+      -0.3975  -0.2975   -0.0675  0.0675     0.2975  0.3975    (metres)
+
+      height:  0.000 .. 0.100  opening        pocket centres -+0.1825
+               0.100 .. 0.145  top deck       spacing 0.365
+
+  LONG face, 1195 mm -- the forks cross those boards, so the opening starts
+  above a 20 mm one:
+
+      |<-150->|<--- 372.5 --->|<-150->|<--- 372.5 --->|<-150->|
+      -0.5975  -0.4475     -0.075  0.075        0.4475  0.5975
+
+      height:  0.000 .. 0.020  bottom board   pocket centres -+0.26125
+               0.020 .. 0.125  opening        spacing 0.5225
+               0.125 .. 0.145  top deck
 
 All clouds are in `base_footprint`: x forward, y left, z up. That is the frame
-the pipeline works in, because every height the problem is stated in -- pallet
-0.144 m, pocket centre 0.072 m, fork underside 0.052 m -- is a height above the
-floor, and base_footprint is near the floor. `base_link` is the chassis body
-frame 0.235 m higher up.
+the pipeline works in, because every height the problem is stated in is a
+height above the floor and base_footprint is near the floor.
 
-The floor itself is at `FLOOR_Z = -0.025`, not 0: base_footprint is 25 mm above
-the real floor (see the constant below). The clouds use the measured value, so
-anything that assumes z = 0 is the floor fails its tests here rather than in
-the lab.
+The floor is at `FLOOR_Z = -0.025`, not 0: base_footprint sits 25 mm above the
+real floor. The clouds use the measured value, so anything that assumes z = 0
+is the floor fails its tests here rather than in the lab.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
-# EPAL 1 nominal geometry, metres. Mirrors config/params.yaml.
-PALLET_LENGTH = 1.200
-PALLET_WIDTH = 0.800
-PALLET_HEIGHT = 0.144
-DECK_THICKNESS = 0.022
-BLOCK_HEIGHT = 0.100
-POCKET_WIDTH = 0.2275
-POCKET_HEIGHT = 0.100
-POCKET_CENTER_SPACING = 0.3725
-POCKET_CENTER_HEIGHT = 0.072
+@dataclass(frozen=True)
+class Face:
+    """One face of the pallet: what you see, and at what heights."""
 
-# Blocks across the 800 mm face, as (start, end) along-face coordinates.
-BLOCKS = ((-0.400, -0.300), (-0.0725, 0.0725), (0.300, 0.400))
-# The gaps between them, i.e. the pockets.
-POCKETS = ((-0.300, -0.0725), (0.0725, 0.300))
+    name: str
+    width: float
+    """Across the face, metres."""
+    depth: float
+    """How far a fork travels once inserted."""
+    blocks: tuple
+    """(start, end) along-face spans of solid timber at pocket height."""
+    pockets: tuple
+    """The gaps between them."""
+    opening_bottom: float
+    opening_top: float
+    bottom_board: float = 0.0
+    """Thickness of the board under the opening; zero on the short face."""
+
+    @property
+    def pocket_width(self):
+        return self.pockets[0][1] - self.pockets[0][0]
+
+    @property
+    def pocket_height(self):
+        return self.opening_top - self.opening_bottom
+
+    @property
+    def pocket_center_height(self):
+        return 0.5 * (self.opening_bottom + self.opening_top)
+
+    @property
+    def pocket_centers_u(self):
+        return tuple(0.5 * (a + b) for a, b in self.pockets)
+
+    @property
+    def pocket_center_spacing(self):
+        centres = self.pocket_centers_u
+        return abs(centres[1] - centres[0])
+
+
+PALLET_HEIGHT = 0.145
+
+SHORT = Face(
+    name='short', width=0.795, depth=1.195,
+    blocks=((-0.3975, -0.2975), (-0.0675, 0.0675), (0.2975, 0.3975)),
+    pockets=((-0.2975, -0.0675), (0.0675, 0.2975)),
+    opening_bottom=0.000, opening_top=0.100, bottom_board=0.0)
+
+LONG = Face(
+    name='long', width=1.195, depth=0.795,
+    blocks=((-0.5975, -0.4475), (-0.075, 0.075), (0.4475, 0.5975)),
+    pockets=((-0.4475, -0.075), (0.075, 0.4475)),
+    opening_bottom=0.020, opening_top=0.125, bottom_board=0.020)
+
+FACES = {'short': SHORT, 'long': LONG}
+
+# Back-compatible module constants: the short face, which is the one the robot
+# normally enters and the one every existing test means.
+PALLET_WIDTH = SHORT.width
+PALLET_LENGTH = SHORT.depth
+BLOCKS = SHORT.blocks
+POCKETS = SHORT.pockets
+POCKET_WIDTH = SHORT.pocket_width
+POCKET_HEIGHT = SHORT.pocket_height
+POCKET_CENTER_SPACING = SHORT.pocket_center_spacing
+POCKET_CENTER_HEIGHT = SHORT.pocket_center_height
+BLOCK_HEIGHT = SHORT.pocket_height
+# The deck above the opening. On the short face that is the whole 45 mm between
+# the opening and the top; there is no board below.
+DECK_THICKNESS = PALLET_HEIGHT - SHORT.opening_top
 
 # Camera as measured on the robot, for the depth-image helpers.
 FX = FY = 949.6732177734375
@@ -98,46 +171,48 @@ def floor_points(
     return pts
 
 
-def face_points(spacing: float = 0.006) -> np.ndarray:
-    """Points on the pallet's 800 mm face, in face-local coordinates.
+def face_points(spacing: float = 0.006, side: Face | str = SHORT) -> np.ndarray:
+    """Points on one face of the pallet, in face-local coordinates.
 
     Returns (N, 3) as (along_face, 0, height_above_floor): the face lies in the
     plane y = 0, so these are ready to be rotated and translated into place.
 
-    The face is sampled as it physically is -- top deck and bottom boards across
-    the full width, blocks only where there are blocks -- so the pockets are
-    genuinely absent rather than marked.
+    Sampled as the face physically is -- boards across the full width, blocks
+    only where there are blocks -- so the pockets are genuinely absent rather
+    than marked. On the short face there is no board under the opening, which
+    is the whole reason `find_pockets` cannot measure that edge and takes it
+    from the known geometry instead (D25).
     """
+    face = FACES[side] if isinstance(side, str) else side
+    half = face.width / 2
     parts = []
 
-    # top deck board, full width
-    u, h = _grid((-PALLET_WIDTH / 2, PALLET_WIDTH / 2),
-                 (PALLET_HEIGHT - DECK_THICKNESS, PALLET_HEIGHT), spacing)
-    uu, hh = np.meshgrid(u, h, indexing='ij')
-    parts.append(np.stack([uu.ravel(), np.zeros(uu.size), hh.ravel()], axis=1))
-
-    # bottom boards, full width
-    u, h = _grid((-PALLET_WIDTH / 2, PALLET_WIDTH / 2), (0.0, DECK_THICKNESS), spacing)
-    uu, hh = np.meshgrid(u, h, indexing='ij')
-    parts.append(np.stack([uu.ravel(), np.zeros(uu.size), hh.ravel()], axis=1))
-
-    # the three blocks, between the boards
-    for u0, u1 in BLOCKS:
-        u, h = _grid((u0, u1), (DECK_THICKNESS, DECK_THICKNESS + BLOCK_HEIGHT), spacing)
+    def slab(u_range, h_range):
+        u, h = _grid(u_range, h_range, spacing)
         uu, hh = np.meshgrid(u, h, indexing='ij')
         parts.append(np.stack([uu.ravel(), np.zeros(uu.size), hh.ravel()], axis=1))
+
+    # top deck, full width, above the opening
+    slab((-half, half), (face.opening_top, PALLET_HEIGHT))
+    # bottom board, full width -- the long face only
+    if face.bottom_board > 0:
+        slab((-half, half), (0.0, face.bottom_board))
+    # the blocks, spanning the opening
+    for u0, u1 in face.blocks:
+        slab((u0, u1), (face.opening_bottom, face.opening_top))
 
     return np.concatenate(parts, axis=0)
 
 
-def top_deck_points(spacing: float = 0.02) -> np.ndarray:
+def top_deck_points(spacing: float = 0.02, side: Face | str = SHORT) -> np.ndarray:
     """The top surface of the pallet, in face-local coordinates.
 
-    The camera sits ~0.38 m up and looks level, so it does see some of the top
+    The camera sits ~0.4 m up and looks level, so it does see some of the top
     deck. Including it keeps `select_pallet_cluster` and `fit_front_face`
     honest: the largest plane in the cluster is not necessarily the face.
     """
-    u, d = _grid((-PALLET_WIDTH / 2, PALLET_WIDTH / 2), (0.0, PALLET_LENGTH), spacing)
+    face = FACES[side] if isinstance(side, str) else side
+    u, d = _grid((-face.width / 2, face.width / 2), (0.0, face.depth), spacing)
     uu, dd = np.meshgrid(u, d, indexing='ij')
     return np.stack([uu.ravel(), dd.ravel(), np.full(uu.size, PALLET_HEIGHT)], axis=1)
 
@@ -153,6 +228,7 @@ def pallet_cloud(
     spacing: float = 0.006,
     floor_spacing: float = 0.03,
     seed: int = 0,
+    side: Face | str = SHORT,
 ) -> tuple[np.ndarray, dict]:
     """A pallet at a known pose, plus the floor. Returns (points, truth).
 
@@ -171,6 +247,9 @@ def pallet_cloud(
         floor_spacing: sample spacing on the floor; see `depth_image`
             about rendering density.
         seed: RNG seed, so tests are deterministic.
+        side: which face is presented -- SHORT (795 mm, opening from the floor)
+            or LONG (1195 mm, opening above a 20 mm board). They are different
+            structures, not two sizes of one (D19).
 
     Returns:
         points: (N, 3) in `base_footprint`.
@@ -179,10 +258,11 @@ def pallet_cloud(
             'pocket_height', 'pocket_center_spacing', 'floor_z'.
     """
     rng = np.random.default_rng(seed)
+    face = FACES[side] if isinstance(side, str) else side
 
-    local = face_points(spacing=spacing)
+    local = face_points(spacing=spacing, side=face)
     if with_top_deck:
-        local = np.concatenate([local, top_deck_points()], axis=0)
+        local = np.concatenate([local, top_deck_points(side=face)], axis=0)
 
     # face-local -> base_footprint: the outward face normal points at the robot,
     # i.e. along -x when yaw is 0. Along-face +u maps to +y (left).
@@ -208,9 +288,8 @@ def pallet_cloud(
     face_center = np.array([distance, lateral, floor_z + PALLET_HEIGHT / 2.0])
 
     pocket_centers = []
-    for u0, u1 in POCKETS:
-        u_mid = 0.5 * (u0 + u1)
-        local_c = np.array([u_mid, 0.0, POCKET_CENTER_HEIGHT])
+    for u_mid in face.pocket_centers_u:
+        local_c = np.array([u_mid, 0.0, face.pocket_center_height])
         c = local_c @ rot.T
         pocket_centers.append(c + np.array([distance, lateral, floor_z]))
 
@@ -218,10 +297,12 @@ def pallet_cloud(
         'face_center': face_center,
         'normal': normal,
         'yaw': yaw,
+        'side': face.name,
+        'face_width': face.width,
         'pocket_centers': np.array(pocket_centers),
-        'pocket_width': POCKET_WIDTH,
-        'pocket_height': POCKET_HEIGHT,
-        'pocket_center_spacing': POCKET_CENTER_SPACING,
+        'pocket_width': face.pocket_width,
+        'pocket_height': face.pocket_height,
+        'pocket_center_spacing': face.pocket_center_spacing,
         'floor_z': floor_z,
     }
     return pts, truth
