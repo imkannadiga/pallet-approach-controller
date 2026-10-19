@@ -14,10 +14,37 @@ the stack cannot produce a robot that reports it is driving and does not move.
 
 Arguments:
     params:=<path>       override config/params.yaml
-    twist_mux:=false     do not start the mux (then nothing drives the base)
+    cmd_vel:=/cmd_vel_dry   DRY RUN: arbitrate as normal, but send the winning
+                         command somewhere the base is not listening. The whole
+                         sequence runs on a real pallet with the wheels
+                         disconnected. See below.
+    twist_mux:=false     do not start the mux (then the controller refuses to
+                         configure, so a goal fails immediately)
     overlay:=false       skip the fork overlay
     watchdog:=false      skip the watchdog -- for bench work only
     log_level:=debug
+
+DRY RUN, and this is the way to bring the stack up on the robot for the first
+time:
+
+    ros2 launch pallet_approach pallet_approach.launch.py cmd_vel:=/cmd_vel_dry
+
+Everything runs -- perception, the tracker, the health checks, the full state
+machine, the controller, the forks, the overlay -- and `twist_mux` arbitrates
+exactly as it will in a real run. The only difference is where its output goes,
+so the base never receives a command and the robot cannot move. Watch it with:
+
+    ros2 topic echo /cmd_vel_dry
+    ros2 topic echo /approach_controller/status
+    ros2 topic echo /coordinator/state
+    ros2 topic echo /health
+
+The robot stays still, so the closing loop never arrives and the run ends on
+the 240 s timeout with the pallet still 3 m away. That is the expected outcome
+and it is not a failure: what the dry run proves is that every node comes up,
+discovers the others, reads the right topics, agrees about tf and the clock,
+and produces sane commands for a real pallet. Which is precisely the layer that
+no offline test covers.
 """
 
 import os
@@ -36,6 +63,7 @@ def generate_launch_description():
     mux_params = os.path.join(share, 'config', 'twist_mux.yaml')
 
     params = LaunchConfiguration('params')
+    cmd_vel = LaunchConfiguration('cmd_vel')
     overlay = LaunchConfiguration('overlay')
     watchdog = LaunchConfiguration('watchdog')
     mux = LaunchConfiguration('twist_mux')
@@ -45,6 +73,11 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('params', default_value=default_params,
                               description='parameter file'),
+        DeclareLaunchArgument(
+            'cmd_vel', default_value='/cmd_vel',
+            description='where the mux sends the winning command; set to '
+                        '/cmd_vel_dry for a dry run with the wheels '
+                        'disconnected'),
         DeclareLaunchArgument('overlay', default_value='true',
                               description='run the fork overlay'),
         DeclareLaunchArgument('watchdog', default_value='true',
@@ -55,11 +88,13 @@ def generate_launch_description():
 
         # Arbitration: safety stop > pallet controller > Nav2 (D3, D10, D30).
         # twist_mux publishes `cmd_vel_out`, which is remapped onto the topic
-        # the scout driver subscribes to.
+        # the scout driver subscribes to -- or, for a dry run, onto one it is
+        # not. Nothing else in the stack changes, which is the point: the dry
+        # run exercises the same arbitration the real run will.
         Node(
             package='twist_mux', executable='twist_mux', name='twist_mux',
             output='screen', parameters=[mux_params],
-            remappings=[('cmd_vel_out', '/cmd_vel')],
+            remappings=[('cmd_vel_out', cmd_vel)],
             arguments=arguments, condition=IfCondition(mux),
         ),
 
