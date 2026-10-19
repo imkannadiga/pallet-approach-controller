@@ -717,7 +717,17 @@ coordinator:
 # ---------------------------------------------------------------------------
 fork_overlay:
   ros__parameters:
-    publish_rate: 10.0          # Hz, decimated from the camera's ~37 Hz
+    # [choice] 5 Hz and 640x360, and NOT a preference. Measured 2026-10-13: one
+    # subscriber to a raw ZED image topic from the main PC dropped the whole
+    # ZED node to ~0.2 Hz, and even compressed full-rate images were unusable
+    # remotely. So the one image this stack publishes is downscaled and
+    # low-rate (CLAUDE.md "What changed" item 7). The render happens at full
+    # resolution and the result is shrunk, because drawing small would mean
+    # scaling the intrinsics -- one more place to get a factor of two wrong, in
+    # the tool whose job is to make a millimetre error visible.
+    publish_rate: 5.0           # Hz, decimated from the camera's ~37 Hz
+    debug_width: 640
+    debug_height: 360
     # floor_z moved to the shared block above: the overlay, the tracker and the
     # insertion controller all measure from it, and it is one measurement of
     # one robot. It still matters most here -- at the standoff there is almost
@@ -727,11 +737,15 @@ fork_overlay:
     line_thickness: 2
     draw_pockets: true
     draw_standoff_marker: true
-    # BGR, by coordinator state
+    # BGR, by what the robot is DOING rather than one colour per state: looking
+    # (grey), driving towards the pallet (amber), committed with the forks going
+    # in (bright green), carrying (green), stopped because something was wrong
+    # (red). The state-to-key mapping is STATE_COLORS in the node.
     colors:
       idle: [160, 160, 160]
       detecting: [160, 160, 160]
       approaching: [0, 200, 255]
+      inserting: [128, 255, 0]
       go: [0, 200, 0]
       no_go: [0, 0, 220]
 

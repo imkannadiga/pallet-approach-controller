@@ -543,3 +543,84 @@ Closed since the first survey:
 - ~~Does Nav2 publish on `/cmd_vel` while idle?~~ — no. It publishes only while
   a navigation goal is active (confirmed by Athreya on the robot, 2026-10-14),
   so `twist_mux` needs no special handling for an idle Nav2 stack.
+
+---
+
+## Velocity arbitration (added 2026-10-19)
+
+Nothing in this stack publishes to `/cmd_vel` any more. `twist_mux` does, and
+everything else drives one of its inputs:
+
+| topic | priority | publisher |
+|---|---|---|
+| `/cmd_vel_safety` | 200 | `watchdog`, zeros only |
+| `/cmd_vel_pallet` | 100 | `approach_controller` |
+| `/cmd_vel_nav` | 10 | Nav2 |
+| `/pallet_approach/nav_lock` | lock at 50 | `coordinator`, for the length of a run |
+
+Config in `pallet_approach/config/twist_mux.yaml`; the launch file remaps the
+mux's `cmd_vel_out` onto `/cmd_vel`. Every input has a 0.5 s timeout, because
+`ros2 param dump /scout` shows the base has no command timeout of its own.
+
+**Unverified on the robot.** The schema is the documented Humble one and
+`test_arbitration.py` checks its shape against `params.yaml`, but nothing in
+this repository runs `twist_mux`. Two things to confirm in the lab:
+
+1. the mux reads this file and relays `/cmd_vel_pallet` to `/cmd_vel`;
+2. **Nav2's controller is remapped to `/cmd_vel_nav`.** Until it is, Nav2
+   publishes straight to the mux's *output* and arbitration is bypassed. That
+   is survivable only because Nav2 is measured silent while idle (D10) — a
+   window, not a design.
+
+The controller refuses to configure if nothing subscribes to its output topic,
+so the failure mode "twist_mux is not running and the robot silently never
+moves" produces a loud refusal instead.
+
+## Topics this stack publishes
+
+| topic | type | rate | notes |
+|---|---|---|---|
+| `/pallet_perception/estimate` | `PalletEstimate` | 5 Hz | one frame's answer |
+| `/pallet_perception/cluster_points` | `PointCloud2` | 5 Hz | the pallet cluster; **Jetson only** |
+| `/pallet_perception/scene_points` | `PointCloud2` | 5 Hz | a box around the face; **Jetson only** |
+| `/pallet_perception/diagnostics` | `DiagnosticArray` | 1 Hz | timing, achieved rate, drops |
+| `/pallet_tracker/tracked` | `TrackedPallet` | 5 Hz | the track + the LiDAR cross-check |
+| `/approach_controller/status` | `DriveStatus` | 20 Hz | what the controller sees and decided |
+| `/virtual_forks/state` | `ForkState` | 10 Hz | carriage height, loaded |
+| `/health` | `Health` | 2 Hz | sensor ages and rates |
+| `/diagnostics` | `DiagnosticArray` | 2 Hz | the same, for rqt |
+| `/coordinator/state` | `String` | on change | the sequence state |
+| `/fork_overlay/image` | `Image` | **5 Hz, 640×360** | the only image; see below |
+
+**The two point clouds and the overlay image must not be subscribed to from the
+main PC.** Measured 2026-10-13: one subscriber to a raw ZED image topic from the
+other machine dropped the whole ZED node to about 0.2 Hz. The clouds are
+purpose-built and small (a few thousand points each), and they exist because two
+GO/NO-GO rules take points rather than an estimate and treat missing data as a
+NO-GO; they travel between two nodes a process apart on the Jetson. The overlay
+is already downscaled and decimated for remote viewing, and it is the only image
+this stack publishes at all.
+
+## What has and has not been tested on the robot
+
+As of 2026-10-19, **everything from the tracker onwards has been tested only in
+simulation.** `tools/sequence.py` runs a whole virtual pickup through the real
+state machine, the real tracker, the real control laws, the real fork simulator
+and the real safety rules, and it completes. What it does not touch:
+
+- discovery, QoS and the multi-homed FastDDS setup;
+- lifecycle transitions and the services behind them;
+- tf, including the ZED's self-calibration republishing on the camera's clock;
+- the clock itself;
+- the real base's response to a velocity command — no actuator lag, no slip.
+
+Every failure on this robot so far has come from that list. The simulated
+numbers below are therefore lower bounds, not predictions.
+
+| quantity | simulated | measured on the robot |
+|---|---|---|
+| lateral error at the standoff | ≤ 17 mm worst case | — (lab session B) |
+| yaw error at the standoff | ≤ 2.4° worst case | — |
+| run time, 3.5 m start to backed out | 68 s | — |
+| per-frame spread of the face position | assumed 5 mm | — |
+| LiDAR returns on the face | assumed ≥ 20 | — |

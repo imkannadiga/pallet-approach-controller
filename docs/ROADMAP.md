@@ -79,24 +79,39 @@ session A below, which is why the stages that need them sit after it.
 
 Order, with what each one waits on:
 
-| # | Stage | Waits on | Where |
-|---|---|---|---|
-| 5a | Fork and insertion **geometry** (decisions only) | — | desk |
-| 0 | Foundation: action interface, `twist_mux`, watchdog/health, recorder | — | desk |
-| 1a | Perception: measured-pallet params, the two open bugs, synthetic rewrite | — | desk |
-| 4 | GO/NO-GO | 5a (tolerances reference the standoff) | desk |
-| — | **Lab session A** — measurements and bags, no driving | 1a | **lab** |
-| 1b | Side classification | lab A (the long side) | desk |
-| 2 | Pallet tracker and LiDAR cross-check | lab A (a bag with both sensors) | desk |
-| 3 | Approach: two-leg controller | 5a, 2 | desk |
-| — | **Lab session B** — first driving: approach and GO/NO-GO only | 0, 3, 4 | **lab** |
-| 5b | Virtual fork simulator node | 5a | desk |
-| 6 | Insert, lift, back out | 5a, 5b, lab B | desk |
-| 7 | Coordinator: full flow and handover | 6 | desk |
-| — | **Lab session C** — insertion and the full run | 6, 7 | **lab** |
-| 8 | Fork overlay and demo stream | 7 | desk |
-| 10 | Evaluation | 7, lab C | desk + **lab D** |
-| 9 | *Stretch:* repositioning to the pocket side | 7 | desk + lab |
+| # | Stage | Waits on | Where | State |
+|---|---|---|---|---|
+| 5a | Fork and insertion **geometry** (decisions only) | — | desk | done, D15–D18 |
+| 1a | Perception: measured-pallet params, the two open bugs, synthetic rewrite | — | desk | done |
+| 1b | Side classification | the long side | desk | done, D19–D22, D26 |
+| 4 | GO/NO-GO | 5a | desk | done, nine rules |
+| 8 | Fork overlay | — | desk | done, D27–D29 + the ROS side |
+| 0 | Foundation: action interface, `twist_mux`, watchdog/health | — | desk | done, D30–D33 |
+| 2 | Pallet tracker and LiDAR cross-check | — | desk | done, D34–D37 |
+| 3 | Approach: the closing servo | 5a, 2 | desk | done, D38–D42 |
+| 5b | Virtual fork simulator node | 5a | desk | done, D43–D44 |
+| 6 | Insert, lift, back out | 5a, 5b | desk | done, D45–D47 |
+| 7 | Coordinator: full flow and handover | 6 | desk | done, D48–D54 |
+| — | **Lab session A** — measurements and bags, no driving | — | **lab** | bags recorded, numbers not transcribed |
+| — | **Lab session B** — first driving: approach and GO/NO-GO only | 0, 3, 4 | **lab** | **next** |
+| — | **Lab session C** — insertion and the full run | 6, 7 | **lab** | |
+| 10 | Evaluation | lab C | desk + **lab D** | |
+| 9 | *Stretch:* repositioning to the pocket side | 7 | desk + lab | out unless everything else lands early |
+
+**Revised again 2026-10-19.** The desk stages were built out of the planned
+order, because the two things that were going to gate them -- the long side and
+a two-sensor bag -- arrived in lab session A, and nothing else was blocked. The
+order above is now the order they were actually done in. What remains is
+physical: **every stage from 2 onwards has been tested in simulation and none
+of it on the robot.**
+
+What that means concretely, and it is worth being blunt about it: the offline
+harness (`tools/sequence.py`) drives the real state machine, the real tracker,
+the real control laws, the real fork simulator and the real safety rules, and a
+whole virtual pickup completes. It does not exercise discovery, QoS, lifecycle
+transitions, tf or the clock -- and **every** failure on the real robot so far
+has come from exactly that layer. The next step is lab session B, and the
+expectation should be that it finds things.
 
 The lab sessions are the critical path, not the code. Each one gates three or
 four desk stages, and surprises there cost a whole cycle. Hence one rule for
@@ -159,6 +174,22 @@ under our control, so it can be done at any time.
 - [ ] **Nav2 handover smoke test:** send a goal, let it finish, confirm
       `/cmd_vel` goes quiet, confirm the publisher count drops back. Confirms
       D10 on the real stack rather than from a description.
+- [ ] **Remap Nav2's controller to `/cmd_vel_nav`.** Until this is done Nav2
+      publishes straight to `/cmd_vel`, which is `twist_mux`'s *output*, so two
+      publishers share the base's input and arbitration is bypassed. It is
+      survivable only because Nav2 is measured silent while idle (D10) -- a
+      window, not a design. Must happen before the first driving session.
+- [ ] **Confirm `twist_mux` reads `config/twist_mux.yaml`.** The schema is the
+      documented Humble one and `test_arbitration.py` checks its shape, but
+      nothing in this repository runs twist_mux. Start the stack, publish on
+      `/cmd_vel_pallet`, confirm it appears on `/cmd_vel`; then hold the lock
+      and confirm Nav2's input is blocked.
+- [ ] **Count the LiDAR returns on the pallet face** at 3 m, at the standoff
+      and at the insertion stop. Sets `pallet_tracker.lidar.min_points`, which
+      is currently arithmetic (D37), and `insert.lidar.min_points`.
+- [ ] **Measure the per-frame spread of the face position** on a parked robot:
+      50 consecutive estimates, same scene. Decides whether
+      `go_nogo.max_position_spread: 0.030` is achievable (see stage 4).
 
 ### Lab session B — first driving. Approach and GO/NO-GO only.
 

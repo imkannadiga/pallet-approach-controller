@@ -21,6 +21,9 @@
   <exec_depend>tf2_geometry_msgs</exec_depend>
   <exec_depend>lifecycle_msgs</exec_depend>
   <exec_depend>diagnostic_msgs</exec_depend>
+  <!-- Arbitration: the launch file starts it, and without it nothing
+       this stack publishes reaches the base (D30, D31). -->
+  <exec_depend>twist_mux</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-sklearn</exec_depend>

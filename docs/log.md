@@ -858,3 +858,82 @@ stays at -0.025.
   dataset; `pallet_approach/tools/record_bag.sh` throttles to 10 Hz and refuses to fill the disk.
 - The real pallet still needs measuring against the EPAL 1 nominals now in
   `params.yaml`.
+
+
+---
+
+## Day 6 — 2026-10-19 (afternoon): the rest of the pipeline
+
+Built the five stages that were left, in one pass, and the offline harness that
+was supposed to come last turned out to be the most useful thing in it.
+
+**Arbitration and the watchdog (stage 0, D30–D33).** `twist_mux` config with
+the safety stop above our controller above Nav2, plus a lock the coordinator
+holds for the length of a run so "a run is in progress" is stated rather than
+inferred. Our commands moved off `/cmd_vel` onto `/cmd_vel_pallet`, which
+created a new silent failure — with no mux running every command vanishes and
+the stack reports that it is driving — so the controller now refuses to
+configure when nothing is listening. Fifth instance of the same shape.
+
+The watchdog owns the stop independently of the coordinator. It takes the
+camera's liveness from `camera_info` rather than the depth image, which keeps it
+off a 3.7 MB topic for a timestamp that arrives free next door.
+
+**The tracker (stage 2, D34–D37).** Association in `odom` with the robot's
+motion taken out — two tests, one each way, because the same drive that passes
+with the pose taken out fails without it. The cross-check's first window was
+±0.15 m of depth, chosen to keep a loaded pallet's cargo out of the comparison,
+and a test found it excluded the disagreement the check exists to catch: a
+camera hallucinating a face 0.4 m from the real one read as NOT EVALUATED.
+
+**The closing servo (stage 3, D38–D42).** Three versions.
+
+1. Pure pursuit chasing a carrot on the centre line. The residual scaled with
+   the lookahead and *ignored the gain entirely* — the signature of a saturated
+   loop. Cause: the angular deadband raises any small command to the base's
+   minimum turn rate, so every command came out hard over or hard back. Small
+   angular commands are dropped now, not inflated.
+2. Pure pursuit still locks two gains together. A lookahead short enough to
+   converge in 1.25 m implies a 60° approach angle, so the robot dog-legged.
+   Split into an outer loop (which way to aim) and an inner loop (turn to it).
+3. The run-up formula modelled only the exponential regime and claimed 3.04 m
+   was enough to take out 0.50 m of offset. The run finished 250 mm off the
+   line with 11° of yaw. While the aim is capped the error falls *linearly*.
+   Honest answer: just over 4 m.
+
+With a square-up at the standoff, the worst simulated arrival over offsets to
+0.8 m and 10 mm of noise is 17 mm and 2.4°, against 65 mm of pocket slack.
+
+**The forks and the insertion (stages 5b, 6, D43–D47).** Writing the insertion
+tests found the gap D18 left: a *disagreement* aborts, but an absent
+measurement cannot disagree with anything. Losing the LiDAR for half a second
+aborts now, and so does finishing the travel with nothing having confirmed
+where the face was.
+
+**The coordinator and the harness (stage 7, D48–D54).** The harness wires the
+real state machine, tracker, executor, fork simulator and safety rules into
+`simulate.py`'s world. On its first few runs it found four real bugs:
+
+- nothing supplied the two GO/NO-GO rules that take points, so **every** run
+  returned NO_GO. Perception publishes two purpose-built clouds now.
+- the stability rule was being judged on frames taken while the robot was still
+  moving — five frames at the closing speed span 100 mm of travel, which reads
+  as a 118 mm unstable estimate. Worse, the node had been dodging it by
+  repeating the latest estimate five times, which made the rule **unable to
+  fail**.
+- the divergence detector aborted 3 runs in 12 from a 9 m run-up, converging
+  perfectly. Monotone growth is a fragile statistic under noise. Eight frames
+  and a floor at the residual target.
+- the run-up requirement had no hysteresis, so a reverse that stopped a
+  centimetre short asked for another centimetre and died on `max_backoffs`.
+
+Two findings left standing rather than tuned away, both in `docs/decisions.md`
+under "Open, with numbers attached": the stability tolerance refuses runs above
+about 5 mm of per-frame scatter and nobody has measured the real scatter, and
+the LiDAR cross-check's `min_points` is still arithmetic.
+
+**Where this leaves things.** 800 tests pass. A whole virtual pickup completes
+in 68 s. And none of the last five stages has run on the robot — the harness
+does not touch discovery, QoS, lifecycle, tf or the clock, which is where every
+real failure has come from. Lab session B is next, and it should be expected to
+find things.

@@ -3,12 +3,17 @@
 Geometry-driven pallet perception and fork-insertion approach on an AgileX
 SCOUT 2.0 with a ZED 2i stereo camera, in ROS 2 Humble.
 
-On a manual trigger the robot looks for a EUR pallet, estimates the pose of its
-front face and the two fork pockets, drives itself into fork-insertion
-alignment, and returns **GO** or **NO-GO** with a reason. No trained model: the
-pipeline is plane fitting, clustering and gap analysis, so it works on pallets
-it has never seen. A fork overlay draws a forklift's tines onto the camera image,
-which doubles as a visual check on the camera-to-base calibration.
+On a manual trigger the robot looks for a EUR pallet, works out which of its two
+faces it is looking at, backs off if it is too close, drives itself onto the
+pocket centre line, decides **GO** or **NO-GO** with a reason, and on GO
+performs a **virtual pickup**: lowers imaginary forks to pocket height, drives
+them in, lifts, backs out, and hands control back to Nav2.
+
+No trained model. The pipeline is plane fitting, clustering and gap analysis, so
+it works on pallets it has never seen. A fork overlay draws a forklift's tines
+onto the camera image, which doubles as a visual check on the camera-to-base
+calibration — the tines are bolted to the robot rather than to the measured
+pockets, precisely so that a mismatch between them is attributable.
 
 > Results and accuracy numbers are deliberately absent from this README until
 > they come from a real evaluation run. The numbers that *are* here were
@@ -22,45 +27,82 @@ pallet_approach_interfaces/     action + messages (ament_cmake)
 pallet_approach/
   pallet_approach/
     model.py            shared data types: PalletEstimate, Pocket, Decision, Pose2D
-    perception.py       depth -> pose + pockets                    [to write]
-    go_nogo.py          the safety rules                           [to write]
-    fork_overlay.py     projecting the forks onto the image        [to write]
-    approach.py         standoff and line-up geometry              done
-    controller.py       rotate-drive-rotate pose controller        done
-    coordinator.py      the state machine                          done
+    perception.py       depth -> face pose, pockets, which side
+    tracker.py          is it the same pallet, frame after frame?
+    go_nogo.py          the nine safety rules
+    closing.py          the servo that drives onto the pocket centre line
+    insertion.py        the blind drive, and its two-source stop
+    drive.py            executing one drive request
+    forks.py            the virtual carriage
+    coordinator.py      the state machine for a whole pickup
+    health.py           is the stack fit to drive?
+    fork_overlay.py     projecting the forks onto the image
+    approach.py         standoff geometry and 2D pose algebra
+    controller.py       limits, deadband, acceleration bound
+    model.py            shared data types
+    pointcloud.py       PointCloud2 <-> NumPy
     ros_conversions.py  messages <-> plain Python
-    nodes/              ROS 2 wrappers (2 lifecycle, 2 plain)
+    nodes/              ROS 2 wrappers (2 lifecycle, 4 plain)
   config/params.yaml    every tunable value, with its derivation
-  test/                 pytest, on synthetic pallet clouds
-  tools/                survey, bag recording, offline frame extraction
+  config/twist_mux.yaml velocity arbitration
+  test/                 pytest: synthetic clouds, a simulated world, a whole run
+  tools/                survey, bag recording, offline replay, a whole pickup
 docker/Dockerfile.jetson
+docs/decisions.md       every behaviour decision, with its reasoning
 docs/SYSTEM.md          measured system facts
+docs/ROADMAP.md         build order and open decisions
 docs/survey/            raw survey output from both machines
 docs/log.md             daily log
 ```
 
-The three files marked `[to write]` are the core perception and safety logic and
-are written by hand, not generated. They ship as skeletons with signatures,
-explanations and TODOs, and with a full test suite that fails until they are
-implemented.
+Nothing in `pallet_approach/*.py` imports ROS. The node wrappers in `nodes/`
+subscribe, publish and call into them. That split is not tidiness: it is what
+lets a whole virtual pickup run at a desk against a simulated robot
+(`tools/sequence.py`), which is where most of the bugs in this project were
+found.
 
 ## Architecture
 
 ```
-operator ──goal──▶ coordinator ──activate──▶ pallet_perception ◀── ZED depth + tf
-             ◀──feedback/result──┤                   │
-                                 │          PalletEstimate
-                                 ▼                   │
-                         approach_controller ◀───────┘
-                                 │
-                              /cmd_vel ──▶ scout_base (robot PC) ──▶ wheels
+       ZED depth + tf                  Ouster
+             │                            │
+             ▼                            ▼
+     pallet_perception ──estimate──▶ pallet_tracker ──track──┐
+             │  cluster + scene points        (LiDAR cross-check)
+             │        │                                      ▼
+             │        └──────────────────────────────▶  coordinator
+             │                                          │   │    │
+             ▼                                     drive│   │    │fork
+        fork_overlay ◀──state, fork height──────────────┘   │    │
+                                                            ▼    ▼
+                                         approach_controller   virtual_forks
+                                                     │
+      watchdog ──/cmd_vel_safety──▶ twist_mux ◀───────┘ /cmd_vel_pallet
+            (sensor ages, rates)        │     ◀── Nav2  /cmd_vel_nav
+                                        ▼
+                             /cmd_vel ──▶ scout base (robot PC) ──▶ wheels
 ```
 
-`IDLE → DETECTING → APPROACHING → CHECKING → DONE`. The coordinator owns every
-decision to move or stop. The controller is a lifecycle node and cannot publish
-`/cmd_vel` until the coordinator activates it. Every terminal state stops the
-robot with an explicit zero command — the base driver has no command timeout, so
-nothing else will.
+```
+IDLE → CONFIRMING → CLASSIFYING → [BACKING_OFF] → CLOSING → CHECKING
+     → LOWERING → INSERTING → LIFTING → BACKING_OUT → DONE
+Any state: cancel, unhealthy stack, lost pallet, controller abort → ABORTED
+```
+
+The coordinator owns every decision to move or stop, and the controller is a
+lifecycle node that cannot publish a command until the coordinator activates it.
+Three safety properties are worth stating because they have no exceptions:
+
+- **Every terminal state stops the robot with an explicit zero command.** The
+  base driver has no command timeout (`ros2 param dump /scout`), so nothing
+  else will. That includes an aborted insertion, which stops where it is rather
+  than reversing out.
+- **The watchdog owns the stop independently of the coordinator.** It watches
+  the sensors itself and drives the mux's highest-priority input, so a
+  coordinator that has wedged still leaves a stationary robot.
+- **The controller may be told to drive in exactly four states**, and the test
+  suite asserts that over every event from every state — so a state added later
+  without thinking about it cannot drive.
 
 ## Build and run
 
@@ -77,21 +119,34 @@ Nothing moves on launch. Start one run:
 ```bash
 ros2 action send_goal /pallet_task \
     pallet_approach_interfaces/action/PalletTask \
-    "{mode: pallet_orientation}" --feedback
+    "{mode: pickup}" --feedback
 ```
 
-Cancel at any time with Ctrl-C on that command; the robot stops.
+Cancel at any time with Ctrl-C on that command; the robot stops. A goal is
+refused outright if the stack is unhealthy when it arrives, naming the sensor
+that is stale or slow.
+
+## Running a whole pickup without a robot
+
+```bash
+cd pallet_approach
+python3 tools/sequence.py                   # a clean run from 3.5 m
+python3 tools/sequence.py --range 2.5       # too close: it reverses first
+python3 tools/sequence.py --noise 0.005 --seeds 10
+python3 tools/sequence.py --break-gain      # a sign error in the servo
+```
+
+This drives the real state machine, the real tracker, the real control laws,
+the real fork simulator and the real safety rules through a simulated world,
+and prints the phase-by-phase trace. It does **not** exercise the ROS layer —
+discovery, QoS, lifecycle, tf and the clock — which is where every failure on
+the real robot has come from so far.
 
 ## Tests
 
 ```bash
 cd pallet_approach
-
-# everything that should pass today
-python -m pytest test -m "not unimplemented"
-
-# the targets: one test per function still to write
-python -m pytest test/test_perception.py -x -v
+python -m pytest test
 ```
 
 On the workstation, prefix with `env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`:

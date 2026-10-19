@@ -541,3 +541,36 @@ def test_the_slab_is_wider_than_the_face_is_uneven(params_file):
     assert pallet['pallet.pocket_slab_half_depth'] * 2 > 0.026
 
 
+
+
+def test_the_overlay_has_a_colour_for_every_coordinator_state(params_file):
+    """A join nothing else checks, in both directions.
+
+    The overlay maps coordinator states to colour keys and the keys come from
+    params.yaml. A state the map misses draws grey, which looks deliberate; a
+    key the map names and the YAML lacks raises in a callback, which does not.
+    Read statically, because the node imports rclpy.
+
+    This is the same shape as the three runtime failures of 2026-10-15 -- a
+    parameter declared on one side only, a message field assigned but not
+    declared, a tool reading a key that had moved -- and it is checked the same
+    way.
+    """
+    from pallet_approach.coordinator import State
+
+    source = strip_comments((NODES / 'fork_overlay_node.py').read_text())
+    block = source[source.index('STATE_COLORS = {'):]
+    block = block[:block.index('}')]
+    mapped = dict(re.findall(r"""['"](\w+)['"]\s*:\s*['"](\w+)['"]""", block))
+
+    missing = sorted(state.value for state in State
+                     if state.value not in mapped)
+    assert not missing, (
+        f'the overlay has no colour for {missing}, so those states draw as '
+        f'whatever the fallback is and look deliberate')
+
+    configured = set(params_file['fork_overlay']['ros__parameters']['colors'])
+    unknown = sorted(set(mapped.values()) - configured)
+    assert not unknown, (
+        f'the overlay maps states to colour keys {unknown}, which params.yaml '
+        f'does not define -- the node raises on the first frame')

@@ -5,7 +5,23 @@ does can move the robot, so there is no reason to gate it. It also runs while
 idle, which is what makes it usable as a calibration check -- point the robot at
 a pallet with nothing else running and look at whether the forks line up.
 
-All the drawing is in `fork_overlay.py`, which is Athreya's file.
+The drawing itself is in `fork_overlay.py`.
+
+**The published image is 640x360 at 5 Hz, and that is not a preference.**
+Measured 2026-10-13: one subscriber to a raw ZED image topic from the main PC
+dropped the whole ZED node to about 0.2 Hz, and even compressed full-rate
+images were unusable remotely. So anything meant to be looked at from another
+machine is a separate, downscaled, low-rate topic (CLAUDE.md, "What changed"
+item 7). This is that topic, and it is the only image this stack publishes.
+
+It renders at FULL resolution and downscales afterwards, rather than drawing on
+a downscaled image. Drawing small would mean scaling the intrinsics, which is
+one more place to get a factor of two wrong -- in the one tool whose whole job
+is to make a millimetre-scale error visible. A 16.8 px fork-to-pocket gap is
+still 8.4 px after halving, which is plenty to see.
+
+The fork height comes from the virtual fork simulator, so the lowering and the
+lift are visible on the image rather than only in a log line.
 """
 
 from __future__ import annotations
@@ -18,6 +34,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+from pallet_approach_interfaces.msg import ForkState
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach import fork_overlay
@@ -28,10 +45,23 @@ from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matr
 
 SENSOR_QOS = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
 
-# coordinator state -> the key in the fork_overlay.colors parameter block
+# Coordinator state -> the key in the fork_overlay.colors parameter block.
+# Grouped by what the robot is doing rather than one colour per state: looking
+# (grey), driving towards the pallet (amber), committed with the forks in or
+# going in (green), and stopped because something was wrong (red).
 STATE_COLORS = {
-    'IDLE': 'idle', 'DETECTING': 'detecting', 'APPROACHING': 'approaching',
-    'CHECKING': 'approaching', 'DONE': 'idle', 'GO': 'go', 'NO_GO': 'no_go',
+    'IDLE': 'idle',
+    'CONFIRMING': 'detecting',
+    'CLASSIFYING': 'detecting',
+    'BACKING_OFF': 'approaching',
+    'CLOSING': 'approaching',
+    'CHECKING': 'approaching',
+    'LOWERING': 'go',
+    'INSERTING': 'inserting',
+    'LIFTING': 'inserting',
+    'BACKING_OUT': 'go',
+    'DONE': 'idle',
+    'ABORTED': 'no_go',
 }
 
 
@@ -45,6 +75,11 @@ class ForkOverlayNode(Node):
         self._state = 'IDLE'
         self._warned = False
         self._last_published = 0.0
+        self._fork_height = None
+        """The live carriage height from the simulator, or None before it has
+        said anything -- in which case the configured `forks.bottom_height` is
+        drawn. None and not 0.0: a height of zero is a carriage on the floor,
+        which is a drawing, not an absence."""
 
         prefix = 'frames.extrinsic_correction'
         self._correction = (
@@ -65,6 +100,8 @@ class ForkOverlayNode(Node):
         self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
                                  self._on_estimate, 10)
         self.create_subscription(String, '/coordinator/state', self._on_state, 10)
+        self.create_subscription(ForkState, '/virtual_forks/state',
+                                 self._on_fork_state, 10)
 
     def _declare(self):
         self.declare_parameter('topics.left_image',
@@ -83,6 +120,8 @@ class ForkOverlayNode(Node):
         self.declare_parameter('line_thickness', 2)
         self.declare_parameter('draw_pockets', True)
         self.declare_parameter('draw_standoff_marker', True)
+        self.declare_parameter('debug_width', 640)
+        self.declare_parameter('debug_height', 360)
         # Where the floor is in base_footprint: -0.025 measured, not zero.
         # Perception's fitted value overrides it when there is one.
         self.declare_parameter('floor_z', -0.025)
@@ -108,11 +147,20 @@ class ForkOverlayNode(Node):
             # The tines are built against this, not against the fitted floor:
             # they are bolted to the robot. See fork_overlay.render.
             'floor_z': get('floor_z'),
-            'forks': {k: get(f'forks.{k}') for k in (
-                'tine_length', 'tine_width', 'tine_thickness', 'spacing',
-                'bottom_height', 'carriage_x')},
+            'forks': dict(
+                {k: get(f'forks.{k}') for k in (
+                    'tine_length', 'tine_width', 'tine_thickness', 'spacing',
+                    'bottom_height', 'carriage_x')},
+                # The LIVE carriage height when the simulator has reported one,
+                # so the lowering and the lift are visible on the image and not
+                # only in a log line. Falls back to the configured height
+                # before it has said anything.
+                bottom_height=(get('forks.bottom_height')
+                               if self._fork_height is None
+                               else self._fork_height)),
             'colors': {k: tuple(int(v) for v in get(f'colors.{k}')) for k in (
-                'idle', 'detecting', 'approaching', 'go', 'no_go')},
+                'idle', 'detecting', 'approaching', 'inserting', 'go',
+                'no_go')},
             'alpha': get('alpha'),
             'line_thickness': get('line_thickness'),
             'draw_pockets': get('draw_pockets'),
@@ -125,6 +173,9 @@ class ForkOverlayNode(Node):
 
     def _on_estimate(self, msg: PalletEstimateMsg):
         self._estimate = estimate_from_msg(msg)
+
+    def _on_fork_state(self, msg: ForkState):
+        self._fork_height = float(msg.height)
 
     def _on_state(self, msg: String):
         self._state = msg.data
@@ -185,6 +236,7 @@ class ForkOverlayNode(Node):
                                     throttle_duration_sec=5.0)
             return
 
+        annotated = self._downscale(annotated)
         out = Image()
         out.header = msg.header
         out.height, out.width = annotated.shape[0], annotated.shape[1]
@@ -194,6 +246,21 @@ class ForkOverlayNode(Node):
         out.data = annotated.tobytes()
         self._publisher.publish(out)
         self._last_published = now
+
+    def _downscale(self, image):
+        """To the debug size, or unchanged if it is already no larger.
+
+        INTER_AREA, because the image is being shrunk: it averages the pixels
+        that fall into each output pixel, where INTER_LINEAR samples two of
+        them and drops the rest. On an overlay made of thin lines that is the
+        difference between a visible fork edge and a dotted one.
+        """
+        width = int(self.get_parameter('debug_width').value)
+        height = int(self.get_parameter('debug_height').value)
+        if image.shape[1] <= width and image.shape[0] <= height:
+            return image
+        import cv2
+        return cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
 
 
 def main(args=None):
