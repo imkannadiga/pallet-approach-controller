@@ -59,6 +59,36 @@ def nvenc_available() -> bool:
     return Gst.ElementFactory.find('nvv4l2h264enc') is not None
 
 
+def nvenc_properties(bitrate_kbps: int, keyframe_interval: int) -> dict:
+    """The hardware encoder's tunable properties, as {name: value}.
+
+    Deliberately NOT baked into the gst-launch string the way the x264 and
+    vp8 properties are. `nvv4l2h264enc` wraps a V4L2 stateful encoder whose
+    exposed property set has changed across L4T releases -- measured
+    2026-10-19 on an AGX Orin, JetPack 6.2.2: `preset-level`, present and
+    required on older L4T (r32 / JetPack 4), does not exist on this element
+    build at all, and `gst_parse_launch` fails the WHOLE pipeline on the
+    first property name it does not recognise, crash-looping the node.
+    `VideoStreamer._start` applies these one at a time with a property-exists
+    check instead, after the pipeline is built, so a property this L4T build
+    does not have is skipped and logged rather than taking the stream down.
+
+    `control-rate=1` is CBR and `profile=0` is Baseline -- both int-coded
+    enums on this element rather than strings, which is a second thing worth
+    confirming per L4T build; logged, not asserted, for the same reason.
+    """
+    return {
+        'bitrate': bitrate_kbps * 1000,
+        'control-rate': 1,              # CBR
+        'profile': 0,                   # Baseline
+        'maxperf-enable': True,
+        'insert-sps-pps': True,
+        'iframeinterval': keyframe_interval,
+        'idrinterval': keyframe_interval,
+        'num-B-Frames': 0,
+    }
+
+
 def build_pipeline_description(
     in_format: str,
     in_width: int,
@@ -70,7 +100,12 @@ def build_pipeline_description(
     rtsp_url: str,
     encoder: str,
 ) -> str:
-    """The GStreamer pipeline as a gst-launch style string."""
+    """The GStreamer pipeline as a gst-launch style string.
+
+    The nvenc encoder element is named (`name=enc`) and carries NO properties
+    in the string itself -- see `nvenc_properties` for why, and
+    `VideoStreamer._start` for where they are actually applied.
+    """
     source = (
         f'appsrc name=src is-live=true format=time do-timestamp=true '
         f'caps=video/x-raw,format={in_format},width={in_width},'
@@ -86,10 +121,7 @@ def build_pipeline_description(
         encode = (
             f'{convert} ! nvvidconv '
             f'! video/x-raw(memory:NVMM),format=NV12,width={out_width},height={out_height} '
-            f'! nvv4l2h264enc bitrate={bitrate_kbps * 1000} control-rate=1 '
-            f'profile=0 preset-level=1 maxperf-enable=true insert-sps-pps=true '
-            f'iframeinterval={keyframe_interval} idrinterval={keyframe_interval} '
-            f'num-B-Frames=0'
+            f'! nvv4l2h264enc name=enc'
         )
     elif encoder == 'x264':
         encode = (
@@ -228,7 +260,44 @@ class VideoStreamer:
         self._pipeline = Gst.parse_launch(description)
         self._appsrc = self._pipeline.get_by_name('src')
         self._input_key = (gst_format, width, height)
+        if self.encoder == 'nvenc':
+            self._configure_nvenc()
         self._pipeline.set_state(Gst.State.PLAYING)
+
+    def _configure_nvenc(self) -> None:
+        """Apply the hardware encoder's tunable properties one at a time.
+
+        Not in the gst-launch string -- see `nvenc_properties`. A property
+        this L4T build's `nvv4l2h264enc` does not expose is skipped and named
+        in a single log line rather than taking the whole pipeline down, which
+        is what baking it into the parsed string did on first contact with a
+        real Orin (`preset-level`, measured 2026-10-19, JetPack 6.2.2).
+        """
+        encoder = self._pipeline.get_by_name('enc')
+        if encoder is None:
+            log.warning('nvenc requested but no "enc" element in the pipeline; '
+                       'nothing to configure')
+            return
+        keyframe_interval = int(self.fps)
+        applied, skipped = [], []
+        for name, value in nvenc_properties(self.bitrate_kbps,
+                                            keyframe_interval).items():
+            try:
+                encoder.set_property(name, value)
+                applied.append(name)
+            except TypeError:
+                # GObject raises TypeError for a property this element build
+                # does not have -- exactly the "no property X" error that a
+                # baked-in gst-launch string turns into a crash instead.
+                skipped.append(name)
+            except Exception as error:  # noqa: BLE001
+                # Anything else (a property that exists but rejects this
+                # value, say) is also one property failing to apply, not a
+                # reason to lose the whole stream -- but it is a different
+                # failure from "not supported" and is named as one.
+                skipped.append(f'{name} ({error})')
+        log.info('nvenc: applied %s; skipped %s',
+                sorted(applied), sorted(skipped) or 'none')
 
     def _fail(self, reason: str) -> None:
         log.warning('stream error, retrying in %.1f s: %s', self.retry_seconds, reason)
