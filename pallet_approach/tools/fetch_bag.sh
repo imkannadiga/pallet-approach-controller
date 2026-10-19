@@ -27,6 +27,8 @@
 #   ./fetch_bag.sh --check                              # test everything, record nothing
 #   ./fetch_bag.sh -o pallet_2m_0deg -d 20              # depth only, 5 Hz, zstd
 #   ./fetch_bag.sh -o pallet_2m_0deg -d 20 --with-image # add the colour image
+#   ./fetch_bag.sh -o pallet_175_lidar -d 10 \
+#       --with-image --with-lidar                       # camera AND LiDAR in one bag
 #   JETSON=user@192.168.1.102 CONTAINER=<scout> \
 #     ./fetch_bag.sh -o floor_lidar -d 20 --lidar-only  # LiDAR, on the robot PC
 #   ./fetch_bag.sh -o pallet_2m_0deg --fetch-only       # retry a failed transfer
@@ -50,6 +52,7 @@ NAME=""
 DURATION=20
 RATE=5
 WITH_IMAGE=0
+WITH_LIDAR=0
 LIDAR_ONLY=0
 COMPRESS=1
 CHECK_ONLY=0
@@ -66,6 +69,7 @@ while [ $# -gt 0 ]; do
     -d|--duration) DURATION="$2"; shift 2 ;;
     -r|--rate)     RATE="$2"; shift 2 ;;
     --with-image)  WITH_IMAGE=1; shift ;;
+    --with-lidar)  WITH_LIDAR=1; shift ;;
     --lidar-only)  LIDAR_ONLY=1; shift ;;
     --no-compress) COMPRESS=0; shift ;;
     --via)         VIA="$2"; shift 2 ;;
@@ -199,16 +203,36 @@ if [ "$COMPRESS" = "1" ]; then
     COMPRESS=0
   fi
 fi
-if [ "$LIDAR_ONLY" = "1" ]; then
-  PROBE=/ouster/points
-else
-  PROBE=/zed2/zed_node/depth/depth_registered
-fi
-if in_box "ros2 topic list 2>/dev/null | grep -q $PROBE"; then
-  echo "  $PROBE visible from this container: ok"
-else
-  echo "  $PROBE NOT visible from '$CONTAINER' -- check ROS_DOMAIN_ID and the RMW"
-  echo "    there, or pick the container running that driver"
+PROBES=()
+[ "$LIDAR_ONLY" = "0" ] && PROBES+=(/zed2/zed_node/depth/depth_registered)
+{ [ "$LIDAR_ONLY" = "1" ] || [ "$WITH_LIDAR" = "1" ]; } && PROBES+=(/ouster/points)
+for PROBE in "${PROBES[@]}"; do
+  if in_box "ros2 topic list 2>/dev/null | grep -q $PROBE"; then
+    echo "  $PROBE visible from this container: ok"
+  else
+    echo "  $PROBE NOT visible from '$CONTAINER' -- check ROS_DOMAIN_ID and the RMW"
+    echo "    there, or pick the container running that driver"
+  fi
+done
+
+# The Ouster driver runs on the robot PC, so --with-lidar means its cloud crosses
+# the network into the Jetson's container. That is the mirror image of the trap in
+# CLAUDE.md item 7, where a remote subscriber throttled the ZED to 0.2 Hz: these
+# topics are RELIABLE, so a subscriber that cannot keep up slows the publisher.
+# The difference is scale and medium -- 31 MB/s over the wired switch rather than
+# 136 MB/s over wifi -- so it is expected to work, but it has not been measured.
+# Check the rate afterwards and fall back to two bags if the Ouster has dropped.
+if [ "$WITH_LIDAR" = "1" ] && [ "$LIDAR_ONLY" = "0" ]; then
+  cat <<'MSG'
+
+  NOTE: --with-lidar subscribes to /ouster/points across the network, from the
+  robot PC into the Jetson. Unmeasured: watch for the Ouster's rate dropping.
+  After this bag, confirm it is still ~10 Hz:
+      ros2 topic hz /ouster/points
+  If it has dropped, record two bags instead (camera on the Jetson, LiDAR with
+  --lidar-only on the robot PC) and align them offline by timestamp -- the
+  clocks are chrony-synced.
+MSG
 fi
 
 # ---------------------------------------------------------------------- space
@@ -217,6 +241,9 @@ echo "  container: $(in_box "df -Pm '$REMOTE_BAG_DIR' 2>/dev/null || df -Pm /" |
 echo "  here:      $(df -Pm "$(dirname "$LOCAL_BAG_DIR")" | awk 'NR==2{print $4" MB free"}')"
 RAW_MB=$(( DURATION * RATE * 4 ))
 [ "$WITH_IMAGE" = "1" ] && RAW_MB=$(( DURATION * RATE * 7 ))
+# the LiDAR is not throttled -- 3.15 MB per scan at ~10 Hz is 31 MB/s on its own,
+# which dominates a 5 Hz camera bag.
+[ "$WITH_LIDAR" = "1" ] && RAW_MB=$(( RAW_MB + DURATION * 32 ))
 echo "  this bag:  ~${RAW_MB} MB before compression, on the Jetson only until it transfers"
 
 if [ "$LIST_REMOTE" = "1" ]; then
@@ -243,8 +270,9 @@ if [ "$FETCH_ONLY" = "0" ]; then
   RECORD_ARGS=(-o "$NAME" -d "$DURATION" -r "$RATE" --dir "$REMOTE_BAG_DIR")
   if [ "$LIDAR_ONLY" = "1" ]; then
     RECORD_ARGS+=(--lidar-only)
-  elif [ "$WITH_IMAGE" = "0" ]; then
-    RECORD_ARGS+=(--no-image)
+  else
+    [ "$WITH_IMAGE" = "0" ] && RECORD_ARGS+=(--no-image)
+    [ "$WITH_LIDAR" = "1" ] && RECORD_ARGS+=(--with-lidar)
   fi
   [ "$COMPRESS" = "1" ] && RECORD_ARGS+=(--compress)
 

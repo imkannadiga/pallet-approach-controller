@@ -93,7 +93,12 @@ IMAGE_FRAME_MB=2.76
 LIDAR_FRAME_MB=3.15
 LIDAR_RATE=10
 EFF_RATE=$RATE
-[ "$FULL_RATE" = "1" ] && EFF_RATE=37
+# [measured 2026-10-15] ~56 Hz with grab_frame_rate 60 at HD720. The survey
+# recorded ~37 Hz on 2026-10-13, so the camera's configuration changed between
+# them -- reconcile before trusting either. 56 is the safe one to size against:
+# at 37 a 20 s unthrottled bag of depth+colour estimates 4.8 GB and really
+# takes 7.3 GB, which is more than the Jetson has free.
+[ "$FULL_RATE" = "1" ] && EFF_RATE=56
 
 [ "$WITH_IMAGE" = "0" ] && IMAGE_FRAME_MB=0
 [ "$LIDAR_ONLY" = "1" ] && DEPTH_FRAME_MB=0
@@ -145,8 +150,30 @@ fi
 [ "$WITH_LIDAR" = "1" ] && TOPICS+=("$LIDAR")
 THROTTLE_PIDS=()
 
+# `ros2 run` is a Python launcher that spawns the node as a CHILD process, so
+# SIGTERM to the pid we hold does not necessarily reach the node. Measured
+# 2026-10-15: eight bags recorded in one session left one throttle node running
+# each time, and because every one of them republishes to the SAME
+# `..._throttled` topic, the recorded rate climbed 4.8 -> 8.7 -> 12.8 -> ... ->
+# 32 Hz across the session while the Jetson's CPU went to the strays. So: start
+# each throttle in its own process group with setsid and signal the whole group.
+THROTTLE_PATTERN='topic_tools.*throttle|throttle messages'
+
+sweep_strays() {
+  command -v pkill >/dev/null 2>&1 || return 0
+  pkill -f "$THROTTLE_PATTERN" 2>/dev/null || true
+}
+
 cleanup() {
-  for pid in "${THROTTLE_PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done
+  for pid in "${THROTTLE_PIDS[@]:-}"; do
+    kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  done
+  sleep 0.5
+  for pid in "${THROTTLE_PIDS[@]:-}"; do
+    kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  done
+  # belt and braces: anything of ours that outlived its group
+  if [ "${#THROTTLE_PIDS[@]:-0}" -gt 0 ]; then sweep_strays; fi
 }
 trap cleanup EXIT
 
@@ -157,16 +184,39 @@ elif [ "$FULL_RATE" = "1" ]; then
   TOPICS+=("$DEPTH")
   [ "$WITH_IMAGE" = "1" ] && TOPICS+=("$IMAGE")
 elif ros2 pkg executables topic_tools 2>/dev/null | grep -q throttle; then
+  # A throttle left over from a previous run publishes to the same output topic,
+  # so the recorded rate would be a multiple of RATE and the bag unusable for
+  # anything rate-sensitive. Clear them out first and say so.
+  if command -v pgrep >/dev/null 2>&1 && pgrep -f "$THROTTLE_PATTERN" >/dev/null 2>&1; then
+    echo "WARNING: throttle nodes from an earlier run are still alive:"
+    pgrep -af "$THROTTLE_PATTERN" | sed 's/^/    /'
+    echo "  killing them -- left alone they would multiply the recorded rate"
+    sweep_strays
+    sleep 1
+  fi
+
   echo "throttling to ${RATE} Hz"
-  ros2 run topic_tools throttle messages "$DEPTH" "$RATE" "${DEPTH}_throttled" \
-      >/dev/null 2>&1 & THROTTLE_PIDS+=($!)
+  setsid ros2 run topic_tools throttle messages "$DEPTH" "$RATE" \
+      "${DEPTH}_throttled" >/dev/null 2>&1 & THROTTLE_PIDS+=($!)
   TOPICS+=("${DEPTH}_throttled")
   if [ "$WITH_IMAGE" = "1" ]; then
-    ros2 run topic_tools throttle messages "$IMAGE" "$RATE" "${IMAGE}_throttled" \
-        >/dev/null 2>&1 & THROTTLE_PIDS+=($!)
+    setsid ros2 run topic_tools throttle messages "$IMAGE" "$RATE" \
+        "${IMAGE}_throttled" >/dev/null 2>&1 & THROTTLE_PIDS+=($!)
     TOPICS+=("${IMAGE}_throttled")
   fi
   sleep 2
+
+  # One publisher per throttled topic, or the rate is wrong. Cheap to check and
+  # it catches the failure at the start of the bag rather than on the laptop.
+  for t in "${DEPTH}_throttled" $([ "$WITH_IMAGE" = "1" ] && echo "${IMAGE}_throttled"); do
+    n=$(ros2 topic info "$t" 2>/dev/null | awk '/Publisher count/{print $3}')
+    if [ -n "$n" ] && [ "$n" != "1" ]; then
+      echo "REFUSING: $t has $n publishers, so the bag would record about" >&2
+      echo "  ${n}x ${RATE} Hz. Kill the strays and try again:" >&2
+      echo "    pkill -f 'topic_tools.*throttle'" >&2
+      exit 1
+    fi
+  done
 else
   cat >&2 <<'MSG'
 topic_tools is not installed, so depth cannot be throttled. Either install it
@@ -199,6 +249,34 @@ wait "$RECORD_PID" 2>/dev/null || true
 
 echo
 du -sh "$BAG" 2>/dev/null || true
+
+# Rates as recorded, not as intended. This is the check that would have caught
+# the stray-throttle bug on the first bag instead of the eighth.
+if command -v python3 >/dev/null 2>&1; then
+  echo
+  echo "recorded rates:"
+  export RATE
+  python3 - "$BAG" <<'PY' 2>/dev/null || echo "  (could not read the bag back)"
+import glob, sqlite3, sys
+db = (glob.glob(f'{sys.argv[1]}/*.db3') + glob.glob(f'{sys.argv[1]}/*.mcap'))
+if not db or db[0].endswith('.mcap'):
+    raise SystemExit(0)
+c = sqlite3.connect(db[0])
+for name, n, span in c.execute(
+        'select t.name, count(m.id), (max(m.timestamp)-min(m.timestamp))/1e9 '
+        'from topics t left join messages m on m.topic_id=t.id group by t.id'):
+    if not n or not span:
+        continue
+    hz = n / span
+    flag = ''
+    if 'throttled' in name and hz > 1.5 * float(__import__('os').environ.get('RATE', '10')):
+        flag = '   <-- HIGHER THAN ASKED FOR: stray throttle node?'
+    if name == '/ouster/points' and hz < 7:
+        flag = '   <-- the Ouster is being throttled; see docs/SYSTEM.md'
+    print(f'  {name:<58} {n:>5} msgs  {hz:>6.2f} Hz{flag}')
+PY
+fi
+
 cat <<MSG
 
 Done. Now write the ground truth for this bag into docs/dataset.md:
