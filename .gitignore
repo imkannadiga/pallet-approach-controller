@@ -25,3 +25,8 @@ frames/
 
 # Survey output is kept: it is the record of what the system actually was.
 !docs/survey/*.txt
+
+# replay.py and the other tools write their plots wherever they are run
+pipeline_stages.png
+*.png
+!docs/*.png
