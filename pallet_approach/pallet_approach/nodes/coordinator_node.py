@@ -30,7 +30,11 @@ from pallet_approach_interfaces.action import PalletTask
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach import go_nogo
-from pallet_approach.approach import approach_targets, pocket_center, range_to_face, transform_pose
+from pallet_approach.approach import (
+    pocket_center,
+    standoff_pose,
+    transform_pose,
+)
 from pallet_approach.coordinator import Coordinator, Outcome, State
 from pallet_approach.model import Decision, Pose2D
 from pallet_approach.ros_conversions import (
@@ -52,8 +56,7 @@ class CoordinatorNode(Node):
         self._machine = Coordinator(self._machine_params())
         self._pose = Pose2D(0.0, 0.0, 0.0)
         self._estimate = None
-        self._targets = None          # (lineup, standoff) in odom
-        self._target_index = 0
+        self._target = None           # the standoff pose, in odom
         self._arrived = False
         self._goal_handle = None
         self._last_outcome = None
@@ -90,12 +93,12 @@ class CoordinatorNode(Node):
 
     def _declare(self):
         self.declare_parameter('action_name', 'pallet_task')
+        self.declare_parameter('standoff_distance', 1.75)
         self.declare_parameter('topics.odom', '/odom')
         self.declare_parameter('frames.odom', 'odom')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.body', 'base_link')
         for name, default in (
-            ('approach.standoff_distance', 1.30), ('approach.lineup_extra', 0.50),
             ('detecting.timeout', 10.0), ('detecting.confirm_frames', 5),
             ('detecting.max_position_spread', 0.050),
             ('detecting.max_yaw_spread', 0.090),
@@ -211,21 +214,15 @@ class CoordinatorNode(Node):
             # odom, and composing them is exact rather than sloppy: the URDF
             # joint between the two is a pure z translation (rpy "0 0 0"), so
             # the frames share x, y and yaw, and these targets are planar.
-            lineup, standoff = approach_targets(
-                estimate,
-                self._get('approach.standoff_distance'),
-                self._get('approach.lineup_extra'))
-            self._targets = (transform_pose(lineup, self._pose),
-                             transform_pose(standoff, self._pose))
-            self._target_index = 0
+            center = pocket_center(estimate.pockets, fallback=estimate.position)
+            standoff = standoff_pose(center, estimate.normal,
+                                     self._get('standoff_distance'))
+            self._target = transform_pose(standoff, self._pose)
             self._arrived = False
             self.get_logger().info(
-                'targets in odom: lineup (%.2f, %.2f, %.1f deg), '
-                'standoff (%.2f, %.2f, %.1f deg)' % (
-                    self._targets[0].x, self._targets[0].y,
-                    math.degrees(self._targets[0].yaw),
-                    self._targets[1].x, self._targets[1].y,
-                    math.degrees(self._targets[1].yaw)))
+                'standoff in odom: (%.2f, %.2f, %.1f deg)' % (
+                    self._target.x, self._target.y,
+                    math.degrees(self._target.yaw)))
 
     def _publish_target(self, target: Pose2D | None):
         if target is None:
@@ -240,16 +237,12 @@ class CoordinatorNode(Node):
         now = self._now()
         state = self._machine.state
 
-        if state is State.APPROACHING and self._targets is not None:
+        if state is State.APPROACHING and self._target is not None:
             # Keep publishing: the controller stops if the target goes stale.
-            self._publish_target(self._targets[self._target_index])
+            self._publish_target(self._target)
             if self._arrived:
                 self._arrived = False
-                if self._target_index == 0:
-                    self._target_index = 1
-                    self.get_logger().info('at the line-up point, driving in')
-                else:
-                    self._apply(self._machine.on_arrived(now))
+                self._apply(self._machine.on_arrived(now))
 
         self._apply(self._machine.on_tick(now))
 
@@ -293,7 +286,7 @@ class CoordinatorNode(Node):
     def _execute(self, goal_handle):
         self._goal_handle = goal_handle
         self._estimate = None
-        self._targets = None
+        self._target = None
         self._arrived = False
         self._last_outcome = None
         self._last_reason = ''
@@ -329,10 +322,10 @@ class CoordinatorNode(Node):
         feedback = PalletTask.Feedback()
         feedback.phase = self._machine.state.value
         feedback.distance_to_standoff = float('nan')
-        if self._targets is not None:
-            target = self._targets[1]
+        if self._target is not None:
             feedback.distance_to_standoff = float(
-                math.hypot(target.x - self._pose.x, target.y - self._pose.y))
+                math.hypot(self._target.x - self._pose.x,
+                           self._target.y - self._pose.y))
         return feedback
 
     def _result(self, outcome: Outcome, reason: str):

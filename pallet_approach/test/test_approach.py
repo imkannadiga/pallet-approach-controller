@@ -12,10 +12,8 @@ import pytest
 import synthetic as S
 
 from pallet_approach.approach import (
-    approach_targets,
     distance_between,
     lateral_offset,
-    lineup_pose,
     outward_normal,
     pocket_center,
     range_to_face,
@@ -27,7 +25,7 @@ from pallet_approach.approach import (
 from pallet_approach.model import PalletEstimate, Plane, Pocket, Pose2D
 
 STANDOFF = 1.45
-LINEUP_EXTRA = 0.50
+# LINEUP_EXTRA went with the two-leg approach (D38).
 
 
 def estimate_at(distance=2.0, lateral=0.0, yaw=0.0):
@@ -103,7 +101,7 @@ def test_pocket_center_falls_back_when_pockets_are_missing():
         pocket_center(())
 
 
-# --------------------------------------------------------- standoff / lineup
+# ----------------------------------------------------------------- standoff
 
 def test_standoff_is_on_the_normal_at_the_right_distance():
     est = estimate_at(distance=2.0)
@@ -111,16 +109,6 @@ def test_standoff_is_on_the_normal_at_the_right_distance():
     assert math.isclose(s.x, 2.0 - STANDOFF, abs_tol=1e-9)
     assert math.isclose(s.y, 0.0, abs_tol=1e-9)
     assert math.isclose(s.yaw, 0.0, abs_tol=1e-9)      # facing +x, at the pallet
-
-
-def test_lineup_is_further_back_on_the_same_line():
-    est = estimate_at(distance=2.0)
-    c = pocket_center(est.pockets)
-    s = standoff_pose(c, est.normal, STANDOFF)
-    p1 = lineup_pose(c, est.normal, STANDOFF, LINEUP_EXTRA)
-    assert math.isclose(p1.x, s.x - LINEUP_EXTRA, abs_tol=1e-9)
-    assert math.isclose(p1.y, s.y, abs_tol=1e-9)
-    assert math.isclose(p1.yaw, s.yaw, abs_tol=1e-9)
 
 
 def test_standoff_rejects_a_non_positive_distance():
@@ -224,13 +212,15 @@ def test_transform_pose_identity():
 
 
 def test_targets_survive_a_frame_change():
-    """Computing targets in base_link then converting to odom must match
-    computing them directly in odom. This is what the coordinator relies on."""
+    """Computing a target in base_link then converting to odom must match
+    computing it directly in odom. The tracker relies on this: it places each
+    estimate in odom with the robot's pose and compares them there (D35)."""
     est = estimate_at(distance=2.0, yaw=math.radians(15))
     base_in_odom = Pose2D(3.0, -1.0, math.radians(40))
 
-    lineup_b, standoff_b = approach_targets(est, STANDOFF, LINEUP_EXTRA)
-    converted = [transform_pose(p, base_in_odom) for p in (lineup_b, standoff_b)]
+    standoff_b = standoff_pose(pocket_center(est.pockets, est.position),
+                               est.normal, STANDOFF)
+    converted = [transform_pose(standoff_b, base_in_odom)]
 
     # the same estimate expressed in odom
     cos_a, sin_a = math.cos(base_in_odom.yaw), math.sin(base_in_odom.yaw)
@@ -242,7 +232,8 @@ def test_targets_survive_a_frame_change():
         yaw=est.yaw + base_in_odom.yaw,
         pockets=tuple(Pocket(rot @ p.center + shift, p.width, p.height) for p in est.pockets),
     )
-    direct = approach_targets(est_odom, STANDOFF, LINEUP_EXTRA)
+    direct = [standoff_pose(pocket_center(est_odom.pockets, est_odom.position),
+                            est_odom.normal, STANDOFF)]
 
     for a, b in zip(converted, direct):
         assert np.allclose([a.x, a.y], [b.x, b.y], atol=1e-9)

@@ -18,6 +18,30 @@
     # agree.
     floor_z: -0.025
 
+    # [measured 2026-10-14, D23] The robot itself. Tape against the URDF:
+    # 0.920 m long (URDF 0.925), 0.690 m wide over the wheels (0.6996). The
+    # URDF's base_link collision box is accurate, unlike its base_footprint
+    # joint, so the URDF values are kept -- they are the conservative ones and
+    # every clearance in D16 and D21 rests on the front overhang.
+    robot:
+      length: 0.925
+      width: 0.6996
+      front_bumper_x: 0.4625
+      rear_bumper_x: -0.4625
+
+    # [derived, D16] Face distance at which base_footprint stops before
+    # insertion. Shared because four stages read it: the closing loop drives to
+    # it, GO/NO-GO measures tolerances at it, insertion starts from it and the
+    # overlay marks it. It is NOT a perception choice -- it is set by how far
+    # the virtual tine tips reach (forks.carriage_x + forks.tine_length =
+    # 1.6125 m), because the tines must start outside the pallet. 1.75 m leaves
+    # them 0.1375 m clear. The full derivation, including why the camera no
+    # longer binds, is in docs/decisions.md D16.
+    #
+    # Measured at this distance on 2026-10-15 (pallet_s_129): face x +5 mm,
+    # both pockets found, spacing -3 mm. See docs/dataset.md.
+    standoff_distance: 1.75
+
     frames:
       # [measured] the depth and left-image headers carry this frame.
       camera_optical: zed2_left_camera_frame_optical
@@ -425,6 +449,100 @@ approach_controller:
       # rotate in place until the heading error is under this, then drive
       heading_before_drive: 0.100   # rad
 
+    # ------------------------------------------------------------- closing
+    # The servo that replaced the two-leg approach (D38). Two nested loops:
+    # the outer one turns a lateral offset into an aim, the inner one turns the
+    # robot to that aim. Both gains were chosen by simulating this controller
+    # (test/simulate.py, test_closing.py), not by guessing.
+    closing:
+      # [measured] 1 / k_cross is the decay length of the lateral error in
+      # metres, so 2.5 means the offset falls by e every 0.40 m travelled. This
+      # is the number required_run_up is built on.
+      k_cross: 2.5
+      # [measured] How hard the robot chases the aim it has chosen, rad/s per
+      # rad. It also sets the fine authority available: a command below
+      # limits.min_angular is zeroed rather than raised, so the smallest
+      # correction the base will make is min_angular / k_heading = 0.025 rad,
+      # 1.4 deg. 4.0 rather than the 6.0 that simulated slightly better,
+      # because the simulation has no actuator lag and the gentler gain is the
+      # one that survives having some.
+      k_heading: 4.0
+      # [choice] The furthest the robot will crab across towards the line,
+      # radians. 14.3 deg. Without a cap a large offset asks for an aim the
+      # base reaches by turning most of the way sideways, and the pallet then
+      # leaves the camera's view -- the servo would blind itself.
+      max_approach_angle: 0.25
+      # [choice] Inside this the aim is exactly zero, so the robot straightens
+      # and arrives square rather than still cutting across. Without it the
+      # arrival yaw is determined by the arrival offset (aim = k_cross *
+      # offset), and at k_cross 2.5 a 35 mm residual is already the whole 5 deg
+      # GO/NO-GO yaw budget. 15 mm is above the ~10 mm measurement noise, so
+      # the aim does not chatter across the edge.
+      straighten_offset: 0.015
+      # [choice] More than this far off the aim, turn without driving. A robot
+      # that has to swing 10 deg should do it where it stands rather than
+      # describe that arc at a pallet.
+      max_turn_in_place: 0.17        # rad, 9.7 deg
+      # [choice] D8's final-leg speed, used for the whole closing loop rather
+      # than only inside the old line-up point. 3 m at 0.10 m/s is 30 s, which
+      # costs demo time and nothing else.
+      closing_speed: 0.10
+      taper_range: 0.30              # slow down over the last 0.30 m
+      range_tolerance: 0.03          # "at the standoff" window
+      # [derived] How square the robot must be before the run counts as
+      # arrived. It MUST be larger than the base's own turn granularity
+      # (min_angular / k_heading = 0.025 rad) or the square-up never finishes.
+      # 0.035 rad is 2.0 deg, against the 5 deg GO/NO-GO limit.
+      arrival_yaw: 0.035
+      # Hysteresis: once squaring up, do not start driving again unless the
+      # face is this much further than the standoff. One noisy range reading
+      # must not make the robot creep forward a frame at a time.
+      resume_range: 0.10
+      # [choice, Athreya 2026-10-19] The floor on the run-up. Variable standoff
+      # with a 3 m minimum: the required distance is computed from the lateral
+      # error, and never less than this.
+      min_run_up: 3.0
+      # [choice] Lateral error the run-up is sized to reach. 20 mm is a third
+      # of the 65 mm of slack around a 100 mm tine in a 230 mm pocket, and
+      # below the 50 mm GO/NO-GO limit with room for the measurement to be
+      # wrong about it.
+      residual_target: 0.020
+      # Added to the computed run-up for the initial turn, during which the
+      # robot travels forward without correcting much.
+      run_up_margin: 0.20
+      # [choice, Athreya 2026-10-19] Abort after this many consecutive frames
+      # of growing lateral error, provided the total growth is at least
+      # min_divergence_growth. Both conditions, because consecutive growth
+      # alone fires on noise once the error is small: five frames of 1 mm steps
+      # at the standoff is measurement scatter, not divergence.
+      divergence_frames: 5
+      min_divergence_growth: 0.010
+
+    # ------------------------------------------------------------- reverse
+    # Backing off to make room for the run-up, and backing out after the lift.
+    # Athreya chose our own reverse controller with a LiDAR check over handing
+    # the reverse to Nav2 (2026-10-19, D41).
+    reverse:
+      # [choice] D8's insertion speed, used for the reverse too. Reversing is
+      # the blindest thing this robot does -- the costmap that would remember
+      # what the LiDAR saw while driving past belongs to Nav2, and we chose not
+      # to use it -- so it runs at the slowest speed in the stack. A 1.5 m
+      # reverse then takes 30 s, which is a cost in demo time, not in safety.
+      speed: 0.05
+      # [choice] How far the robot may be reversed over ground NOTHING has
+      # checked, on top of the ground its own body was standing on moments ago.
+      # The second part is the real argument (see closing.reverse_allowance);
+      # this is the admitted gap in it, kept small deliberately.
+      max_unverified: 0.50
+      # Rear obstacle corridor. The robot's own width plus a margin either
+      # side, from the rear bumper backwards, between these heights above the
+      # floor -- the floor is not an obstacle and neither is the ceiling.
+      side_margin: 0.10
+      min_height: 0.03
+      max_height: 1.00
+      # Obstacle this close to the needed reverse distance refuses the reverse.
+      clearance_margin: 0.15
+
     # Commands cross the network to the robot PC, and the base driver has NO
     # command timeout (ros2 param dump /scout), so we never let the base coast on
     # a stale command: fixed publish rate while active, explicit zero on stop.
@@ -442,38 +560,11 @@ coordinator:
 
     action_name: pallet_task
 
-    approach:
-      # [derived] base_footprint stops this far from the pallet face.
-      #
-      # SUPERSEDED 2026-10-14 (D16). The old value of 1.45 m was derived from
-      # the camera's vertical FOV: the GO/NO-GO rules measure the pocket
-      # opening against a 0.030 m tolerance, so the opening's bottom lip -- the
-      # EPAL nominal puts it 0.022 m above the floor -- had to stay in frame.
-      # The measured pallet HAS NO BOTTOM LIP on the pocket face: the opening
-      # runs from the floor up. There is no lip to keep in frame, and the
-      # opening's lower bound is the fitted floor plane, which perception gets
-      # from the whole visible floor rather than from a strip at the face. The
-      # camera's requirement collapses to keeping the pocket DETECTION BAND in
-      # frame, whose top leaves at 1.24 m and whose bottom leaves at 1.34 m.
-      #
-      # So the camera no longer binds. The fork reach does: the virtual tines
-      # must start OUTSIDE the pallet, and with the carriage at the front
-      # bumper (0.4625) and 1.150 m tines the tips reach 1.6125 m.
-      #
-      #   constraint                              minimum standoff
-      #   tine tips clear of the face              1.6125 m + clearance
-      #   whole detection band in frame            1.34 m
-      #   pocket top edge in frame                 1.17 m
-      #
-      # 1.75 m leaves the tips 0.1375 m clear of the face and is 0.41 m clear
-      # of the camera limit. Insertion then runs 1.05 m to the stop at 0.700 m
-      # (pallet.sides.short.insertion_stop_face_x), for 0.9125 m of depth --
-      # 76 % of the pallet, tips 0.2825 m short of the far end.
-      #
-      # Measured at this distance on 2026-10-15 (pallet_s_129): face x +5 mm,
-      # both pockets found, spacing -3 mm. See docs/dataset.md.
-      standoff_distance: 1.75
-      lineup_extra: 0.50
+    # approach.standoff_distance moved to the shared block above: the closing
+    # loop, GO/NO-GO, insertion and the overlay all read it. approach.lineup_extra
+    # went with the two-leg approach it belonged to (D38) -- the robot no longer
+    # drives to a line-up point and turns; it servos onto the pocket centre line
+    # continuously while closing.
 
     detecting:
       timeout: 10.0             # s, then NO_PALLET

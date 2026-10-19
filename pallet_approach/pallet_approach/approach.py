@@ -15,11 +15,11 @@ robot):
             C                    C = midpoint between the pocket centres
             │
             ●  S = C + d·n       standoff: where base_footprint stops
-            │
-            ●  P1 = C + (d+L)·n  line-up: turn onto the pocket centre line here
 
-The robot drives rotate-drive-rotate to P1, then straight along the centre line
-to S. At both targets it faces the pallet, i.e. along -n.
+The robot servos onto the centre line while closing in (`closing.py`); this
+module is the geometry it and the GO/NO-GO rules measure against. The line-up
+point that used to sit further back on the same line went with the two-leg
+approach (D38).
 
 Everything is metres and radians. Points are NumPy arrays; only x and y are
 used, so a (3,) point from perception can be passed in directly -- and because
@@ -42,8 +42,6 @@ __all__ = [
     'outward_normal',
     'pocket_center',
     'standoff_pose',
-    'lineup_pose',
-    'approach_targets',
     'lateral_offset',
     'range_to_face',
     'yaw_misalignment',
@@ -151,42 +149,13 @@ def standoff_pose(center: np.ndarray, normal: np.ndarray, distance: float) -> Po
     return _pose_on_normal(center, normal, distance)
 
 
-def lineup_pose(
-    center: np.ndarray,
-    normal: np.ndarray,
-    distance: float,
-    extra: float,
-) -> Pose2D:
-    """P1 = C + (d + L)·n, facing the pallet.
-
-    The robot turns onto the pocket centre line here, far enough back that the
-    final leg is a straight drive. On a skid-steer that matters: turning in
-    place scuffs the tyres and the odometry, so we do it once, away from the
-    pallet, rather than correcting continuously on the way in.
-    """
-    if extra < 0.0:
-        raise ValueError(f'lineup extra must not be negative, got {extra}')
-    return _pose_on_normal(center, normal, distance + extra)
-
-
-def approach_targets(
-    estimate: PalletEstimate,
-    standoff_distance: float,
-    lineup_extra: float,
-) -> tuple[Pose2D, Pose2D]:
-    """The two driving targets for one estimate: (line-up, standoff).
-
-    Both are in the same frame as `estimate`. The coordinator converts them to
-    `odom` once, when the pallet is confirmed, and keeps them there: `odom`
-    drifts slowly and predictably, while `base_link` moves under the robot and
-    `map` jumps whenever SLAM closes a loop.
-    """
-    center = pocket_center(estimate.pockets, fallback=estimate.position)
-    normal = estimate.normal
-    return (
-        lineup_pose(center, normal, standoff_distance, lineup_extra),
-        standoff_pose(center, normal, standoff_distance),
-    )
+# `lineup_pose` and `approach_targets` lived here. They computed the line-up
+# point P1 = C + (d + L)*n for the rotate-drive-rotate approach, which D38
+# superseded on 2026-10-19: the robot no longer drives to a point and turns onto
+# the centre line, it servos onto the line continuously while closing in
+# (`closing.py`). Removed rather than left unused -- dead code with passing
+# tests behind it is worse than no code, because it looks like a design that is
+# still in force.
 
 
 def lateral_offset(robot: Pose2D, center: np.ndarray, normal: np.ndarray) -> float:

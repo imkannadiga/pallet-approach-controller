@@ -485,6 +485,123 @@ columns at 3 m and 2-3 by ~75 at the standoff, but nothing has counted the real
 returns yet. The tier-1 bags carry `/ouster/points`; the achieved counts go in
 `docs/dataset.md` and this value is set from them. (Stage 2)
 
+## 2026-10-19 (stage 3: the closing loop)
+
+**D38. The two-leg approach is replaced by a continuous closing servo.** This
+supersedes D6. There is no line-up point and no rotate-drive-rotate: the robot
+backs off until it has enough run-up, then drives slowly forward while servoing
+onto the pocket centre line, and stops at the standoff. Decided by Athreya
+2026-10-19. *Why:* the measurement improves as the robot closes, so correcting
+continuously means every correction is made with better information than the
+one before. Aligning once at 3 m and driving straight freezes in whatever error
+the 3 m measurement had. It also removes a failure mode rather than adding one:
+the two-leg design expected to lose sight of the pallet while turning and had
+to re-acquire it, which is why D6 needed a separate rule for when losing sight
+aborts.
+
+`approach.lineup_pose` and `approach.approach_targets` are **deleted**, not left
+unused. Dead code with passing tests behind it reads as a design that is still
+in force. (Stage 3)
+
+**D39. Variable standoff with a 3 m minimum, and the run-up is computed from
+the lateral error.** Decided by Athreya 2026-10-19 after a simulation: starting
+at 1.75 m left 182 mm of residual error and 2.25 m left 112 mm, against 65 mm
+of room for a 100 mm tine in a 230 mm pocket; 3.00 m was the first distance
+that fitted. The implementation makes the floor a floor and computes the rest:
+
+    run_up = max(3.0, standoff + distance the servo needs for this offset)
+
+`required_run_up` models the servo in **two regimes**, and getting that wrong is
+the most instructive bug of this stage. While the aim is pinned at
+`max_approach_angle` the offset falls linearly at `sin(angle)` per metre; only
+below `max_approach_angle / k_cross` does the proportional term take over and
+the decay become exponential with a length of `1 / k_cross`. The first version
+used the exponential term alone, claimed 3.04 m was enough to take out 0.50 m
+of offset, and the simulated run finished **250 mm off the line with 11 degrees
+of yaw**. With both terms the honest answer is just over 4 m.
+`test_closing.py` measures the distance the loop actually needs and fails if the
+formula promises better. (Stage 3)
+
+**D40. The servo is a cascade with two independent gains, and small angular
+commands are dropped rather than inflated.** Outer loop:
+`aim = -k_cross * offset`, capped at `max_approach_angle` and zeroed inside
+`straighten_offset`. Inner loop: `omega = k_heading * (aim - heading)`.
+`k_cross = 2.5` (a 0.40 m decay length), `k_heading = 4.0`. *Why each piece:*
+
+- **Separate gains.** The first implementation was pure pursuit chasing a
+  carrot on the centre line, which is the same algebra with the two gains
+  locked together at `k_cross = k_heading / lookahead`. Locking them is what
+  made it unusable: a lookahead short enough to converge in 1.25 m implied an
+  approach angle near 60 degrees, so the robot dog-legged -- turn in place,
+  drive, turn back -- and arrived square only by luck. Separated, the decay
+  length and the approach angle are chosen independently, which is what they
+  are.
+- **A cap on the approach angle** (0.25 rad). Without it a large offset asks
+  for an aim the base reaches by turning most of the way sideways, and the
+  pallet leaves the camera's view: the servo would blind itself.
+- **A deadzone on the aim** (15 mm). The arrival yaw is otherwise *determined*
+  by the arrival offset, since aiming `k_cross * offset` at the line means
+  arriving at that angle -- at `k_cross = 2.5` a 35 mm residual is the entire
+  5 degree GO/NO-GO yaw budget. Inside the deadzone the robot straightens and
+  arrives square.
+- **Angular commands below `min_angular` are ZEROED, not raised.** This is the
+  single change that gave the loop any fine authority. The base cannot turn
+  more slowly than `min_angular`, so for a finer correction the choice is to
+  turn too much or not to turn, and not turning is the stable one. Raising it
+  -- which is what `apply_deadband` does, and what this code did first -- makes
+  every command hard over or hard back: measured in simulation, the residual
+  then scaled with the lookahead and **ignored the gain entirely**, which is
+  the signature of a saturated loop. The linear deadband is still raised,
+  because below it the base does not move at all.
+- **`k_heading = 4.0` rather than the 6.0 that simulated slightly better.** The
+  simulation has no actuator lag; the gentler gain is the one that survives
+  having some.
+
+The cost of zeroing small commands is a granularity: the smallest heading
+correction the base will make is `min_angular / k_heading` = 0.025 rad, 1.4
+degrees. **That, and not the gain, is what sets the achievable accuracy.**
+(Stage 3)
+
+**D41. A square-up phase at the standoff.** The loop stops driving when it
+reaches the standoff and then turns in place until it is within
+`arrival_yaw` (0.035 rad, 2.0 degrees) of square. *Why:* the loop can be caught
+mid-correction when it arrives -- one 0.2 s frame at the 0.30 rad/s limit is
+3.4 degrees -- and simulation with noise showed arrival yaw of 4.4 to 5.9
+degrees against a 5 degree limit, which would have failed GO/NO-GO on yaw after
+a perfectly good approach. Turning in place costs about a second, does not
+disturb the lateral offset at all (turning about `base_footprint` does not move
+`base_footprint`), and brought the worst simulated arrival to 2.4 degrees and
+17 mm. `arrival_yaw` has to be larger than the base's turn granularity above or
+the square-up cannot finish; `test_params.py` checks that relationship.
+
+**Simulated, not measured.** `test/simulate.py` models unicycle kinematics,
+the two rates (5 Hz estimates, 20 Hz commands) and measurement noise. It does
+not model actuator lag, wheel slip or an uneven floor, so its numbers are a
+lower bound on the error rather than a prediction. The real figure comes from
+lab session B. (Stage 3)
+
+**D42. Our own reverse controller, with a LiDAR check and an explicit
+allowance.** Decided by Athreya 2026-10-19 over handing the reverse to Nav2.
+The reverse runs at 0.05 m/s with angular exactly zero, and the distance it is
+allowed to cover is
+
+    allowance = distance driven forward this run + max_unverified (0.50 m)
+
+*Why it is stated as an allowance rather than a clearance:* the ground
+immediately behind the robot cannot be checked, so the justification is an
+argument, not a measurement -- `travelled_forward` is ground the robot's own
+body was standing on seconds ago and is therefore known to have been clear. The
+0.50 m is the admitted gap in that argument, kept small deliberately.
+
+**What this choice costs, plainly:** Nav2 would have had the costmap, which
+remembers what the LiDAR saw while the robot drove past, and could have planned
+a reverse over verified ground. We do not have it. `rear_clearance` measures
+what the LiDAR can see in a corridor the robot's width behind the bumper and
+refuses the reverse if an obstacle is inside the needed distance plus a margin,
+but it returns **None for "found nothing", never "clear"** -- the distinction
+matters because at close range behind the robot there is nothing to find.
+(Stages 3, 6)
+
 ## Pending (to be decided at the start of each stage)
 
 See the stage lists in `docs/ROADMAP.md`. Stage 5a is closed (D15–D18); the

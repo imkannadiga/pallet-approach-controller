@@ -149,6 +149,82 @@ def test_speed_limits_are_the_lab_limits(params_file):
     assert limits['limits.max_angular'] <= 0.30, 'angular speed limit was raised'
 
 
+def test_every_phase_speed_is_inside_the_limits(params_file):
+    """D8 gives each phase its own speed, slower the closer the robot gets.
+    They are separate numbers from the limits above, so they need their own
+    tripwire -- a per-phase speed above the limit would simply be clamped and
+    the intent would be silently lost."""
+    block = flatten(params_file['approach_controller']['ros__parameters'])
+    ceiling = block['limits.max_linear']
+    phases = {'closing.closing_speed': block['closing.closing_speed'],
+              'reverse.speed': block['reverse.speed']}
+    for name, speed in phases.items():
+        assert 0.0 < speed <= ceiling, (
+            f'{name} is {speed} m/s against a {ceiling} m/s limit')
+    assert phases['reverse.speed'] <= phases['closing.closing_speed'], (
+        'reversing is the blindest thing the robot does and must not be the '
+        'fastest')
+
+
+def test_the_closing_loop_can_reach_its_own_arrival_tolerance(params_file):
+    """The base cannot turn slower than limits.min_angular, so the smallest
+    heading correction it will make is min_angular / k_heading. An arrival
+    tolerance tighter than that is one the square-up can never satisfy, and the
+    robot would turn back and forth at the standoff until the run timed out."""
+    block = flatten(params_file['approach_controller']['ros__parameters'])
+    granularity = block['limits.min_angular'] / block['closing.k_heading']
+    assert block['closing.arrival_yaw'] > granularity, (
+        f"closing.arrival_yaw {block['closing.arrival_yaw']} is inside the "
+        f"base's own {granularity:.4f} rad turn granularity")
+
+
+def test_the_run_up_target_fits_the_pockets(params_file):
+    """closing.residual_target is what the run-up is sized to reach. It has to
+    be comfortably inside both the room a tine has in a pocket and the
+    GO/NO-GO lateral rule, or a run that performs exactly as designed is
+    refused at the standoff."""
+    shared = flatten(params_file['/**']['ros__parameters'])
+    block = flatten(params_file['approach_controller']['ros__parameters'])
+    rules = flatten(params_file['coordinator']['ros__parameters'])
+    slack = min((side['pocket_width'] - shared['forks.tine_width']) / 2.0
+                for side in sides_of(params_file).values())
+    target = block['closing.residual_target']
+    assert target < slack / 2.0, (
+        f'a {target * 1000:.0f} mm residual target against {slack * 1000:.0f} mm '
+        f'of pocket slack leaves no room for the measurement to be wrong')
+    assert target < rules['go_nogo.max_lateral_offset'], (
+        'the run-up aims for a residual the GO/NO-GO rules would refuse')
+
+
+def test_the_minimum_run_up_is_outside_the_fork_tips(params_file):
+    """3.0 m is a long way outside, but the check costs nothing and the
+    alternative is a run-up that starts with the tines already in the pallet."""
+    shared = flatten(params_file['/**']['ros__parameters'])
+    block = flatten(params_file['approach_controller']['ros__parameters'])
+    reach = shared['forks.carriage_x'] + shared['forks.tine_length']
+    assert block['closing.min_run_up'] > reach
+    assert block['closing.min_run_up'] > shared['standoff_distance']
+
+
+def test_the_forks_are_mounted_at_the_bumper(params_file):
+    """D15 says the carriage sits where a real one would bolt on, which is the
+    front face of base_link's collision box. Two places now record that
+    number, so they have to agree."""
+    shared = flatten(params_file['/**']['ros__parameters'])
+    assert shared['forks.carriage_x'] == pytest.approx(shared['robot.front_bumper_x'])
+
+
+def test_the_robot_is_the_size_it_was_measured(params_file):
+    """D23, tape against the URDF. The front overhang carries every clearance
+    number in D16 and D21, so a change here is a change to all of them."""
+    robot = params_file['/**']['ros__parameters']['robot']
+    assert robot['length'] == pytest.approx(0.925, abs=0.01)
+    assert robot['width'] == pytest.approx(0.6996, abs=0.01)
+    assert robot['front_bumper_x'] - robot['rear_bumper_x'] == pytest.approx(
+        robot['length'], abs=1e-9), (
+        'the bumper positions do not span the measured length')
+
+
 def test_perception_works_at_ground_level(params_file):
     """The floor is at base_footprint, so that is where perception works.
 
@@ -212,7 +288,7 @@ def test_standoff_clears_the_virtual_fork_tips(params_file):
     measured pallet does not have on its pocket face (D4).
     """
     shared = flatten(params_file['/**']['ros__parameters'])
-    standoff = params_file['coordinator']['ros__parameters']['approach']['standoff_distance']
+    standoff = shared['standoff_distance']
     reach = shared['forks.carriage_x'] + shared['forks.tine_length']
     assert standoff > reach, (
         f'standoff {standoff} m is inside the fork tip reach {reach:.4f} m: the '
@@ -230,7 +306,7 @@ def test_standoff_keeps_the_pocket_band_in_frame(params_file):
     and zero pockets, because the detection band sits lower than the opening's
     top edge and had already left the frame.
     """
-    standoff = params_file['coordinator']['ros__parameters']['approach']['standoff_distance']
+    standoff = params_file['/**']['ros__parameters']['standoff_distance']
     for name, side in sides_of(params_file).items():
         band_bottom = side['band_center'] - side['band_half_height']
         needed = in_frame_from(band_bottom)
