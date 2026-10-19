@@ -586,3 +586,38 @@ def test_the_overlay_has_a_colour_for_every_coordinator_state(params_file):
                      source), (
         'fork_overlay_node no longer imports the shared state-colour mapping; '
         'check it has not gone back to defining its own')
+
+
+def test_the_controller_builds_its_executor_before_any_subscription_exists():
+    """The join this project keeps re-discovering by crashing: a subscription
+    is live from the moment it is created, independent of whatever lifecycle
+    state the node believes it is in, so a callback can run before the rest of
+    `on_configure` has finished setting up what that callback depends on.
+
+    Measured 2026-10-19 on the robot: `on_configure` created the `~/drive`
+    subscription, then spent up to two seconds inside
+    `_wait_for_a_subscriber`'s spin loop waiting for twist_mux -- during
+    which `_on_drive` fired (the coordinator publishes a STOP heartbeat at
+    20 Hz even while idle) with `self._executor` still `None`, because that
+    assignment was further down the same function. AttributeError, the node's
+    process died, and the coordinator's NEXT configure attempt failed too
+    because the lifecycle service was no longer there to answer it.
+
+    Read statically because the node imports rclpy and cannot be constructed
+    here. This checks the one thing that actually prevents the regression --
+    source order -- rather than the defensive None-guard also added in
+    _on_drive, which is insurance and not itself what makes the bug not
+    happen.
+    """
+    source = strip_comments((NODES / 'controller_node.py').read_text())
+    start = source.index('def on_configure')
+    end = source.index('\n    def ', start + 1)
+    body = source[start:end]
+
+    executor_at = body.index('self._executor = DriveExecutor(')
+    subscription_at = body.index("self.create_subscription(DriveCommand, '~/drive'")
+    assert executor_at < subscription_at, (
+        'self._executor is constructed AFTER the ~/drive subscription is '
+        'created, which reopens the AttributeError measured 2026-10-19: a '
+        'message arriving during _wait_for_a_subscriber\'s spin loop would '
+        'call _on_drive with self._executor still None')

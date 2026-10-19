@@ -189,6 +189,30 @@ class ControllerNode(LifecycleNode):
 
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         topic = self._get('topics.cmd_vel_pallet')
+
+        # Everything a subscription callback can touch is built FIRST, before
+        # any subscription exists to call one. This is not just tidiness:
+        # `_wait_for_a_subscriber` below spins this node's own executor while
+        # it waits, and a subscription created earlier is live during that
+        # spin -- so if DriveCommand had been subscribed before `self._executor`
+        # existed, a message arriving during the wait (the coordinator
+        # publishes a STOP heartbeat at 20 Hz even while idle, so there is
+        # always one queued) would call `_on_drive` with `self._executor` still
+        # `None`. Measured 2026-10-19: exactly that, an AttributeError that
+        # killed the node, which then made the coordinator's NEXT configure
+        # attempt fail too ("could not configure the managed nodes") because
+        # the service was no longer there to answer it.
+        self._limiter = RateLimiter(self._get('limits.max_linear_accel'),
+                                    self._get('limits.max_angular_accel'))
+        self._executor = DriveExecutor({
+            'limits': self._limits(),
+            'closing': self._closing_params(),
+            'reverse': self._reverse_params(),
+            'insert': self._insert_params(),
+        })
+        self._buffer = Buffer()
+        self._listener = TransformListener(self._buffer, self)
+
         self._cmd_pub = self.create_lifecycle_publisher(Twist, topic, RELIABLE)
         self._status_pub = self.create_lifecycle_publisher(
             DriveStatus, '~/status', RELIABLE)
@@ -199,9 +223,6 @@ class ControllerNode(LifecycleNode):
                                  self._on_tracked, RELIABLE)
         self.create_subscription(PointCloud2, self._get('topics.lidar'),
                                  self._on_cloud, BEST_EFFORT)
-
-        self._buffer = Buffer()
-        self._listener = TransformListener(self._buffer, self)
 
         if not self._wait_for_a_subscriber(topic):
             self.get_logger().error(
@@ -220,14 +241,6 @@ class ControllerNode(LifecycleNode):
                 f'to be this node\'s private input to twist_mux. Arbitration '
                 f'cannot separate two publishers on one input.')
 
-        self._limiter = RateLimiter(self._get('limits.max_linear_accel'),
-                                    self._get('limits.max_angular_accel'))
-        self._executor = DriveExecutor({
-            'limits': self._limits(),
-            'closing': self._closing_params(),
-            'reverse': self._reverse_params(),
-            'insert': self._insert_params(),
-        })
         self.get_logger().info(
             f'configured; commands go to {topic} '
             f'({self.count_subscribers(topic)} subscriber(s)); '
@@ -322,6 +335,14 @@ class ControllerNode(LifecycleNode):
         self._cloud = msg
 
     def _on_drive(self, msg: DriveCommand):
+        if self._executor is None:
+            # Belt and suspenders alongside the construction order in
+            # on_configure: this subscription must not be live before
+            # self._executor exists, and now it never is -- but a callback
+            # assuming its own node's state just because it was called is the
+            # exact class of bug that put a None here before, so it costs one
+            # guard to make sure it cannot happen a second way.
+            return
         self._command_at = self._now()
         if msg.mode == self._executor.mode and self._command is not None:
             # A repeat of the move in progress, which is how the coordinator
