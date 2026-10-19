@@ -51,16 +51,43 @@
 # GPU: the container runs with --runtime nvidia by default -- Jetson's own
 # Docker is normally already configured with it (that is what the SDK Manager
 # flow sets up), and every node here still runs fine without a GPU if it is
-# not. Device access alone does NOT turn on the H.264 hardware encoder: that
-# needs the nvv4l2h264enc GStreamer element, which ships in NVIDIA's L4T
-# multimedia packages (nvidia-l4t-gstreamer) and is NOT installed in this
-# image -- only stock Ubuntu's gstreamer1.0-* are (docker/Dockerfile.jetson).
-# So right now `--runtime nvidia` plus `encoder:=auto` would still silently
-# fall back to x264, which is exactly the kind of thing this project does not
-# ship quietly: the launch default stays encoder:=x264 until those L4T
-# packages are actually added, which is a separate, more fragile Dockerfile
-# change (they come from NVIDIA's own apt repo, pinned to the exact L4T
-# version) and has not been done.
+# not.
+#
+# --runtime nvidia alone only grants DEVICE access; it is NOT what makes the
+# H.264 hardware encoder (the nvv4l2h264enc GStreamer element) exist inside
+# the container. On x86 you would docker build an L4T base image or apt-install
+# NVIDIA's L4T GStreamer packages to get it. On Jetson there is a second,
+# usually-simpler path: nvidia-container-runtime on Jetson runs in "csv" mode,
+# which reads manifests under
+#   /etc/nvidia-container-runtime/host-files-for-container.d/*.csv
+# on the HOST (installed by JetPack alongside nvidia-l4t-gstreamer /
+# nvidia-l4t-multimedia) and bind-mounts the listed files -- the plugin .so's
+# among them -- into any container started with --runtime nvidia. No L4T base
+# image, no matching that exact L4T apt repo inside our own Dockerfile. This
+# is why the image stays ros:humble-ros-base with only stock Ubuntu
+# gstreamer1.0-* packages (docker/Dockerfile.jetson): if the CSV mounts are
+# present on this Jetson, the element shows up anyway.
+#
+# NVIDIA_VISIBLE_DEVICES / NVIDIA_DRIVER_CAPABILITIES below are the standard
+# incantation that tells the runtime to actually perform those mounts, not
+# just hand over the raw devices.
+#
+# UNVERIFIED FROM HERE -- there is no Jetson in this environment to test on.
+# What determines whether it actually works: whether SDK Manager's JetPack
+# install populated those CSV files (normal on a standard flash) and whether
+# the mounted plugin's ABI matches this image's stock GStreamer core closely
+# enough to load (both are GStreamer 1.20.x on Ubuntu 22.04 for JetPack 6.x,
+# which is the specific thing that makes this approach workable at all on
+# JetPack 6 where it often was not on JetPack 4). Confirm on the robot:
+#   ./docker/build_and_run.sh shell
+#   gst-inspect-1.0 nvv4l2h264enc      # found -> hardware encode is live
+# or just watch the video_streamer log line after `up`/`dry`: it states which
+# encoder "auto" actually picked.
+#
+# If the element is not found: the fallback is installing nvidia-l4t-gstreamer
+# in the Dockerfile from NVIDIA's own L4T apt repo, pinned to this exact L4T
+# r36.5 build -- genuinely more fragile (a second apt source, version-pinned,
+# arm64-only) and not done here. Ask if the CSV path does not pan out.
 #   DOCKER_RUNTIME=none ./build_and_run.sh up     # no --runtime flag at all
 #   DOCKER_RUNTIME=nvidia ./build_and_run.sh up   # the default, explicit
 
@@ -217,12 +244,15 @@ case "${1:-}" in
     ARGS=(--network host --ipc host
           -e ROS_DOMAIN_ID=10 -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp
           -v "$REPO_ROOT:/workspace:ro")
-    # Device access, not hardware video encoding -- see the long comment near
-    # the top of this file for what this does and does not turn on.
+    # --runtime alone is device access; these two env vars are what tell
+    # Jetson's nvidia-container-runtime to also perform the CSV-manifest
+    # library mounts that make nvv4l2h264enc possible -- see the long comment
+    # near the top of this file.
     RUNTIME=${DOCKER_RUNTIME:-nvidia}
     if [ "$RUNTIME" != "none" ]; then
       echo "GPU: --runtime $RUNTIME (DOCKER_RUNTIME=none to disable)"
-      ARGS+=(--runtime "$RUNTIME")
+      ARGS+=(--runtime "$RUNTIME"
+             -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=all)
     else
       echo "GPU: none requested (DOCKER_RUNTIME=none)"
     fi

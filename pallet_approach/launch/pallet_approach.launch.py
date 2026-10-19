@@ -23,8 +23,10 @@ Arguments:
     video_stream:=false  do not start MediaMTX or the video streamers (no
                          GStreamer/MediaMTX needed then -- useful on a
                          desk/CI box that has neither installed)
-    encoder:=x264        forwarded to video_stream.launch.py: auto | nvenc |
-                         x264 | vp8
+    encoder:=auto        forwarded to video_stream.launch.py: auto | nvenc |
+                         x264 | vp8. "auto" probes for the Jetson's hardware
+                         encoder at startup and falls back to x264 if it is
+                         not found, so this is safe to leave alone either way.
     overlay:=false       skip the fork overlay
     dashboard:=false     skip the HUD dashboard (needs overlay:=true)
     watchdog:=false      skip the watchdog -- for bench work only
@@ -106,8 +108,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'video_stream', default_value='true',
             description='start MediaMTX and the WebRTC video streams'),
-        DeclareLaunchArgument('encoder', default_value='x264',
-                              description='forwarded to video_stream.launch.py'),
+        DeclareLaunchArgument(
+            'encoder', default_value='auto',
+            description='forwarded to video_stream.launch.py; "auto" probes '
+                        'for nvv4l2h264enc and falls back to x264'),
         DeclareLaunchArgument('log_level', default_value='info'),
 
         # Arbitration: safety stop > pallet controller > Nav2 (D3, D10, D30).
