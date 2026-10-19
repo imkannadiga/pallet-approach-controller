@@ -72,6 +72,15 @@ def generate_launch_description():
             condition=IfCondition(watchdog),
         ),
 
+        # Passive: it publishes a track per estimate and drives nothing. It
+        # resets on both edges of a run, so one run never inherits another's
+        # track.
+        Node(
+            package='pallet_approach', executable='pallet_tracker',
+            name='pallet_tracker', output='screen',
+            parameters=[params], arguments=arguments,
+        ),
+
         # Managed by the coordinator. They come up unconfigured, so the
         # controller cannot publish a command until a run actually starts.
         LifecycleNode(

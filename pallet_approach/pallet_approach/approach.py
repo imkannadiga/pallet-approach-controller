@@ -48,6 +48,7 @@ __all__ = [
     'range_to_face',
     'yaw_misalignment',
     'transform_pose',
+    'transform_point',
     'distance_between',
 ]
 
@@ -243,6 +244,30 @@ def transform_pose(pose: Pose2D, frame_in_target: Pose2D) -> Pose2D:
         y=frame_in_target.y + sin_a * pose.x + cos_a * pose.y,
         yaw=wrap_angle(frame_in_target.yaw + pose.yaw),
     )
+
+
+def transform_point(point: np.ndarray, frame_in_target: Pose2D) -> np.ndarray:
+    """Express a (3,) point given in frame A in frame B, shape (3,).
+
+    The same composition as `transform_pose` without a heading, used to put a
+    perception measurement into `odom`. z passes through untouched: the two
+    frames this is ever used between (`base_footprint` and `odom`) differ by a
+    planar motion, so a height in one is a height in the other.
+
+    Only approximately true of `base_link`, which /odom actually reports --
+    but the URDF joint between it and `base_footprint` is a pure z translation
+    (rpy "0 0 0"), so x, y and yaw are shared exactly and the z difference is a
+    constant that cancels in every comparison this is used for.
+    """
+    p = np.asarray(point, dtype=float)
+    if p.shape != (3,):
+        raise ValueError(f'expected a (3,) point, got {p.shape}')
+    cos_a, sin_a = math.cos(frame_in_target.yaw), math.sin(frame_in_target.yaw)
+    return np.array([
+        frame_in_target.x + cos_a * p[0] - sin_a * p[1],
+        frame_in_target.y + sin_a * p[0] + cos_a * p[1],
+        p[2],
+    ])
 
 
 def distance_between(a: Pose2D, b: Pose2D) -> float:

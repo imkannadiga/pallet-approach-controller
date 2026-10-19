@@ -415,6 +415,76 @@ depth arrives at ~37 Hz and perception uses 5 of them, so a camera at 12 Hz
 costs the pipeline nothing and a floor set near the nominal rate would abort
 runs over a hiccup that does not matter. (Stage 0)
 
+## 2026-10-19 (stage 2: the tracker)
+
+**D34. The tracker does not smooth the estimate.** It carries the newest
+accepted estimate and uses the window to decide whether to trust it, not to
+alter it. *Why:* averaging poses over a window lags the truth by about half the
+window times the closing speed -- 10 frames at 5 Hz and 0.10 m/s is 0.10 m --
+and the closing loop's whole design is that the measurement improves as the
+remaining correction shrinks. A lagged average would undo exactly that. The
+confidence is a count of accepted frames, not a filter gain: a count is what
+can be defended in an interview and read off a log. (Stage 2)
+
+**D35. The track lives in `odom`, with the robot's motion taken out.** Each
+estimate's pocket centre is placed in `odom` using the odometry sample nearest
+the frame's stamp, and association is judged there: 0.15 m of position and
+0.20 rad of heading. *Why:* in `base_footprint` a stationary pallet moves by
+the robot's own travel -- 20 mm a frame at the closing speed, 0.20 m over the
+10-frame window -- so an association gate in the robot frame would have to
+swallow the travel and would stop discriminating. In `odom` a stationary pallet
+is stationary, which is what makes the gate mean measurement error.
+`test_tracker.py` asserts both directions: the same drive that passes with the
+pose taken out fails without it. The odometry sample has to be the one at the
+frame's stamp rather than the latest, because taking the motion out at the
+wrong instant undoes it silently; a frame with no sample within 0.05 s is
+rejected with that as its reason. (Stage 2)
+
+**D36. A side that changes between frames rejects both readings.** A pallet
+does not turn over in the 200 ms between two frames, so a track that classified
+`short` and then sees `long` has one wrong classification and no way to tell
+which. Neither is trusted: the frame is rejected and the consecutive count
+restarts. `unknown` (classification switched off) is an absence of evidence and
+does not count as a change. *Why:* the same reasoning as D26 one level up -- the
+honest answer to contradictory evidence is to refuse, and the tracker is where
+several frames can be compared. (Stage 2)
+
+**D37. The LiDAR cross-check compares the nearest surface in a window round
+the camera's plane, and "too few returns" is not agreement.** Window: half the
+*measured* face width laterally, `floor_margin` to just above the pallet
+vertically, 0.60 m towards the robot and 1.00 m away from it in depth.
+Statistic: the 90th percentile of the signed offsets. Limit 0.10 m. Fewer than
+`min_points` returns in the window reports NOT EVALUATED, which does not block
+a run and must never read as agreement. *Why:*
+
+- **The camera's plane is the reference** and the LiDAR is asked about it,
+  rather than fitting a second plane and comparing two fits. One fit has one
+  failure mode; two have three, and the comparison then needs its own
+  correspondence argument.
+- **The lower height bound is the load-bearing one.** Without it the floor
+  immediately in front of the face falls in the window, and floor points lie
+  almost exactly on a vertical plane's own extension -- the check would agree
+  about a face that is bare ground. `test_tracker.py` has that case.
+- **The depth window is asymmetric.** The first version was symmetric at
+  +-0.15 m, chosen to keep a loaded pallet's cargo out, and a test found it
+  excluded the disagreement the check exists to catch: a camera hallucinating a
+  face 0.4 m from the real one read as NOT EVALUATED. Widening it behind the
+  plane fixes that; it stays narrow in front so the robot's own structure
+  cannot become the measured surface. A positive offset -- the LiDAR seeing
+  something nearer than the camera's plane -- is reported as a disagreement
+  because between us and the pallet is precisely where that matters.
+- **Nearest surface, not mean or median**, because a loaded pallet returns from
+  its cargo too and the face is what is being checked.
+- **0.10 m is loose on purpose.** The LiDAR's own URDF chain is 41 mm out
+  (docs/SYSTEM.md), so a tight limit here would be measuring our extrinsics
+  rather than checking the camera.
+
+**`min_points: 20` is arithmetic, not a measurement**, and is the one number
+here that needs the lab: the beam geometry predicts 1-2 beams by ~44 azimuth
+columns at 3 m and 2-3 by ~75 at the standoff, but nothing has counted the real
+returns yet. The tier-1 bags carry `/ouster/points`; the achieved counts go in
+`docs/dataset.md` and this value is set from them. (Stage 2)
+
 ## Pending (to be decided at the start of each stage)
 
 See the stage lists in `docs/ROADMAP.md`. Stage 5a is closed (D15–D18); the

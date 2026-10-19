@@ -10,6 +10,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PalletEstimate.msg"
   "msg/Health.msg"
   "msg/ForkState.msg"
+  "msg/TrackedPallet.msg"
   "action/PalletTask.action"
   DEPENDENCIES geometry_msgs std_msgs
 )

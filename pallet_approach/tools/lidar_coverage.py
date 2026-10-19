@@ -29,7 +29,9 @@ import sys
 import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from _bagutil import CLOUD_DTYPES, GROUND, Tree, quat_matrix, typestore  # noqa: E402
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from _bagutil import GROUND, Tree, quat_matrix, typestore  # noqa: E402
+from pallet_approach.pointcloud import DATATYPES  # noqa: E402
 
 try:
     from rosbags.highlevel import AnyReader
@@ -74,7 +76,7 @@ def read_grid(bag: pathlib.Path, store: str) -> tuple[dict, np.ndarray, str]:
                 if msg.height < 2:
                     sys.exit(f'{bag.name}: {CLOUD_TOPIC} is not organised '
                              f'(height {msg.height}); per-beam angles need the grid')
-                offsets = {f.name: (f.offset, CLOUD_DTYPES[f.datatype])
+                offsets = {f.name: (f.offset, DATATYPES[f.datatype])
                            for f in msg.fields}
                 flat = np.frombuffer(bytes(msg.data), np.uint8).reshape(-1,
                                                                         msg.point_step)

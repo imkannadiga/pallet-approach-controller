@@ -28,6 +28,7 @@ NODE_NAMES = {
     'coordinator_node.py': 'coordinator',
     'fork_overlay_node.py': 'fork_overlay',
     'watchdog_node.py': 'watchdog',
+    'tracker_node.py': 'pallet_tracker',
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")
@@ -170,9 +171,15 @@ def test_perception_works_at_ground_level(params_file):
         'the ROI must reach below the floor so the floor plane stays in for RANSAC')
     assert roi['z_max'] >= 0.3, 'the ROI must reach above a loaded pallet'
 
-    overlay_floor = params_file['fork_overlay']['ros__parameters']['floor_z']
-    assert overlay_floor == pytest.approx(floor_z), (
-        "the overlay's fallback floor must match perception's expected floor")
+    # One measured constant, one place. It used to live in the fork_overlay
+    # block; the tracker and the insertion controller need the same number, and
+    # two copies of a measurement is one copy too many.
+    shared = params_file['/**']['ros__parameters']
+    assert shared['floor_z'] == pytest.approx(floor_z), (
+        'the shared floor_z must match perception\'s expected floor')
+    assert 'floor_z' not in params_file['fork_overlay']['ros__parameters'], (
+        'floor_z is shared now; a second copy under fork_overlay would be the '
+        'one the overlay reads and nothing would say they had diverged')
 
 
 # Camera geometry, measured 2026-10-14 and used by several tests below.

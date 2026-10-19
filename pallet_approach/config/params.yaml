@@ -8,6 +8,16 @@
 /**:
   ros__parameters:
 
+    # [measured 2026-10-14] Where the real floor is in frames.ground. NOT zero:
+    # the URDF's base_footprint joint is 25 mm out (its wheel geometry is right
+    # to 0.2 mm). Shared, because three nodes need the same number -- the
+    # overlay builds the robot-fixed forks against it (D29), the tracker uses it
+    # as a fallback floor when perception has not fitted one, and the insertion
+    # controller measures the LiDAR window from it. Perception's
+    # floor.expected_z is the same measurement; test_params.py checks they
+    # agree.
+    floor_z: -0.025
+
     frames:
       # [measured] the depth and left-image headers carry this frame.
       camera_optical: zed2_left_camera_frame_optical
@@ -517,11 +527,11 @@ coordinator:
 fork_overlay:
   ros__parameters:
     publish_rate: 10.0          # Hz, decimated from the camera's ~37 Hz
-    # Fallback floor height in base_footprint, used until perception fits one.
-    # The measured value, not zero: base_footprint is 25 mm above the floor.
-    # It matters because at the standoff there is almost no floor left in
-    # frame to fit to (see docs/SYSTEM.md), so this is what the overlay uses.
-    floor_z: -0.025
+    # floor_z moved to the shared block above: the overlay, the tracker and the
+    # insertion controller all measure from it, and it is one measurement of
+    # one robot. It still matters most here -- at the standoff there is almost
+    # no floor left in frame to fit to (docs/SYSTEM.md), so the overlay's forks
+    # are built against this constant rather than a fit (D29).
     alpha: 0.45                 # fill transparency
     line_thickness: 2
     draw_pockets: true
@@ -584,3 +594,102 @@ watchdog:
       estimate: 2.5             # half the 5 Hz target
       odom: 20.0
       lidar: 5.0
+
+# ---------------------------------------------------------------------------
+# pallet_tracker: is this the same pallet, frame after frame? (D34-D36)
+# Perception has no memory; this node is the memory, and the coordinator will
+# not move the robot until it says CONFIRMED.
+# ---------------------------------------------------------------------------
+pallet_tracker:
+  ros__parameters:
+
+    # [choice] Frames the confidence is measured over. 10 at perception's 5 Hz
+    # (D24) is two seconds, so the confidence reacts inside the 1.0 s
+    # lost-pallet timeout rather than lagging it.
+    window: 10
+    # Below this many offered frames the confidence reports 0.0 rather than a
+    # fraction of one or two frames. One accepted frame out of one offered is
+    # not 100 % confidence, it is no evidence.
+    min_window_frames: 5
+
+    # [choice] Consecutive accepted frames before the track counts as
+    # confirmed. Same number as the old detecting.confirm_frames, and for the
+    # same reason: one lucky frame must never start the robot moving.
+    confirm_frames: 5
+    min_confidence: 0.6
+
+    # How far an estimate may sit from the track and still be the same pallet.
+    # Measured IN ODOM, with the robot's motion between frames taken out, so
+    # these are measurement error and not travel: at 0.10 m/s and 5 Hz the
+    # robot moves 20 mm between frames, and this would otherwise have to
+    # swallow that.
+    #
+    # 0.15 m is the same gate the coordinator used for its outlier rejection
+    # and is about ten times the ~13 mm spacing error measured on real bags.
+    max_jump: 0.15            # m
+    max_turn: 0.20            # rad, ~11 deg
+    # A pallet does not turn over between two frames 200 ms apart, so a side
+    # that changes means one of the two classifications is wrong -- and which
+    # one is not knowable from here, so neither is trusted (D36).
+    require_same_side: true
+
+    # How close an odometry sample must be to the frame's stamp to be used as
+    # the robot's pose for it. /odom runs at 50 Hz so the nearest sample is
+    # within 10 ms -- 1 mm at the closing speed. A frame with nothing this
+    # close is rejected with that as the reason rather than tracked against the
+    # wrong pose: the whole argument for comparing positions in odom is that
+    # the robot's motion has been taken out, and taking it out at the wrong
+    # instant undoes that silently.
+    odom_match_tolerance: 0.05        # s
+
+    # LiDAR cross-check (D13 measured that the Ouster sees the face). The
+    # camera's plane is the reference and the LiDAR is asked about it; fitting
+    # a second plane would need its own correspondence argument.
+    lidar:
+      # How far in front of and behind the camera's plane to look, metres.
+      # Asymmetric on purpose.
+      #
+      # BEHIND separates "the face is not where the camera says" from "that is
+      # a different object". A disagreement larger than this empties the window
+      # and reads as NOT EVALUATED, which is honest: nothing in view is the
+      # face. An error that gross is caught by the cluster size and ROI checks.
+      #
+      # AHEAD keeps the robot's own structure out of the statistic. At the
+      # 1.75 m standoff, 0.60 m in front of the face plane is still 1.15 m
+      # ahead of base_footprint -- well clear of the 0.4625 m bumper. Anything
+      # the LiDAR does see in there is an obstacle between us and the pallet,
+      # and reporting that as a disagreement is correct.
+      search_ahead: 0.60
+      search_behind: 1.00
+      # Ceiling on the window's half-width along the face, used only when
+      # perception reports no face width. Normally the window is half the
+      # MEASURED width plus 50 mm, so that whatever stands behind the pallet is
+      # occluded by the pallet across the whole window -- which is what lets
+      # the nearest-surface statistic be about the face.
+      half_width: 0.70
+      # The lower bound is the one that matters. Without it the floor
+      # immediately in front of the face falls in the window, and floor points
+      # lie almost exactly on a vertical plane's extension -- the check would
+      # then pass on bare ground every time. Same 0.03 m as
+      # pallet_perception.floor.removal_margin.
+      floor_margin: 0.03
+      height_margin: 0.05
+      # [choice, UNVERIFIED ON REAL DATA] Below this many returns the check
+      # reports NOT EVALUATED, which is not agreement. The arithmetic says
+      # 1-2 beams by ~44 azimuth columns at 3 m and 2-3 by ~75 at the standoff,
+      # so 20 should be reachable throughout -- but that is geometry, not a
+      # measurement. The tier-1 bags carry /ouster/points; the achieved counts
+      # go in docs/dataset.md and this number is set from them.
+      min_points: 20
+      # How far the LiDAR median may sit from the camera's plane. Loose on
+      # purpose: this is a sanity check against the camera fitting a plane that
+      # is not there, not a calibration. The LiDAR's own URDF chain is 41 mm
+      # out (D23-adjacent, docs/SYSTEM.md), so a tight limit here would be
+      # measuring our own extrinsics.
+      max_offset: 0.10
+      # A cloud further than this from the estimate's stamp is treated as no
+      # LiDAR at all. At 10 Hz the newest cloud is normally within 100 ms,
+      # which is 10 mm of travel at the closing speed; 0.30 s would be 30 mm,
+      # still well inside max_offset, and beyond that the comparison is between
+      # two different moments.
+      max_cloud_age: 0.30             # s

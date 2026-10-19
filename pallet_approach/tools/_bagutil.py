@@ -14,6 +14,13 @@ import sys
 
 import numpy as np
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+# Re-exported. The cloud decoder lives in the package, not here: the offline
+# tools and the running node have to agree about what a point is, and this file
+# used to hold a second copy of it.
+from pallet_approach.pointcloud import unpack_cloud  # noqa: E402,F401
+
 try:
     from rosbags.highlevel import AnyReader
     from rosbags.typesys import Stores, get_typestore
@@ -22,10 +29,6 @@ except ImportError:                                           # pragma: no cover
 
 GROUND = 'base_footprint'
 CAMERA = 'zed2_left_camera_frame_optical'
-
-# PointCloud2 datatype enum -> numpy
-CLOUD_DTYPES = {1: np.int8, 2: np.uint8, 3: np.int16, 4: np.uint16,
-                5: np.int32, 6: np.uint32, 7: np.float32, 8: np.float64}
 
 
 def typestore(name: str = 'ROS2_HUMBLE'):
@@ -72,19 +75,6 @@ class Tree:
             if frame not in known:
                 raise KeyError(f'{frame} is not in this bag\'s tf tree')
         return np.linalg.inv(self._to_root(target)) @ self._to_root(source)
-
-
-def unpack_cloud(msg) -> np.ndarray:
-    """PointCloud2 -> (N, 3), dropping non-finite and exactly-zero points."""
-    offsets = {f.name: (f.offset, CLOUD_DTYPES[f.datatype]) for f in msg.fields}
-    raw = np.frombuffer(bytes(msg.data), dtype=np.uint8).reshape(-1, msg.point_step)
-    columns = []
-    for name in ('x', 'y', 'z'):
-        offset, dtype = offsets[name]
-        size = np.dtype(dtype).itemsize
-        columns.append(raw[:, offset:offset + size].copy().view(dtype).ravel())
-    points = np.column_stack(columns).astype(float)
-    return points[np.isfinite(points).all(axis=1) & (np.abs(points).sum(axis=1) > 1e-6)]
 
 
 def read(path: pathlib.Path, store='ROS2_HUMBLE', max_frames: int = 5) -> dict:
