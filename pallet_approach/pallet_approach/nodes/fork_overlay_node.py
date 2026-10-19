@@ -53,6 +53,16 @@ from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matr
 
 SENSOR_QOS = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
 
+# Same constant and the same detection perception_node uses (D-clock, 2026-
+# 10-15): a frame stamped more than this many seconds from our own clock is on
+# a different clock entirely, and a STAMPED tf lookup against it fails as
+# "extrapolation into the past" with a plausible-looking requested time -- an
+# error that names tf rather than the clock. Reproduced here 2026-10-19:
+# fork_overlay asked for base_footprint <- zed2_left_camera_frame_optical at
+# 972.7 s (an uptime-looking stamp) while the tf buffer's earliest data was at
+# 1.79e9 (Unix epoch), ~1.79 billion seconds apart.
+CLOCK_MISMATCH_SECONDS = 5.0
+
 # Coordinator state -> the key in the fork_overlay.colors parameter block.
 # Grouped by what the robot is doing rather than one colour per state: looking
 # (grey), driving towards the pallet (amber), committed with the forks in or
@@ -210,19 +220,67 @@ class ForkOverlayNode(Node):
         camera_frame = msg.header.frame_id or self.get_parameter(
             'frames.camera_optical').value
         ground_frame = self.get_parameter('frames.ground').value
+
+        # A gross epoch mismatch (camera and /tf on different clocks
+        # entirely -- measured 2026-10-15, a 1.79e9 s gap) and ordinary
+        # processing lag (measured 2026-10-19, a steady ~0.4 s gap once the
+        # video streamers were added, well inside frames.tf_timeout's 0.15 s
+        # budget to wait it out) look identical from here: both end with a
+        # STAMPED lookup_transform raising "extrapolation into the
+        # past"/"into the future". So this does not try to pre-classify which
+        # one happened from the size of the gap -- it tries the stamped
+        # lookup, which is the accurate one, and only falls back to the
+        # latest available transform if that specific lookup actually fails,
+        # for whatever reason.
+        #
+        # Unconditional, unlike perception_node's frames.tf_fallback_to_latest
+        # (params.yaml: "a BENCH workaround... must stay false for anything
+        # that drives"): this node cannot drive anything, it only publishes an
+        # image, so a stale-by-a-fraction-of-a-second overlay is a worse
+        # picture, never an unsafe one -- there is no reason to make the
+        # operator opt in. It is still worth KNOWING when this happens, and
+        # worth knowing separately whether it is a one-off bit of lag or a
+        # genuine clock-epoch split, since only the second one matters to
+        # perception and the closing loop -- hence the two different log
+        # lines below rather than one.
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        timeout = rclpy.duration.Duration(
+            seconds=self.get_parameter('frames.tf_timeout').value)
         try:
             # Look up ground <- camera, the same direction perception uses, so
             # the extrinsic correction is applied by the same code path, then
             # invert it. Correcting an already-inverted transform would need the
             # inverse correction too, which is one easy sign error away.
             transform = self._tf_buffer.lookup_transform(
-                ground_frame, camera_frame, msg.header.stamp,
-                rclpy.duration.Duration(
-                    seconds=self.get_parameter('frames.tf_timeout').value))
-        except Exception as error:
-            self.get_logger().warning(f'tf lookup failed: {error}',
-                                      throttle_duration_sec=5.0)
-            return
+                ground_frame, camera_frame, msg.header.stamp, timeout)
+        except Exception as stamped_error:
+            try:
+                transform = self._tf_buffer.lookup_transform(
+                    ground_frame, camera_frame, rclpy.time.Time(), timeout)
+            except Exception as error:
+                # Neither lookup worked -- the ORIGINAL (stamped) failure is
+                # the informative one; the latest-transform attempt failing
+                # too usually just means tf has nothing published at all yet.
+                self.get_logger().warning(f'tf lookup failed: {error}',
+                                          throttle_duration_sec=5.0)
+                return
+            gap = now - stamp
+            if abs(gap) > CLOCK_MISMATCH_SECONDS:
+                self.get_logger().warning(
+                    f'this frame is stamped {stamp:.3f} but our clock reads '
+                    f'{now:.3f}, {gap:.0f} s apart -- the camera and /tf are '
+                    f'on different clocks, not just running a bit behind. '
+                    f'Using the latest transform for this overlay, which is '
+                    f'fine here but NOT fine for perception or the closing '
+                    f'loop: run tools/clock_audit.py and fix the clock before '
+                    f'driving.',
+                    throttle_duration_sec=30.0)
+            else:
+                self.get_logger().info(
+                    f'stamped tf lookup failed ({stamped_error}); used the '
+                    f'latest available transform instead, {gap * 1000:+.0f} ms '
+                    f'from this frame\'s own stamp',
+                    throttle_duration_sec=10.0)
 
         # Prefer the plane perception actually fitted; fall back to a level
         # plane at the measured floor height when there is no fit, which is the
