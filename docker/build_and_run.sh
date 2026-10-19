@@ -47,6 +47,22 @@
 # Override if you know better:
 #   DDS_DIR=/path/to/configs DDS_PROFILE=fastdds_jetson.xml ./build_and_run.sh shell
 #   DDS_DIR=none ./build_and_run.sh shell      # deliberately no profile
+#
+# GPU: the container runs with --runtime nvidia by default -- Jetson's own
+# Docker is normally already configured with it (that is what the SDK Manager
+# flow sets up), and every node here still runs fine without a GPU if it is
+# not. Device access alone does NOT turn on the H.264 hardware encoder: that
+# needs the nvv4l2h264enc GStreamer element, which ships in NVIDIA's L4T
+# multimedia packages (nvidia-l4t-gstreamer) and is NOT installed in this
+# image -- only stock Ubuntu's gstreamer1.0-* are (docker/Dockerfile.jetson).
+# So right now `--runtime nvidia` plus `encoder:=auto` would still silently
+# fall back to x264, which is exactly the kind of thing this project does not
+# ship quietly: the launch default stays encoder:=x264 until those L4T
+# packages are actually added, which is a separate, more fragile Dockerfile
+# change (they come from NVIDIA's own apt repo, pinned to the exact L4T
+# version) and has not been done.
+#   DOCKER_RUNTIME=none ./build_and_run.sh up     # no --runtime flag at all
+#   DOCKER_RUNTIME=nvidia ./build_and_run.sh up   # the default, explicit
 
 set -euo pipefail
 
@@ -201,6 +217,15 @@ case "${1:-}" in
     ARGS=(--network host --ipc host
           -e ROS_DOMAIN_ID=10 -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp
           -v "$REPO_ROOT:/workspace:ro")
+    # Device access, not hardware video encoding -- see the long comment near
+    # the top of this file for what this does and does not turn on.
+    RUNTIME=${DOCKER_RUNTIME:-nvidia}
+    if [ "$RUNTIME" != "none" ]; then
+      echo "GPU: --runtime $RUNTIME (DOCKER_RUNTIME=none to disable)"
+      ARGS+=(--runtime "$RUNTIME")
+    else
+      echo "GPU: none requested (DOCKER_RUNTIME=none)"
+    fi
     case "$1" in
       up|dry)
         # Detached, named, and restarted if it exits. One entry point: start
