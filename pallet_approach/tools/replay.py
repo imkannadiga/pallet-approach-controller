@@ -34,7 +34,8 @@ sys.path.insert(0, str(HERE))
 import _bagutil as bag                                            # noqa: E402
 from pallet_approach import perception as P                       # noqa: E402
 from pallet_approach.calibration import correct_transform, correction_matrix  # noqa: E402
-from pallet_approach.model import Plane                           # noqa: E402
+from pallet_approach.model import Plane
+from pallet_approach.projection import pocket_corners, project                           # noqa: E402
 
 try:
     import matplotlib
@@ -110,52 +111,6 @@ def run(depth, intrinsics, to_ground, params):
         bin_width=params['voxel_size'],
         min_points_per_bin=params['pocket_min_points_per_bin'])
     return s
-
-
-def pocket_corners(pocket, face_normal, floor, nominal=None) -> np.ndarray:
-    """The four corners of a pocket opening, in `base_footprint`.
-
-    The opening is a rectangle lying in the face plane: `width` across it and
-    `height` up it. `along` is the horizontal direction in the face, which is
-    perpendicular to both the floor normal and the face normal -- exactly what
-    a cross product gives.
-
-    Pass `nominal` as (width, height) to draw the expected opening instead of
-    the measured one, which is how you see a measurement error rather than
-    reading it.
-    """
-    up = np.asarray(floor.normal, dtype=float)
-    along = np.cross(up, face_normal)
-    along /= np.linalg.norm(along)
-    half_w, half_h = ((pocket.width, pocket.height) if nominal is None else nominal)
-    half_w, half_h = half_w / 2, half_h / 2
-    c = np.asarray(pocket.center, dtype=float)
-    return np.array([c + half_w * along + half_h * up,
-                     c - half_w * along + half_h * up,
-                     c - half_w * along - half_h * up,
-                     c + half_w * along - half_h * up])
-
-
-def project(points_ground, ground_to_camera, intrinsics):
-    """(N, 3) in base_footprint -> (N, 2) pixels, plus a visibility mask.
-
-    The pinhole projection, `u = fx X / Z + cx`, which is the exact inverse of
-    what `perception.depth_to_points` undoes. Points at or behind the image
-    plane (Z <= 0) have no projection; they are masked, not clamped, because a
-    negative Z silently mirrors a point onto the image and looks like a
-    geometry bug rather than the division by zero that it is.
-
-    `fork_overlay.project_points` is the live version of this, drawn on the
-    camera stream. This one exists so the offline tool does not depend on it.
-    """
-    p = np.asarray(points_ground, dtype=float)
-    cam = p @ ground_to_camera[:3, :3].T + ground_to_camera[:3, 3]
-    z = cam[:, 2]
-    visible = z > 1e-6
-    pixels = np.full((len(p), 2), np.nan)
-    pixels[visible, 0] = intrinsics['fx'] * cam[visible, 0] / z[visible] + intrinsics['cx']
-    pixels[visible, 1] = intrinsics['fy'] * cam[visible, 1] / z[visible] + intrinsics['cy']
-    return pixels, visible
 
 
 def report(s, params, truth_x) -> None:

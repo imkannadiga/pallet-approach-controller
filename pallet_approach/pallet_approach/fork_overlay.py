@@ -1,7 +1,5 @@
 """Draw imaginary forklift forks on the camera image.
 
-YOU WRITE THIS FILE. Skeletons only -- signature, reasoning, TODO.
-
 Two reasons this exists. The obvious one is that it makes the demo video
 legible: anyone watching can see whether the forks would enter the pockets. The
 real one is that it is a **calibration check you can see**. If the
@@ -38,6 +36,8 @@ from __future__ import annotations
 import numpy as np
 
 from pallet_approach.model import PalletEstimate, Plane, Pocket
+from pallet_approach.perception import transform_points
+from pallet_approach.projection import pocket_corners, project
 
 __all__ = [
     'tine_corners',
@@ -86,12 +86,41 @@ def tine_corners(
     Returns:
         (2, 8, 3) -- two tines, eight corners each, in `base_footprint`.
 
-    TODO: implement.
-    Hint: build one tine's eight corners with a couple of `np.array`s, then
-    offset copies by +/- spacing/2 in y. Keep a consistent corner order so the
-    faces you draw later are the ones you meant.
     """
-    raise NotImplementedError
+    half_width = tine_width / 2
+    x_near, x_far = carriage_x, carriage_x + tine_length
+    heights = (bottom_height, bottom_height + tine_thickness)
+
+    tines = []
+    for centre_y in (spacing / 2, -spacing / 2):
+        corners = []
+        for height in heights:
+            for x, y in ((x_near, centre_y + half_width),
+                         (x_near, centre_y - half_width),
+                         (x_far, centre_y - half_width),
+                         (x_far, centre_y + half_width)):
+                corners.append(_at_height(x, y, height, floor))
+        tines.append(corners)
+    return np.array(tines, dtype=float)
+
+
+def _at_height(x: float, y: float, height: float, floor: Plane) -> np.ndarray:
+    """The point above (x, y) that is `height` from the floor PLANE.
+
+    Not `z = floor_z + height`. The plane is {p : n.p + offset = 0}, so a point
+    `height` above it satisfies `n.p + offset = height`, and solving for z
+
+        z = (height - offset - n_x x - n_y y) / n_z
+
+    keeps the tine parallel to the floor when the floor is tilted, which is
+    what a real carriage does and what makes the overlay a fair check of the
+    camera's orientation. Subtracting from z instead would tilt the forks
+    against the floor by exactly the error being looked for, and the overlay
+    would quietly stop being able to see it.
+    """
+    normal = np.asarray(floor.normal, dtype=float)
+    z = (height - floor.offset - normal[0] * x - normal[1] * y) / normal[2]
+    return np.array([x, y, z], dtype=float)
 
 
 def to_camera_frame(points: np.ndarray, base_to_camera: np.ndarray) -> np.ndarray:
@@ -104,11 +133,10 @@ def to_camera_frame(points: np.ndarray, base_to_camera: np.ndarray) -> np.ndarra
     Returns:
         the same shape as `points`, in the optical frame.
 
-    TODO: implement.
-    Hint: `pallet_approach.perception.transform_points` does the (N, 3) case;
-    reshape, reuse it, and reshape back rather than writing the maths twice.
     """
-    raise NotImplementedError
+    points = np.asarray(points, dtype=float)
+    flat = transform_points(points.reshape(-1, 3), base_to_camera)
+    return flat.reshape(points.shape)
 
 
 def project_points(
@@ -133,11 +161,13 @@ def project_points(
         pixels: (..., 2) float.
         visible_mask: (...) bool, False where Z <= 0 (behind the camera).
 
-    TODO: implement.
-    Hint: compute the mask first and only divide where it is True, otherwise
-    NumPy will warn about dividing by zero and hand you infinities to draw.
     """
-    raise NotImplementedError
+    points = np.asarray(points_camera, dtype=float)
+    flat = points.reshape(-1, 3)
+    pixels, visible = project(flat, np.eye(4), {'fx': fx, 'fy': fy,
+                                                'cx': cx, 'cy': cy})
+    return (pixels.reshape(points.shape[:-1] + (2,)),
+            visible.reshape(points.shape[:-1]))
 
 
 def draw_polygons(
@@ -163,19 +193,62 @@ def draw_polygons(
 
     Returns:
         a new BGR image.
-
-    TODO: implement.
     """
-    raise NotImplementedError
+    import cv2
+
+    usable = [np.asarray(p, dtype=np.int32) for p in polygons
+              if p is not None and len(p) >= 3 and np.isfinite(p).all()]
+    if not usable:
+        return image.copy()
+
+    filled = image.copy()
+    for polygon in usable:
+        cv2.fillPoly(filled, [polygon], color)
+    # addWeighted, not a per-pixel loop: transparency in OpenCV is a blend of
+    # two whole images, so the shapes go onto a copy and the copy is mixed back.
+    blended = cv2.addWeighted(filled, alpha, image, 1.0 - alpha, 0.0)
+    for polygon in usable:
+        cv2.polylines(blended, [polygon], True, color, thickness, cv2.LINE_AA)
+    return blended
+
+
+# The six faces of a tine, as indices into the eight corners `tine_corners`
+# returns: 0-3 underside, 4-7 top, in the same order round each.
+TINE_FACES = ((0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4),
+              (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7))
+
+
+def tine_faces(corners_camera: np.ndarray, pixels: np.ndarray,
+               visible: np.ndarray) -> list[np.ndarray]:
+    """One tine's faces as pixel polygons, furthest away first.
+
+    Sorting by mean depth and drawing back to front is the painter's
+    algorithm, and it is what stops the box looking like a wireframe turned
+    inside out. It handles the tine occluding ITSELF. It does nothing about the
+    tine being occluded by the pallet -- the overlay has no depth test against
+    the scene, so a tine draws over a block it would really be behind. That is
+    a known limitation, not an oversight: a per-pixel test against the depth
+    image is the stretch version.
+    """
+    faces = []
+    for indices in TINE_FACES:
+        if not visible[list(indices)].all():
+            continue                      # any corner behind the camera: skip
+        depth = float(np.mean(corners_camera[list(indices), 2]))
+        faces.append((depth, pixels[list(indices)]))
+    return [polygon for _, polygon in sorted(faces, key=lambda f: -f[0])]
 
 
 def draw_pockets(
     image: np.ndarray,
     pockets: tuple[Pocket, ...],
+    face_normal: np.ndarray,
+    floor: Plane,
     base_to_camera: np.ndarray,
     intrinsics: dict,
     color: tuple[int, int, int],
     thickness: int,
+    nominal: tuple[float, float] | None = None,
 ) -> np.ndarray:
     """Outline the detected pockets, so the overlay shows what perception saw.
 
@@ -184,9 +257,51 @@ def draw_pockets(
     *measured* pockets rather than nominal ones is the point: when detection is
     off, you see it here before you see it in a number.
 
-    TODO: implement.
+    Pass `nominal` as (width, height) to add a dashed rectangle of the expected
+    size at the SAME centre. The gap between the two outlines is the
+    measurement error, which is a thing you can see rather than a number you
+    have to look up. On the long face, where spacing reads +52 mm, the dashed
+    box is visibly wider than the solid one.
     """
-    raise NotImplementedError
+    import cv2
+
+    annotated = image.copy()
+    for pocket in pockets:
+        for size, dashed in ((None, False), (nominal, True)):
+            if dashed and size is None:
+                continue
+            corners = pocket_corners(pocket, face_normal, floor, nominal=size)
+            pixels, visible = project(corners, base_to_camera, intrinsics)
+            if not visible.all() or not np.isfinite(pixels).all():
+                continue
+            points = pixels.astype(np.int32)
+            if not dashed:
+                cv2.polylines(annotated, [points], True, color, thickness,
+                              cv2.LINE_AA)
+            else:
+                _dashed_polyline(annotated, points, color, max(1, thickness - 1))
+    return annotated
+
+
+def _dashed_polyline(image, points, color, thickness, dash=9, gap=6):
+    """A dashed closed outline. OpenCV has no dash style, so walk each edge."""
+    import cv2
+
+    closed = np.vstack([points, points[:1]]).astype(float)
+    for start, end in zip(closed[:-1], closed[1:]):
+        span = end - start
+        length = float(np.hypot(*span))
+        if length < 1e-6:
+            continue
+        step = (dash + gap) / length
+        position = 0.0
+        while position < 1.0:
+            a = start + span * position
+            b = start + span * min(1.0, position + dash / length)
+            cv2.line(image, tuple(a.astype(int)), tuple(b.astype(int)),
+                     color, thickness, cv2.LINE_AA)
+            position += step
+    return image
 
 
 def render(
@@ -216,12 +331,96 @@ def render(
         base_to_camera: (4, 4) camera_optical <- base_footprint at this stamp.
         intrinsics: {'fx', 'fy', 'cx', 'cy'}.
         params: the `/**` and `fork_overlay` blocks of params.yaml, as a dict.
-        floor: perception's fitted floor plane, or one built from the
-            `floor_z` parameter (-0.025, measured) when there is no fit.
+        floor: perception's fitted floor plane, used ONLY as the fallback
+            "up" direction for drawing pockets when the estimate carries no
+            floor of its own. The tines never use it -- see the body.
 
     Returns:
         a new BGR image.
-
-    TODO: implement last.
     """
-    raise NotImplementedError
+    import cv2
+
+    colors = params.get('colors', {})
+    color = tuple(int(c) for c in colors.get(state, colors.get('idle',
+                                                               (160, 160, 160))))
+    forks = params['forks']
+    alpha = float(params.get('alpha', 0.35))
+    thickness = int(params.get('line_thickness', 2))
+
+    # --- the tines, always, and RIGIDLY FIXED TO THE ROBOT.
+    #
+    # Built against a level plane at the measured `floor_z`, never against
+    # `estimate.floor`. A carriage is bolted to the truck: its pose in
+    # base_footprint is a constant of the machine, and base_footprint already
+    # follows whatever the robot is standing on. Three reasons the per-frame
+    # fit is the wrong reference, in increasing order of how much it matters:
+    #
+    #   1. It moves. RANSAC redraws its samples every frame, so the forks would
+    #      shiver by a millimetre or two even with the robot parked -- and an
+    #      overlay you cannot trust to stay still is not a reference.
+    #   2. It is fitted to floor METRES AHEAD, which is not the floor under the
+    #      wheels. On a ramp those genuinely differ, and the forks belong to
+    #      the wheels.
+    #   3. It would hide the thing this overlay exists to show. A camera
+    #      orientation error tilts the fitted floor; if the tines followed that
+    #      tilt they would lean by exactly the error, while the pockets --
+    #      measured against the same plane -- lean with them. The two errors
+    #      cancel in the picture and the overlay reports that everything is
+    #      fine. Keeping the tines robot-fixed makes the mismatch visible,
+    #      which is the whole point.
+    #
+    # `floor_z` is -0.025, measured: base_footprint sits 25 mm above the real
+    # floor, so a tine 0.040 above the floor is at z = +0.015 here.
+    floor_z = float(params.get('floor_z', -0.025))
+    robot_fixed_floor = Plane(np.array([0.0, 0.0, 1.0]), -floor_z)
+    corners = tine_corners(
+        forks['tine_length'], forks['tine_width'], forks['tine_thickness'],
+        forks['spacing'], forks['bottom_height'], forks['carriage_x'],
+        robot_fixed_floor)
+    in_camera = to_camera_frame(corners, base_to_camera)
+    pixels, visible = project_points(in_camera, intrinsics['fx'], intrinsics['fy'],
+                                     intrinsics['cx'], intrinsics['cy'])
+    polygons = []
+    for tine in range(corners.shape[0]):
+        polygons.extend(tine_faces(in_camera[tine], pixels[tine], visible[tine]))
+    annotated = draw_polygons(image, polygons, color, alpha, thickness)
+
+    # --- what perception found, when it found anything
+    lines = [state.upper()]
+    if estimate is not None:
+        if params.get('draw_pockets', True) and estimate.pockets:
+            side = params.get('sides', {}).get(estimate.side, {})
+            nominal = None
+            if side.get('pocket_width') and side.get('opening_top') is not None:
+                nominal = (side['pocket_width'],
+                           side['opening_top'] - side.get('opening_bottom', 0.0))
+            annotated = draw_pockets(
+                annotated, estimate.pockets, estimate.normal,
+                estimate.floor or floor, base_to_camera, intrinsics,
+                color, thickness, nominal=nominal)
+        lines.append(f'side {estimate.side}   face x {estimate.position[0]:.3f} m')
+        lines.append(f'{len(estimate.pockets)} pocket(s)')
+        reason = (estimate.side_detail or {}).get('reason', '')
+        if reason:
+            lines.append(reason)
+    else:
+        lines.append('no pallet')
+
+    # Text, so a still frame taken out of the video explains itself. A demo
+    # screenshot with no state on it is a picture of some forks.
+    # A translucent panel behind the text rather than an outline around each
+    # glyph: at this font scale a 4 px outline merges neighbouring letters into
+    # a smear, which is how the first version came out. The panel also keeps
+    # the text legible over a blown-out window, which half these frames have.
+    scale, pad, line_height = 0.6, 10, 26
+    sizes = [cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0]
+             for line in lines]
+    panel_w = max(w for w, _ in sizes) + 2 * pad
+    panel_h = line_height * len(lines) + pad
+    panel = annotated.copy()
+    cv2.rectangle(panel, (0, 0), (panel_w, panel_h), (0, 0, 0), -1)
+    annotated = cv2.addWeighted(panel, 0.55, annotated, 0.45, 0.0)
+    for index, line in enumerate(lines):
+        cv2.putText(annotated, line, (pad, pad + line_height * index + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
+    return annotated
