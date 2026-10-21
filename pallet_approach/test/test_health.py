@@ -185,3 +185,26 @@ def test_none_becomes_nan_not_zero():
     wrong number."""
     assert as_float(None) != as_float(None)      # NaN
     assert as_float(0.25) == 0.25
+
+
+def test_a_source_silent_since_the_run_started_is_fine_inside_its_grace():
+    # D58: perception's first estimate needs time after the run activates it.
+    monitor = HealthMonitor({'estimate': Limits(max_age=0.5, when=WHILE_RUNNING,
+                                                first_message_grace=2.0)})
+    assert monitor.check(11.0, WHILE_RUNNING, running_since=10.0).ok
+    late = monitor.check(12.5, WHILE_RUNNING, running_since=10.0)
+    assert not late.ok and 'nothing received' in late['estimate'].detail
+
+
+def test_the_grace_covers_only_the_first_message():
+    # Once something has arrived, a silence is a stale source, grace or not.
+    monitor = HealthMonitor({'estimate': Limits(max_age=0.5, when=WHILE_RUNNING,
+                                                first_message_grace=2.0)})
+    monitor.seen('estimate', 10.2)
+    assert not monitor.check(11.0, WHILE_RUNNING, running_since=10.0).ok
+
+
+def test_no_run_start_means_no_grace():
+    monitor = HealthMonitor({'estimate': Limits(max_age=0.5, when=WHILE_RUNNING,
+                                                first_message_grace=2.0)})
+    assert not monitor.check(11.0, WHILE_RUNNING).ok

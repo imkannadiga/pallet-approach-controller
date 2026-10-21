@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://relaxng.org/ns/structure/1.0"?>
+<package format="3">
+  <name>pallet_approach_sim</name>
+  <version>0.1.0</version>
+  <description>
+    Gazebo Fortress simulation of the lab SCOUT and the measured pallet, publishing
+    the real robot's topics so the pallet_approach stack runs on it unchanged.
+  </description>
+  <maintainer email="athreyahosahalliprakash@gmail.com">Athreya</maintainer>
+  <license>MIT</license>
+
+  <!-- The robot's own macros, from intelligent-fleet-sim-env. -->
+  <exec_depend>ugv_descriptions</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

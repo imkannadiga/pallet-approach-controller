@@ -29,6 +29,7 @@ from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.nodes._common import (
     image_to_array,
     intrinsics_from_camera_info,
+    logged_transition,
     points_to_cloud,
 )
 from pallet_approach.ros_conversions import estimate_to_msg, transform_to_matrix
@@ -238,6 +239,7 @@ class PerceptionNode(LifecycleNode):
 
     # ----------------------------------------------------------- lifecycle
 
+    @logged_transition
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -281,6 +283,7 @@ class PerceptionNode(LifecycleNode):
         self.get_logger().info('configured; waiting for camera_info')
         return TransitionCallbackReturn.SUCCESS
 
+    @logged_transition
     def on_activate(self, state: State) -> TransitionCallbackReturn:
         self._frames = 0
         self._warned = False
@@ -297,6 +300,7 @@ class PerceptionNode(LifecycleNode):
             f'{self.get_parameter("max_rate").value:.1f} Hz')
         return super().on_activate(state)
 
+    @logged_transition
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
         if self._depth_sub is not None:
             self.destroy_subscription(self._depth_sub)
@@ -309,6 +313,7 @@ class PerceptionNode(LifecycleNode):
             f'{self._gate.processed} frames ({self._gate.dropped} dropped)')
         return super().on_deactivate(state)
 
+    @logged_transition
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
         self._tf_listener = None
         self._tf_buffer = None

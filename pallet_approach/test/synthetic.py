@@ -240,7 +240,7 @@ def pallet_cloud(
         floor_z: floor height in `base_footprint`; -0.025 is the measured floor.
         noise: standard deviation of isotropic Gaussian noise, metres. The ZED's
             real noise grows with range; 0.005 at 2 m is a reasonable stand-in
-            until the Day 5 curve replaces it.
+            until a measured noise curve replaces it.
         with_floor: include floor points.
         with_top_deck: include the pallet's top surface.
         spacing: sample spacing on the face.

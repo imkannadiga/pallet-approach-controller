@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read-only survey of one ROS 2 machine or container.
 #
-# Answers the discoverable open questions in CLAUDE.md: topic names and types,
+# Answers the discoverable questions about a robot setup: topic names and types,
 # depth encoding and QoS, tf tree and camera-to-base_link transform, the URDF,
 # cmd_vel publishers, base driver parameters, multi-machine visibility,
 # and whether Open3D can be installed here.

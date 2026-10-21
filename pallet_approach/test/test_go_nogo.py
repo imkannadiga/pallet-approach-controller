@@ -2,10 +2,9 @@
 
 Read the test names as the specification. They were written before the rules
 were, and the rules were written to satisfy them. Note how many of them assert a
-NO-GO: that asymmetry is deliberate and it is the thing to defend in an
-interview. In particular `test_evaluate_refuses_when_data_is_missing` and
-`test_no_false_go_in_unsafe_scenarios` are the tests that stand behind the
-"0 false GOs" claim, so they must never be relaxed to make a run pass.
+NO-GO: that asymmetry is deliberate. In particular `test_evaluate_refuses_when_data_is_missing` and
+`test_no_false_go_in_unsafe_scenarios` are the tests that stand behind any
+false-GO count, so they must never be relaxed to make a run pass.
 """
 
 import math
@@ -197,7 +196,7 @@ def test_evaluate_says_go_on_a_clean_setup(go_nogo_params, square_pallet):
     decision = go_nogo.evaluate(estimate, at_standoff(estimate), history,
                                 go_nogo_params, load_points=points, scene_points=points)
     assert decision.go, decision.reason
-    assert decision.checks, 'record which rules ran, for the Day 11 tables'
+    assert decision.checks, 'record which rules ran, for the evaluation tables'
 
 
 def test_evaluate_refuses_when_data_is_missing(go_nogo_params):
@@ -211,7 +210,7 @@ def test_evaluate_refuses_when_data_is_missing(go_nogo_params):
 def test_no_false_go_in_unsafe_scenarios(go_nogo_params, square_pallet, scenario):
     """The false-GO test, in miniature. The target for this count is zero.
 
-    Day 11 runs the physical version of this on the robot; this is the one that
+    The evaluation trials run the physical version of this on the robot; this is the one that
     runs on every commit.
     """
     points, _ = square_pallet

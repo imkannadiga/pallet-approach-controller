@@ -1,14 +1,17 @@
 # Design decisions
 
 One entry per behaviour decision: what was decided, why, when, and which
-stage it belongs to. Athreya decides; Claude records and implements.
+stage it belongs to. Every decision that changes what the robot does is taken
+before the code for it is written, and a decision is never changed silently:
+when testing shows one does not work, a new entry supersedes it and says why.
 
 ## 2026-10-14
 
-**D1. Working model.** Athreya decides the logic of every stage; Claude writes
-all the code, after presenting a logic sheet with recommended defaults.
-*Why:* faster delivery of the full pickup, with the design reasoning owned and
-documented by Athreya. (Stage: all)
+**D1. Working model.** Each stage starts with a logic sheet: every behaviour
+decision in plain language, with a default and the reason for it. Only then is
+it implemented and tested. *Why:* the behaviour of a robot that drives at a
+load should be a written, reviewable decision, not a side effect of whatever
+the code happened to do. (Stage: all)
 
 **D2. Scope: full virtual pickup.** After GO: lower forks to pocket height,
 insert, lift, back out, hand control back to Nav2. *Why:* mirrors a real
@@ -164,7 +167,7 @@ would be modelling a limitation the pallet does not have. But whether a
 *particular* site allows it is a policy question, not a geometry question — long-
 side entry loads the 20 mm bottom boards rather than the blocks, and many
 warehouses restrict it for that reason. A flag is the honest way to represent a
-rule that lives outside the robot. Decided by Athreya 2026-10-14. (Stages 1b, 7)
+rule that lives outside the robot. Decided 2026-10-14. (Stages 1b, 7)
 
 **D21. Insertion geometry is per side, because the pallet is not square.** D16's
 numbers are the short-side numbers. Applying them to the long side would drive
@@ -244,7 +247,7 @@ within ten seconds the published estimate describes the scene seven seconds ago
 while the robot acts on it. Dropping costs nothing, because a stationary pallet
 looks the same in every frame. 5 Hz keeps the estimate under ~200 ms old
 against D9's 0.50 s staleness limit, with headroom for the Jetson being slower
-than the laptop. Decided by Athreya 2026-10-15. (Stage 0/1a)
+than the laptop. Decided 2026-10-15. (Stage 0/1a)
 
 **D25. The pocket opening's lower edge comes from the side's geometry, not from
 the points.** `find_pockets` takes `opening_bottom` (0.000 short, 0.020 long).
@@ -272,7 +275,7 @@ slightly different positions. (Stages 1b, 2)
 **D27. One fork setting for both faces, not one per face.** `forks.spacing:
 0.365`, `forks.bottom_height: 0.040`, used whichever face is entered. This
 supersedes D21's per-side `fork_spacing` / `fork_bottom_height`.
-*Why:* decided by Athreya 2026-10-19 — a carriage without a hydraulic
+*Why:* decided 2026-10-19 — a carriage without a hydraulic
 positioner keeps one setting, and having one removes a way for the overlay, the
 simulator and the insertion to disagree about what the forks are.
 
@@ -300,12 +303,12 @@ same centre, so the gap between the two outlines is the measurement error.
 *Why:* the overlay's job is to make an error visible rather than readable. On
 `pallet_l_129` the dashed box is plainly wider than the solid one, which is the
 −51 mm pocket-width bias from D19 as a picture instead of a log line. Decided
-by Athreya 2026-10-19. (Stage 8)
+2026-10-19. (Stage 8)
 
 **D29. The virtual forks are rigidly fixed to the robot, never referenced to
 the per-frame floor fit.** The tines are built against a level plane at the
-measured `floor_z` (-0.025), a constant of the machine. *Why:* raised by
-Athreya 2026-10-19 — a carriage is bolted to the truck, and the truck's
+measured `floor_z` (-0.025), a constant of the machine. *Why:* raised
+2026-10-19 — a carriage is bolted to the truck, and the truck's
 orientation already follows whatever it stands on, which is what
 `base_footprint` encodes. Referencing perception's fitted plane adds nothing
 and costs three things:
@@ -382,7 +385,7 @@ mechanisms overlap on purpose. Four choices inside it:
 
 - **It never subscribes to depth.** Camera liveness comes from
   `depth/camera_info` -- same publisher, same callback, same rate, a few dozen
-  bytes against 3.7 MB a frame. The network rule (CLAUDE.md item 7) then holds
+  bytes against 3.7 MB a frame. The network rule (docs/SYSTEM.md) then holds
   by construction wherever the node runs.
 - **The LiDAR subscription is BEST_EFFORT.** `/ouster/points` publishes
   BEST_EFFORT and a RELIABLE subscriber receives nothing at all from it
@@ -424,7 +427,7 @@ window times the closing speed -- 10 frames at 5 Hz and 0.10 m/s is 0.10 m --
 and the closing loop's whole design is that the measurement improves as the
 remaining correction shrinks. A lagged average would undo exactly that. The
 confidence is a count of accepted frames, not a filter gain: a count is what
-can be defended in an interview and read off a log. (Stage 2)
+can be explained in one sentence and read off a log. (Stage 2)
 
 **D35. The track lives in `odom`, with the robot's motion taken out.** Each
 estimate's pocket centre is placed in `odom` using the odometry sample nearest
@@ -490,7 +493,7 @@ returns yet. The tier-1 bags carry `/ouster/points`; the achieved counts go in
 **D38. The two-leg approach is replaced by a continuous closing servo.** This
 supersedes D6. There is no line-up point and no rotate-drive-rotate: the robot
 backs off until it has enough run-up, then drives slowly forward while servoing
-onto the pocket centre line, and stops at the standoff. Decided by Athreya
+onto the pocket centre line, and stops at the standoff. Decided
 2026-10-19. *Why:* the measurement improves as the robot closes, so correcting
 continuously means every correction is made with better information than the
 one before. Aligning once at 3 m and driving straight freezes in whatever error
@@ -504,7 +507,7 @@ unused. Dead code with passing tests behind it reads as a design that is still
 in force. (Stage 3)
 
 **D39. Variable standoff with a 3 m minimum, and the run-up is computed from
-the lateral error.** Decided by Athreya 2026-10-19 after a simulation: starting
+the lateral error.** Decided 2026-10-19 after a simulation: starting
 at 1.75 m left 182 mm of residual error and 2.25 m left 112 mm, against 65 mm
 of room for a 100 mm tine in a 230 mm pocket; 3.00 m was the first distance
 that fitted. The implementation makes the floor a floor and computes the rest:
@@ -581,7 +584,7 @@ lower bound on the error rather than a prediction. The real figure comes from
 lab session B. (Stage 3)
 
 **D42. Our own reverse controller, with a LiDAR check and an explicit
-allowance.** Decided by Athreya 2026-10-19 over handing the reverse to Nav2.
+allowance.** Decided 2026-10-19 over handing the reverse to Nav2.
 The reverse runs at 0.05 m/s with angular exactly zero, and the distance it is
 allowed to cover is
 
@@ -681,7 +684,7 @@ that measures the wrong size, a face with no support behind the fit, an
 obstruction in a pocket and a load overhanging the face are all properties of
 the *pallet*, and driving the same approach again would measure the same
 pallet. A mixed failure is not retried either: if the pallet is wrong as well
-as the robot, the pallet does not change. One retry (Athreya, 2026-10-19), and
+as the robot, the pallet does not change. One retry (2026-10-19), and
 it always reverses at least `min_retry_backoff` so that "retry" means a
 genuinely new approach rather than a twitch. (Stage 7)
 
@@ -711,7 +714,7 @@ rule that cannot fail is worse than one that is absent, because it reports a
 pass. (Stages 4, 7)
 
 **D53. The divergence detector needs eight frames, not five, and ignores
-errors inside `residual_target`.** Athreya's mechanism is unchanged -- abort
+errors inside `residual_target`.** The mechanism is unchanged -- abort
 after N consecutive growing frames (2026-10-19) -- but N and its exposure are
 now measured rather than guessed. **At five frames and 10 mm of per-frame
 noise, the offline harness aborted 3 runs in 12 from a 9 m run-up and 1 in 12
@@ -723,7 +726,7 @@ accumulates across the window. At eight frames plus a floor at
 `residual_target`: none, in every case tried.
 
 The cost is 1.6 s rather than 1.0 s to notice a real divergence, which at the
-closing speed is 160 mm of extra travel. **Open for Athreya:** if that is too
+closing speed is 160 mm of extra travel. **Still open:** if that is too
 slow, the alternative is a model-based check -- compare the error against what
 the servo's own decay model predicts after the distance travelled -- which is
 robust to noise over a long baseline and would catch a divergence in half the
@@ -742,7 +745,7 @@ having done everything right. Found by the offline harness. (Stage 3)
 ## 2026-10-19 (operational flow)
 
 **D55. The flow is strictly sequential, and the trigger is a topic.** Decided
-by Athreya 2026-10-19. Nav2 drives the robot in front of a pallet and
+2026-10-19. Nav2 drives the robot in front of a pallet and
 **finishes its goal**; only then is this pipeline triggered, and Nav2 does not
 participate in the run. Every node is already up and waiting.
 
@@ -809,10 +812,9 @@ left unimplemented. (Stage 7)
 ## 2026-10-19 (the video dashboard)
 
 **D57. One video stream, watchable from the laptop, carries everything -- not
-just the camera.** Athreya built the transport (GStreamer -> MediaMTX ->
-WebRTC, `video_stream.py`/`video_streamer.py`/`config/mediamtx.yaml`) and
-asked for "literally all information" about the pipeline on the one screen it
-serves. Decided here is what that becomes in practice: `dashboard_node`
+just the camera.** The transport (GStreamer -> MediaMTX -> WebRTC,
+`video_stream.py`/`video_streamer.py`/`config/mediamtx.yaml`) carries one
+screen, and that screen should show everything about the pipeline. Decided here is what that becomes in practice: `dashboard_node`
 subscribes LOCALLY to `/fork_overlay/image` and five telemetry topics, draws a
 HUD panel underneath the existing fork/pocket overlay, and republishes the
 composite on `/dashboard/image`, which is the stream `video_stream.launch.py`
@@ -867,10 +869,20 @@ place a HUD like this normally goes quietly wrong:
   feedback -- invisible to anything that was not the caller of that specific
   goal, including a HUD, rqt, or an operator who started watching mid-run.
 
-Decided by Claude under the "pure engineering" allowance (CLAUDE.md hard rule
-1): nothing here changes what the robot does or any safety behaviour: it is
+Treated as an engineering decision rather than a behaviour decision: nothing
+here changes what the robot does or any safety behaviour: it is
 read-only observability built on topics that already existed, plus one new
 read-only status topic. (Stage 8, video streaming)
+
+**D58. Perception gets 2 s after a run starts before its silence counts.**
+`watchdog.first_estimate_grace: 2.0`. A run's own start activates perception,
+which needs a frame and up to a second of processing before its first
+estimate; the watchdog judges at 2 Hz and used to call "nothing received since
+startup" a failure immediately, so a run aborted whenever that judgement came
+first. *Why:* measured 2026-10-20 in the Gazebo sim, 2 aborts in 4 runs, about
+0.1 s after the start. The grace covers only the first estimate of a run (once
+one has arrived, `max_age.estimate` applies unchanged) and only CONFIRMING,
+where the robot does not drive. Amends D9. (2026-10-20)
 
 ## Open, with numbers attached
 

@@ -412,26 +412,30 @@ def main() -> int:
         raw = yaml.safe_load((PACKAGE / 'config' / 'params.yaml').read_text())
         shared = raw['/**']['ros__parameters']
         overlay = raw['fork_overlay']['ros__parameters']
-        standoff = raw['coordinator']['ros__parameters']['approach'][
-            'standoff_distance']
+        standoff = shared['standoff_distance']
         view = LiveView(
             args.bag.name, params, standoff,
             overlay_params={
                 # Robot-fixed reference for the tines (-0.025, measured).
-                'floor_z': overlay['floor_z'],
+                'floor_z': shared['floor_z'],
                 'forks': shared['forks'],
                 'sides': shared['pallet']['sides'],
-                'colors': overlay['colors'],
+                # Not in params.yaml: the node's declared defaults, BGR.
+                'colors': overlay.get('colors', {
+                    'idle': (160, 160, 160), 'detecting': (160, 160, 160),
+                    'approaching': (0, 200, 255), 'inserting': (128, 255, 0),
+                    'go': (0, 200, 0), 'no_go': (0, 0, 220)}),
                 'alpha': overlay['alpha'],
                 'line_thickness': overlay['line_thickness'],
                 'draw_pockets': overlay['draw_pockets'],
+                'draw_standoff_marker': overlay['draw_standoff_marker'],
             },
             state=args.state, save_dir=args.save_frames)
         # Where the forks go when perception has no floor fit -- which is the
         # normal case at the standoff, where only a 4 mm strip of floor is
         # still in frame. floor_z is measured (-0.025), not assumed.
         view.fallback_floor = Plane(np.array([0.0, 0.0, 1.0]),
-                                    -overlay['floor_z'])
+                                    -shared['floor_z'])
 
     gate = FrameGate(max_rate=args.rate)
     gate.reset(time.perf_counter())

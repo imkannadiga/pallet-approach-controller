@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a whole virtual pickup offline and print what happened.
 
-The offline replay CLAUDE.md asks for before anything drives, as a command you
+The offline replay required before anything drives, as a command you
 can run in a second:
 
     python3 tools/sequence.py                       # a clean run from 3.5 m

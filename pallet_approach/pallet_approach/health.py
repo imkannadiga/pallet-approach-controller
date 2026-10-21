@@ -71,6 +71,16 @@ class Limits:
 
     when: str = ALWAYS
     """`ALWAYS`, `WHILE_RUNNING` or `NEVER`."""
+    first_message_grace: float = 0.0
+    """Seconds after a run starts during which a source that has not yet
+    produced anything still counts as healthy (D58, 2026-10-20).
+
+    For `estimate`: perception is activated by the run itself and needs a
+    frame plus up to a second of processing before its first estimate, while
+    the watchdog judges at 2 Hz. Without a grace, a run aborted whenever the
+    first check came first -- 2 runs in 4 in the Gazebo sim. Only ever-silent
+    sources get it: once one message has arrived, the ordinary age limit
+    applies, so a perception that stops mid-run is caught exactly as before."""
 
     max_skew: float = 0.05
     """How far a message may be stamped into the FUTURE before that is itself
@@ -186,7 +196,8 @@ class HealthMonitor:
             return None
         return (len(arrivals) - 1) / span
 
-    def check(self, now: float, phase: str = ALWAYS) -> Report:
+    def check(self, now: float, phase: str = ALWAYS,
+              running_since: float | None = None) -> Report:
         """Judge every source. `phase` is ALWAYS or WHILE_RUNNING.
 
         A source is required when its own `when` says so and the phase allows
@@ -200,7 +211,12 @@ class HealthMonitor:
             age = self.age(name, now)
             rate = self.rate(name, now)
             ok, detail = True, ''
-            if age is None:
+            waited = None if running_since is None else now - running_since
+            if (age is None and waited is not None
+                    and waited < limits.first_message_grace):
+                detail = (f'waiting for the first message, {waited:.1f} s of '
+                          f'{limits.first_message_grace:.1f} s')
+            elif age is None:
                 ok = False
                 detail = 'nothing received since startup'
             elif age < -limits.max_skew:

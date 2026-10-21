@@ -346,7 +346,7 @@ def test_the_run_up_formula_matches_what_the_loop_achieves(closing, limits):
 def test_too_short_a_run_up_really_does_fail(closing, limits, slack):
     """The counterpart. If 3 m were enough for any offset, the whole
     variable-standoff design would be unnecessary -- and this is the
-    measurement Athreya's 3 m minimum was set from."""
+    measurement the 3 m minimum was set from."""
     trace = S.drive(S.facing(closing['min_run_up'], offset=0.80),
                     servo(closing, limits))
     assert trace.arrived

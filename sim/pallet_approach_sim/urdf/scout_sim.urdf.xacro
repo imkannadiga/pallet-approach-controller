@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+The lab SCOUT, for simulation. Built from the SAME macros as the
+intelligent-fleet-sim-env robot (ugv_descriptions/stuttgart_scout), so the base,
+the wheels, the GR box and the LiDAR mount are the real robot's numbers, not a
+re-typed copy of them. Two things differ from that repo's top-level file:
+
+1. The camera chain uses the REAL robot's frame names
+   (zed2_camera_link -> zed2_camera_center -> zed2_left_camera_frame ->
+   zed2_left_camera_frame_optical, docs/SYSTEM.md) instead of the macro's
+   sensor_d456_*, with the macro's numbers: mount (0.30, 0, 0.035) on
+   bottom_box_link, centre 0.015 up, left lens (-0.01, +0.06). That puts the
+   left optical frame at (0.390, 0.060, 0.163) from base_link, which is what
+   the robot's tf reports. So the stack runs on its real params.yaml frames.
+
+2. The IMU and GPS are left out: nothing in the pipeline reads them.
+
+Gazebo sensors and the drive plugin are NOT in here. pallet_approach_sim/
+robot_model.py strips the sim repo's plugins (written for a newer Gazebo than
+the Fortress in its own image) and adds ours, so all of it is in one place
+with tests.
+-->
+<robot name="scout_sim" xmlns:xacro="http://ros.org/wiki/xacro">
+
+  <xacro:property name="M_PI" value="3.1415926535897931" />
+
+  <link name="base_footprint"/>
+
+  <xacro:include filename="$(find ugv_descriptions)/stuttgart_scout/urdf/accessories/gr_ros_kit.urdf.xacro"/>
+  <xacro:include filename="$(find ugv_descriptions)/stuttgart_scout/urdf/agilex_scout2/scout.urdf.xacro"/>
+  <xacro:scout prefix=""/>
+
+  <!-- 0.21 m, as on the robot, which is 25 mm out: the wheels put the
+       floor at -0.0248 in base_footprint, and the real floor was measured at
+       -0.025 (docs/SYSTEM.md). The sim reproduces that error rather
+       than fixing it, because the stack is supposed to cope with it. -->
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 -0.21" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="base_footprint"/>
+  </joint>
+
+  <xacro:gr_box prefix="" parent="top_robot_link">
+    <origin xyz="0.10 0 0.0" rpy="0 0 0"/>
+  </xacro:gr_box>
+
+  <xacro:include filename="$(find ugv_descriptions)/stuttgart_scout/urdf/accessories/OS0-rev7.urdf.xacro"/>
+  <xacro:OS0-32 parent="top_box_lidar_support_link">
+    <origin xyz="0 0 -0.0039" rpy="0 0 0"/>
+  </xacro:OS0-32>
+
+  <!-- ZED 2i, real frame names. -->
+  <link name="zed2_camera_link"/>
+  <joint name="zed2_camera_joint" type="fixed">
+    <origin xyz="0.30 0 0.035" rpy="0 0 0"/>
+    <parent link="bottom_box_link"/>
+    <child link="zed2_camera_link"/>
+  </joint>
+
+  <link name="zed2_camera_center">
+    <visual>
+      <origin xyz="-0.01 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="file:///ros2_ws/install/ugv_descriptions/share/ugv_descriptions/stuttgart_scout/meshes/accessories/zed2i.stl"/>
+      </geometry>
+      <material name="zed_black"><color rgba="0 0 0 1"/></material>
+    </visual>
+  </link>
+  <joint name="zed2_camera_center_joint" type="fixed">
+    <origin xyz="0 0 0.015" rpy="0 0 0"/>
+    <parent link="zed2_camera_link"/>
+    <child link="zed2_camera_center"/>
+  </joint>
+
+  <!-- On the robot the ZED SDK republishes THIS joint at ~58 Hz (stereo
+       self-calibration), and the watchdog times it. robot_model.py hands
+       robot_state_publisher a copy with this joint made non-fixed, and
+       camera_tf.py republishes it the same way the SDK does. -->
+  <link name="zed2_left_camera_frame"/>
+  <joint name="zed2_left_camera_joint" type="fixed">
+    <origin xyz="-0.01 0.06 0" rpy="0 0 0"/>
+    <parent link="zed2_camera_center"/>
+    <child link="zed2_left_camera_frame"/>
+  </joint>
+
+  <link name="zed2_left_camera_frame_optical"/>
+  <joint name="zed2_left_camera_optical_joint" type="fixed">
+    <origin xyz="0 0 0" rpy="${-M_PI/2} 0 ${-M_PI/2}"/>
+    <parent link="zed2_left_camera_frame"/>
+    <child link="zed2_left_camera_frame_optical"/>
+  </joint>
+
+</robot>

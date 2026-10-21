@@ -1,128 +1,301 @@
 # Pallet Approach on a Real Robot
 
-Geometry-driven pallet perception and fork-insertion approach on an AgileX
-SCOUT 2.0 with a ZED 2i stereo camera, in ROS 2 Humble.
+Stereo-vision pallet detection, fork-pocket alignment and a virtual pickup on an
+AgileX SCOUT 2.0 with a ZED 2i camera and an Ouster LiDAR, in ROS 2 Humble.
 
-On a manual trigger the robot looks for a EUR pallet, works out which of its two
-faces it is looking at, backs off if it is too close, drives itself onto the
-pocket centre line, decides **GO** or **NO-GO** with a reason, and on GO
-performs a **virtual pickup**: lowers imaginary forks to pocket height, drives
-them in, lifts, backs out, and hands control back to Nav2.
+Nav2 brings the robot to within a few metres of a pallet. From there this stack
+takes over. It confirms the pallet in stereo depth, cross-checked by the LiDAR,
+and works out which face it is looking at. It drives onto the fork-pocket centre
+line, then decides **GO** or **NO-GO** with a stated reason. On GO it performs a
+**virtual pickup**: it lowers imaginary forks to pocket height, drives them in,
+lifts, backs out, and hands control back to Nav2.
 
-No trained model. The pipeline is plane fitting, clustering and gap analysis, so
-it works on pallets it has never seen. A fork overlay draws a forklift's tines
-onto the camera image, which doubles as a visual check on the camera-to-base
-calibration — the tines are bolted to the robot rather than to the measured
-pockets, precisely so that a mismatch between them is attributable.
+There is no trained model. The pipeline is plane fitting, clustering and gap
+analysis, so it needs no labelled data and every decision it makes can be read
+off a log.
 
-> Results and accuracy numbers are deliberately absent from this README until
-> they come from a real evaluation run. The numbers that *are* here were
-> measured on the robot on 2026-10-13 and are recorded in
-> [docs/SYSTEM.md](docs/SYSTEM.md).
+<!--
+  Robot photo: save it as docs/images/robot.jpg and uncomment this line.
+  <p align="center"><img src="docs/images/robot.jpg" width="640" alt="The SCOUT 2.0 with the ZED 2i and Ouster in front of the pallet"></p>
+-->
 
-## Layout
+<p align="center">
+  <img src="docs/images/perception_pallet_s_129.png" width="900"
+       alt="Every stage of the perception pipeline on one real frame">
+  <br>
+  <em>Every stage of the perception pipeline on a real recorded frame, short
+  face 1.75 m ahead. Both pockets found (solid green: 217 × 82 and
+  232 × 86 mm) where the measured 230 × 100 mm pockets should be (dashed).</em>
+</p>
 
+<p align="center">
+  <img src="docs/images/live_overlay_pallet_s_129.png" width="900"
+       alt="Camera feed with the virtual forks and detected pockets, and the estimate from above">
+  <br>
+  <em>The pipeline running on a recorded bag from the robot, as the operator sees
+  it: the virtual tines drawn from the robot's own geometry, the detected
+  pockets (solid) on their expected outlines (dashed), and the same estimate
+  from above. Short face at 1.76 m, spacing within 5 mm.</em>
+</p>
+
+## Contents
+
+- [What it does](#what-it-does)
+- [How it works](#how-it-works)
+- [Architecture](#architecture)
+- [Safety design](#safety-design)
+- [Results so far](#results-so-far)
+- [Simulation](#simulation)
+- [Getting started](#getting-started)
+- [Repository layout](#repository-layout)
+- [Documentation](#documentation)
+
+## What it does
+
+| Phase | What happens |
+|---|---|
+| Confirm | Several consistent depth frames, tracked in `odom`, with the LiDAR seeing a surface where the camera put the face |
+| Classify | Short face or long face, from the pocket spacing (365 vs 525 mm), confirmed by the face width; ambiguous is refused, never guessed |
+| Approach | Reverse for run-up if needed, then a continuous servo onto the pocket centre line, squaring up at a 1.75 m standoff |
+| Check | Eight safety rules on a stationary robot: GO or NO-GO, always with a reason |
+| Pick up | Forks down to the opening's centre, straight in with a LiDAR distance stop, lift, back out, hand back to Nav2 |
+
+Two run modes: `approach_only` stops at the GO/NO-GO decision; `pickup` runs the
+whole sequence.
+
+The real pallet was tape-measured, and the measurements replace the EPAL
+nominals everywhere: 1195 × 795 × 145 mm, with two 230 × 100 mm pockets on the
+short face, centres 365 mm apart, **open from the floor**. That last detail
+changed the fork height, the standoff and the pocket detection band.
+
+## How it works
+
+### Perception: depth image to pockets
+
+```mermaid
+flowchart LR
+    A[Depth image<br/>1280×720, 32FC1] --> B[Back-project<br/>+ tf to base_footprint]
+    B --> C[Crop + 2 cm<br/>voxel grid]
+    C --> D[RANSAC<br/>floor plane]
+    D --> E[Remove floor<br/>+ DBSCAN]
+    E --> F[Pick the<br/>pallet cluster]
+    F --> G[Upright-only RANSAC:<br/>front face]
+    G --> H[±6 cm slab, unrolled:<br/>occupancy gaps = pockets]
+    H --> I[Side from<br/>pocket spacing]
 ```
-pallet_approach_interfaces/     action + messages (ament_cmake)
-pallet_approach/
-  pallet_approach/
-    model.py            shared data types: PalletEstimate, Pocket, Decision, Pose2D
-    perception.py       depth -> face pose, pockets, which side
-    tracker.py          is it the same pallet, frame after frame?
-    go_nogo.py          the nine safety rules
-    closing.py          the servo that drives onto the pocket centre line
-    insertion.py        the blind drive, and its two-source stop
-    drive.py            executing one drive request
-    forks.py            the virtual carriage
-    coordinator.py      the state machine for a whole pickup
-    health.py           is the stack fit to drive?
-    fork_overlay.py     projecting the forks onto the image
-    approach.py         standoff geometry and 2D pose algebra
-    controller.py       limits, deadband, acceleration bound
-    model.py            shared data types
-    pointcloud.py       PointCloud2 <-> NumPy
-    ros_conversions.py  messages <-> plain Python
-    nodes/              ROS 2 wrappers (2 lifecycle, 4 plain)
-  config/params.yaml    every tunable value, with its derivation
-  config/twist_mux.yaml velocity arbitration
-  test/                 pytest: synthetic clouds, a simulated world, a whole run
-  tools/                survey, bag recording, offline replay, a whole pickup
-docker/Dockerfile.jetson
-docs/decisions.md       every behaviour decision, with its reasoning
-docs/SYSTEM.md          measured system facts
-docs/ROADMAP.md         build order and open decisions
-docs/survey/            raw survey output from both machines
-docs/log.md             daily log
-```
 
-Nothing in `pallet_approach/*.py` imports ROS. The node wrappers in `nodes/`
-subscribe, publish and call into them. That split is not tidiness: it is what
-lets a whole virtual pickup run at a desk against a simulated robot
-(`tools/sequence.py`), which is where most of the bugs in this project were
-found.
+Three design choices carry most of the weight:
+
+- **Heights come from the fitted floor, never from `z = 0`.** The URDF's
+  `base_footprint` turned out to be 25 mm above the real floor, and the pockets
+  are only 100 mm tall.
+- **The face fit only proposes upright planes facing the robot.** The camera
+  sits 0.40 m up and looks down, so a general RANSAC picks the top deck. Two
+  points define a vertical plane, which also makes the search cheap.
+- **Pockets are found in a ±6 cm slab around the face, not in the plane's
+  inliers.** At 2 m the ZED's depth scatters by a few centimetres, so 2 cm
+  inliers miss the block fronts. The pockets stay empty in the slab because
+  they are deep.
+
+### Tracking and the closing servo
+
+The tracker holds the pallet in `odom` with the robot's own motion taken out,
+and deliberately does not average: averaging would lag the truth by about
+0.10 m at the closing speed. The approach is a cascade of two proportional
+loops. The outer loop turns the lateral offset into an aim angle (capped at
+0.25 rad so the pallet never leaves the camera's view), and the inner loop turns
+the heading error into an angular rate. Commands below the base's minimum turn
+rate are dropped rather than inflated, which is what gave the loop fine
+authority.
+
+### GO / NO-GO
+
+Face fit quality, estimate stability, pocket count, pocket size for this face,
+yaw, lateral offset, overhanging load and obstructions in the pockets. Every
+rule runs and is recorded even after one fails, so each decision shows which
+rule would have caught what. Missing data is a NO-GO. NO-GOs about where the
+robot stands (yaw, offset, stability) are retried once; NO-GOs about the pallet
+are not.
+
+### The blind insertion
+
+The pockets leave the camera's view about 0.9 m ahead of the robot. Insertion
+therefore runs straight on odometry with angular velocity exactly zero, at the
+slowest speed. It stops on the earlier of the planned travel and the LiDAR
+seeing the face at 0.70 m, which leaves 0.91 m of fork depth and a 0.24 m gap
+between the real bumper and the pallet. Half a second without a LiDAR reading
+aborts it.
 
 ## Architecture
 
-```
-       ZED depth + tf                  Ouster
-             │                            │
-             ▼                            ▼
-     pallet_perception ──estimate──▶ pallet_tracker ──track──┐
-             │  cluster + scene points        (LiDAR cross-check)
-             │        │                                      ▼
-             │        └──────────────────────────────▶  coordinator
-             │                                          │   │    │
-             ▼                                     drive│   │    │fork
-        fork_overlay ◀──state, fork height──────────────┘   │    │
-                                                            ▼    ▼
-                                         approach_controller   virtual_forks
-                                                     │
-      watchdog ──/cmd_vel_safety──▶ twist_mux ◀───────┘ /cmd_vel_pallet
-            (sensor ages, rates)        │     ◀── Nav2  /cmd_vel_nav
-                                        ▼
-                             /cmd_vel ──▶ scout base (robot PC) ──▶ wheels
-```
-
-```
-IDLE → CONFIRMING → CLASSIFYING → [BACKING_OFF] → CLOSING → CHECKING
-     → LOWERING → INSERTING → LIFTING → BACKING_OUT → DONE
-Any state: cancel, unhealthy stack, lost pallet, controller abort → ABORTED
+```mermaid
+flowchart TB
+    subgraph JETSON["Jetson Orin: the whole stack, next to the camera"]
+        ZED[ZED 2i wrapper] --> PER[pallet_perception]
+        PER --> TRK[pallet_tracker]
+        TRK --> CO[coordinator<br/>state machine]
+        CO --> CTL[approach_controller]
+        CO --> FK[virtual_forks]
+        PER --> OV[fork_overlay] --> DB[dashboard] --> MTX[MediaMTX<br/>H.264 / WebRTC]
+        WD[watchdog]
+        CTL -- /cmd_vel_pallet --> MUX[twist_mux]
+        WD -- /cmd_vel_safety --> MUX
+    end
+    subgraph PC["Robot PC"]
+        OS[Ouster OS0] --> TRK
+        ODOM[odometry + tf]
+        NAV[Nav2] -- /cmd_vel_nav --> MUX
+        BASE[scout_ros2 base]
+    end
+    MUX -- /cmd_vel --> BASE
+    MTX -. browser .-> LAPTOP[Laptop]
 ```
 
-The coordinator owns every decision to move or stop, and the controller is a
-lifecycle node that cannot publish a command until the coordinator activates it.
-Three safety properties are worth stating because they have no exceptions:
+Everything runs on the Jetson, so depth never crosses the network: only
+velocity commands, odometry, tf and the LiDAR do. That rule is the result of a
+measurement: one remote subscriber to raw ZED images dropped the camera node
+from about 37 Hz to 0.2 Hz. Viewing therefore goes through a dashboard
+composited on the Jetson and streamed as H.264 over WebRTC.
+
+None of the algorithm modules in `pallet_approach/pallet_approach/*.py` import
+ROS. The node wrappers in `nodes/` subscribe, publish and call into them. That
+split is what lets a whole virtual pickup run at a desk against a simulated
+world, which is where most of this project's bugs were found.
+
+### The state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> CONFIRMING: start
+    CONFIRMING --> CLASSIFYING
+    CONFIRMING --> NO_PALLET
+    CLASSIFYING --> BACKING_OFF: not enough run-up
+    BACKING_OFF --> CLASSIFYING
+    CLASSIFYING --> CLOSING
+    CLASSIFYING --> NO_GO: ambiguous side
+    CLOSING --> CHECKING
+    CHECKING --> BACKING_OFF: retryable NO-GO (once)
+    CHECKING --> NO_GO
+    CHECKING --> GO: approach_only
+    CHECKING --> LOWERING: GO
+    LOWERING --> INSERTING
+    INSERTING --> LIFTING
+    LIFTING --> BACKING_OUT
+    BACKING_OUT --> DONE: INSERTED, Nav2 resumes
+```
+
+From any running state, a cancel, an unhealthy stack, a lost pallet or a
+controller abort stops the robot and ends in **ABORTED**. The controller may
+only be told to drive in four states: `BACKING_OFF`, `CLOSING`, `INSERTING` and
+`BACKING_OUT`.
+
+## Safety design
 
 - **Every terminal state stops the robot with an explicit zero command.** The
-  base driver has no command timeout (`ros2 param dump /scout`), so nothing
-  else will. That includes an aborted insertion, which stops where it is rather
-  than reversing out.
+  base driver has no command timeout, so nothing else would. That includes an
+  aborted insertion, which stops where it is rather than reversing blind.
 - **The watchdog owns the stop independently of the coordinator.** It watches
-  the sensors itself and drives the mux's highest-priority input, so a
-  coordinator that has wedged still leaves a stationary robot.
-- **The controller may be told to drive in exactly four states**, and the test
-  suite asserts that over every event from every state — so a state added later
-  without thinking about it cannot drive.
+  sensor ages and rates itself and feeds `twist_mux`'s highest-priority input,
+  so a wedged coordinator still leaves a stationary robot.
+- **Only four states may drive**, and the test suite asserts that over every
+  event from every state. A state added later without thinking about it cannot
+  drive.
+- **The controller cannot publish until the coordinator activates it**, and it
+  refuses to configure if nothing subscribes to its command topic, so a missing
+  mux cannot fail silently.
+- **Speed limits live in `config/params.yaml`**: 0.20 m/s and 0.30 rad/s, with
+  slower limits near the pallet and 0.05 m/s for insertion. Every command is
+  clamped and acceleration-limited.
+- A run is refused if the stack is unhealthy when the trigger arrives, naming
+  the stale or slow sensor.
+- Controller and coordinator changes are replayed offline before they run on
+  the robot, and someone supervises every run with the e-stop in reach.
 
-## Build and run
+## Results so far
 
-Everything runs on the Jetson, next to the camera: depth never crosses the
-network, only `/cmd_vel`, `/tf` and odometry do.
+Each number below is labelled by where it comes from. No accuracy or false-GO
+figures are claimed until they come from evaluation trials on the robot.
 
-One entry point. `up` starts every node — including MediaMTX and the video
-streams, by default — and then waits: nothing moves, and nothing will until a
-run is triggered:
+| Result | Source | Value |
+|---|---|---|
+| Face distance error, short face at 1.75 m | real bag | +5 mm, against the target distance |
+| Pocket spacing error, same bag | real bag | −3 mm against the measured 365 mm |
+| Face distance, first bag at 2.0 m | real bag | on the 2.0 m tape mark |
+| Floor height in the URDF's `base_footprint` | measured | −25 mm |
+| Camera mounting error | measured | 0.70° pitch, −0.52° roll; corrected in config |
+| Closest face the LiDAR still sees | measured | 0.238 m gap to the bumper |
+| Worst arrival of the closing servo | simulated, 10 mm depth noise | 17 mm and 2.4°, against 65 mm of pocket slack |
+| Unit and integration tests | synthetic | 850 pass |
+
+The first real bag, taken at 2.0 m, with the three fixes it prompted applied
+(a narrower detection band, a slab instead of inliers, two points per bin):
+
+<p align="center">
+  <img src="docs/images/perception_pallet_2m_0deg.png" width="900"
+       alt="Perception pipeline on the first real bag at 2.0 m">
+</p>
+
+Status: perception has run on recorded bags from the robot; the closed-loop
+approach and the virtual pickup have run in the offline harness and in Gazebo,
+not yet on the robot. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Simulation
+
+The same stack container and launch file run against a Gazebo Fortress model of
+the lab robot. The robot is built from its own URDF macros, its sensors publish
+on the real topic names and frames, and the pallet is the measured one. The
+simulation covers what the offline harness cannot: discovery, QoS, lifecycle,
+tf and the clock.
+
+<p align="center">
+  <img src="docs/images/sim_gazebo.png" width="640" alt="The SCOUT and the pallet in Gazebo">
+  <br>
+  <em>The Gazebo world: the SCOUT and the measured pallet 3.5 m ahead.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/sim_dashboard.png" width="640" alt="The live dashboard during a simulated run">
+  <br>
+  <em>The live dashboard during a simulated run: the virtual tines, both pockets
+  detected, the LiDAR agreeing with the camera's face to 2 mm, and the tracker
+  confirming.</em>
+</p>
+
+<!--
+  Demo video or GIF of a run: save it as docs/images/demo.gif and uncomment.
+  <p align="center"><img src="docs/images/demo.gif" width="640" alt="A run on the robot"></p>
+-->
+
+```bash
+./sim/run_sim.sh build
+./sim/run_sim.sh up face_x:=3.5 face_y:=0.25 face_yaw:=0.1
+./sim/run_sim.sh run approach_only
+# dashboard: http://localhost:8889/dashboard
+./sim/run_sim.sh stop
+```
+
+The simulation runs on its own ROS domain, localhost only, so it cannot reach
+the real robot. What it does and does not show is in
+[sim/README.md](sim/README.md).
+
+## Getting started
+
+### On the robot
+
+Everything runs in one container on the Jetson. `up` starts every node and then
+waits; nothing moves until a run is triggered.
 
 ```bash
 ./docker/build_and_run.sh build
-./docker/build_and_run.sh dry      # FIRST TIME: wheels disconnected
-./docker/build_and_run.sh up       # for real
+./docker/build_and_run.sh dry      # first time: wheels disconnected
+./docker/build_and_run.sh up
 ./docker/build_and_run.sh logs
 ./docker/build_and_run.sh stop
 ```
 
 The flow is sequential: Nav2 drives the robot in front of a pallet and
-**finishes**, and only then is the pipeline triggered.
+finishes, then the pipeline is triggered.
 
 ```bash
 ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: approach_only}"
@@ -131,35 +304,21 @@ ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty  "{}"
 ros2 topic echo /pallet_approach/result
 ```
 
-`approach_only` runs the whole approach and stops at the GO/NO-GO decision,
-inserting nothing. An unknown mode is refused, not defaulted. A run is refused
-if the stack is unhealthy when the trigger arrives, naming the sensor that is
-stale or slow, and the refusal is published on `/pallet_approach/result` as
-well as logged — nothing is waiting on a return value.
-
-Watch it from a laptop on the robot's Wi-Fi, no ROS install needed:
-
-    http://<jetson-ip>:8889/dashboard   forks, pockets, health, tracker,
-                                         controller, forks, and why
-    http://<jetson-ip>:8889/zed         the raw camera, unannotated
-
-Nothing on that page is a ROS topic over the network — the composite image is
-built on the Jetson and sent out as H.264/WebRTC (`docs/SYSTEM.md` has the
-pipeline and why, including the one time a remote ROS subscriber brought the
-whole camera node to its knees).
-
-The action server does the same thing with live feedback, and is the better way
-to run one by hand:
+Or as an action, with live feedback (Ctrl-C cancels and the robot stops):
 
 ```bash
-ros2 action send_goal /pallet_task \
-    pallet_approach_interfaces/action/PalletTask \
+ros2 action send_goal /pallet_task pallet_approach_interfaces/action/PalletTask \
     "{mode: pickup}" --feedback
 ```
 
-Ctrl-C on that command cancels; the robot stops.
+Watch from any browser on the robot's network, no ROS install needed:
 
-## Running a whole pickup without a robot
+```text
+http://<jetson-ip>:8889/dashboard    forks, pockets, health, tracker, controller, reason
+http://<jetson-ip>:8889/zed          the raw camera
+```
+
+### A whole pickup at a desk
 
 ```bash
 cd pallet_approach
@@ -169,75 +328,77 @@ python3 tools/sequence.py --noise 0.005 --seeds 10
 python3 tools/sequence.py --break-gain      # a sign error in the servo
 ```
 
-This drives the real state machine, the real tracker, the real control laws,
-the real fork simulator and the real safety rules through a simulated world,
-and prints the phase-by-phase trace. It does **not** exercise the ROS layer —
-discovery, QoS, lifecycle, tf and the clock — which is where every failure on
-the real robot has come from so far.
+This drives the real state machine, tracker, control laws, fork simulator and
+safety rules through a simulated world, and prints a phase-by-phase trace.
 
-## Tests
+### Tests
 
 ```bash
 cd pallet_approach
 python -m pytest test
 ```
 
-On the workstation, prefix with `env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`:
-ROS Iron is on the path alongside a conda Python and the two collide. Better,
-use a venv for offline work — see `pallet_approach/tools/bag_to_frames.py`.
+If ROS from another distribution is on your `PYTHONPATH`, run the tests from a
+virtualenv with `env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`.
 
-## Working with bags
+### Recorded bags
 
-Raw depth is 136 MB/s and the Jetson has ~5.7 GB free, so bags are throttled and
-cannot be left on the Jetson. One command from the laptop records on the Jetson,
-copies the bag here, verifies it, and only then deletes the remote copy:
+Bags are read offline with the `rosbags` library; no ROS needed.
 
 ```bash
-./pallet_approach/tools/fetch_bag.sh --check                     # test the path first
-./pallet_approach/tools/fetch_bag.sh -o pallet_2m_0deg -d 20     # depth only, 5 Hz
-./pallet_approach/tools/fetch_bag.sh -o pallet_2m_0deg -d 20 --with-image
-```
-
-Nothing on the robot has to be reconfigured: the bag is written inside the
-already-running container and streamed out with `docker exec | tar`, so there is
-no bind mount to add and no container to restart. `--fetch-only` retries a failed
-transfer without re-recording.
-
-From the robot's hotspot, ssh goes straight to `stuttgart_orin@192.168.1.1` —
-no jump host, because the robot PC forwards between its AP subnet and the wired
-switch. Use that wired address rather than the Jetson's own wifi address
-(`10.42.0.40`): over the wired leg only the last hop is wifi, so it is about
-twice as fast. Pass `--container <name>` (or set `CONTAINER=`).
-
-Streaming the depth off the Jetson *while* recording is not possible: 10 Hz
-depth plus colour is ~516 Mbit/s. Record local, then move.
-
-Then read it offline, with no ROS needed:
-
-```bash
+./pallet_approach/tools/fetch_bag.sh -o pallet_2m_0deg -d 20        # record on the Jetson, copy here
 python3 pallet_approach/tools/bag_to_frames.py ~/bags/pallet_2m_0deg --out /tmp/frames
-```
-
-Or replay it through the whole perception pipeline and draw every stage —
-the fastest way to see *why* a frame produced what it did. The last panel
-projects the detected pockets back onto the image they came from, measured
-against expected, which is the check you can make by eye:
-
-```bash
 python3 pallet_approach/tools/replay.py ~/bags/pallet_2m_0deg --truth-x 2.0
-python3 pallet_approach/tools/floor_plane_check.py --correct ~/bags/floor_*
 ```
 
-Write the tape-measured ground truth for every bag into
-[docs/dataset.md](docs/dataset.md). A bag without ground truth cannot be used for
-evaluation.
+`replay.py` runs the whole perception pipeline on a bag and draws every stage,
+as in the figures above. Ground truth for each bag lives in
+[docs/dataset.md](docs/dataset.md).
 
-## Safety
+## Repository layout
 
-- Speed limits live in `config/params.yaml`: 0.20 m/s linear, 0.30 rad/s
-  angular. They are the lab limits for autonomous runs and are not raised.
-- Every command is clamped and acceleration-limited before it reaches the base.
-- The controller refuses to configure if anything else publishes `/cmd_vel`.
-- Controller and coordinator changes are replayed against a recorded bag before
-  they run on the robot.
-- Someone supervises every run with the e-stop in reach.
+```text
+pallet_approach_interfaces/      action + messages (ament_cmake)
+pallet_approach/
+  pallet_approach/               algorithms, no ROS imports
+    perception.py                depth -> face pose, pockets, which side
+    tracker.py                   the same pallet over several frames, + LiDAR check
+    go_nogo.py                   the safety rules
+    closing.py                   the servo onto the pocket centre line
+    insertion.py                 the blind drive and its two-source stop
+    drive.py                     executing one drive request
+    forks.py                     the virtual carriage
+    coordinator.py               the state machine for a whole pickup
+    health.py                    is the stack fit to drive?
+    fork_overlay.py, dashboard.py   what the operator sees
+    approach.py, controller.py   standoff geometry; limits, deadband, acceleration
+    model.py, pointcloud.py, ros_conversions.py, projection.py, calibration.py
+    nodes/                       ROS 2 wrappers (lifecycle where it matters)
+  config/params.yaml             every tunable value, with its derivation
+  config/twist_mux.yaml          velocity arbitration
+  launch/                        one entry point + the video streams
+  test/                          pytest: synthetic clouds, a simulated world, a whole run
+  tools/                         bag recording, offline replay, survey, a whole pickup
+sim/                             Gazebo Fortress model of the robot and pallet
+docker/                          the Jetson image and its run script
+docs/                            design record, system facts, roadmap, dataset, log
+```
+
+## Documentation
+
+| Document | What is in it |
+|---|---|
+| [docs/decisions.md](docs/decisions.md) | Every behaviour decision (D1–D58): what, why, when |
+| [docs/SYSTEM.md](docs/SYSTEM.md) | Measured facts about the robot: topics, frames, calibration, network |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Build order, stages, lab sessions, what is still open |
+| [docs/dataset.md](docs/dataset.md) | The recorded bags and their ground truth |
+| [docs/log.md](docs/log.md) | Daily engineering log: what broke and how it was fixed |
+| [sim/README.md](sim/README.md) | The Gazebo simulation, and its limits |
+
+## Hardware and software
+
+- AgileX SCOUT 2.0 skid-steer base, wheel odometry
+- Stereolabs ZED 2i on an NVIDIA Jetson Orin (JetPack 6.2, ZED SDK 5.4)
+- Ouster OS0 LiDAR
+- ROS 2 Humble, Ubuntu 22.04, Python 3.10, Docker; NumPy and scikit-learn for
+  the geometry, GStreamer and MediaMTX for video

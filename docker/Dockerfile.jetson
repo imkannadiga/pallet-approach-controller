@@ -51,8 +51,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         kmod \
     && rm -rf /var/lib/apt/lists/*
 
+# By architecture, so the same image also builds on an amd64 laptop for the
+# Gazebo sim (sim/README.md). The Jetson gets arm64v8, as before.
 ARG MEDIAMTX_VERSION=v1.9.3
-RUN curl -sSL "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_arm64v8.tar.gz" \
+RUN case "$(dpkg --print-architecture)" in \
+        arm64) MTX_ARCH=arm64v8 ;; \
+        amd64) MTX_ARCH=amd64 ;; \
+        *) echo "no MediaMTX build chosen for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://github.com/bluenviron/mediamtx/releases/download/${MEDIAMTX_VERSION}/mediamtx_${MEDIAMTX_VERSION}_linux_${MTX_ARCH}.tar.gz" \
     | tar xz -C /usr/local/bin mediamtx
 
 # Running the video stream needs --network host (browsers connect to ports

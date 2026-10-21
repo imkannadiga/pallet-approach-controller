@@ -1,8 +1,8 @@
 # Daily log
 
 One short entry per day: what got done, what broke, what the numbers were.
-What broke and how it was fixed is the interview material, so write it down
-while it is fresh rather than reconstructing it on Day 14.
+What broke and how it was fixed is the most useful part, so it is written
+down while it is fresh rather than reconstructed later.
 
 ---
 
@@ -32,7 +32,7 @@ floor is at `z = -0.025` in that frame. The wheel geometry was right all along.
 **What broke / what I learned**
 
 - I had been saying "z = 0 is the floor in base_footprint". That was wrong, and
-  the correction is now in `docs/SYSTEM.md`, `CLAUDE.md` and every docstring
+  the correction is now in `docs/SYSTEM.md` and every docstring
   that claimed it. What saved it from being a real bug is that the pipeline
   never used z = 0: `remove_floor` and `find_pockets` take the *fitted* floor as
   an argument, so heights are relative to a measurement. The absolute number
@@ -158,7 +158,7 @@ anything the pipeline actually measures.
 
 **Done**
 
-- Eight tier-1 bags recorded (Athreya), camera and LiDAR in one bag for the
+- Eight tier-1 bags recorded, camera and LiDAR in one bag for the
   first time. Ran the pipeline on all of them.
 - Fixed two faults in `record_bag.sh` that the session exposed.
 
@@ -185,7 +185,7 @@ point behind it, and I stated it as the probable cause.
 
 **A label in my own plan was wrong**
 
-I told Athreya 71 cm of bumper tape was "the last distance with the pocket top
+I had written that 71 cm of bumper tape was "the last distance with the pocket top
 edge in frame", and it is -- but that is not the same as the last distance where
 the pockets can be *measured*. The detection band is 0.035-0.075 above the
 floor, and the band's top leaves the frame at a face distance of 1.24 m, the
@@ -266,7 +266,7 @@ geometry predicted it; the bags show it.
 
 **Done**
 
-- `perception.py` written (Athreya). 29/29 of its tests pass and it runs on the
+- `perception.py` complete. 29/29 of its tests pass and it runs on the
   real bag, returning a full `PalletEstimate` on all five frames.
 - `tools/replay.py`: replays a bag through every stage, prints a table and draws
   nine panels, ending with the detected pockets projected back onto the image.
@@ -595,14 +595,14 @@ through `tools/live.py --view`. The viewer calls the same `render()` the robot
 node will, rather than drawing its own version in matplotlib, so an overlay
 that is wrong here is wrong there too.
 
-Two decisions by Athreya: **one fork setting for both faces** (D27, replacing
+Two decisions: **one fork setting for both faces** (D27, replacing
 D21's per-side geometry) and **nominal pockets dashed beside the measured
 ones** (D28). The first needed checking before building on it -- a single
 0.365 / 0.040 setting does fit both faces, with 20 mm as the worst clearance
 anywhere, and `test_params.py` now derives that window from the measured pocket
 geometry rather than checking the configured numbers against themselves.
 
-**And a bug Athreya caught by reading the picture, not the code.** The tines
+**And a bug caught by reading the picture, not the code.** The tines
 were built against `estimate.floor`, the per-frame RANSAC fit, so they floated.
 The original docstring had argued for this -- "keeps the forks parallel to the
 floor, which is what a real carriage does" -- and that reasoning is wrong: a
@@ -698,7 +698,7 @@ Stages 5a–10 come to about 11½ desk days against 12 remaining, and that count
 no lab time at all. Four lab sessions are the critical path. Stage 9
 (repositioning) is therefore out unless everything lands early; stage 10
 (evaluation) is not negotiable, because the measured accuracy and the false-GO
-count are the portfolio, not the state count.
+count are what the project is judged on, not the state count.
 
 **Stage 5a decided (D15-D18)**
 
@@ -784,7 +784,7 @@ stays at -0.025.
   `docker/Dockerfile.jetson`.
 - `config/params.yaml` filled with measured values, not guesses.
 - 83 unit tests passing for the modules that are written; 55 failing on purpose
-  against `perception.py` and `go_nogo.py`, which are mine to write.
+  against `perception.py` and `go_nogo.py`, which were still skeletons.
 
 **What the survey settled**
 

@@ -6,7 +6,7 @@ real one is that it is a **calibration check you can see**. If the
 camera-to-base transform is wrong, the forks visibly miss the pockets, and no
 amount of plausible-looking numbers will hide it.
 
-It is also the Day 3 projection maths applied to something you can look at, so
+It is also the projection maths applied to something you can look at, so
 the whole file is really one idea repeated: define geometry in `base_footprint`,
 carry it into the camera optical frame, project it to pixels, draw it.
 

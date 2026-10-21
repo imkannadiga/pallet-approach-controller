@@ -319,7 +319,7 @@ def test_enough_run_up_closes_in_directly(params):
 
 
 def test_too_little_run_up_reverses_first(params):
-    """Athreya's design: variable standoff with a 3 m minimum, and a reverse
+    """Variable standoff with a 3 m minimum, and a reverse
     when there is not that much (D39)."""
     machine = confirming(params)
     transition = machine.on_track(track(range_=2.7, offset=0.0), 1.0)
@@ -396,7 +396,7 @@ def test_reversing_twice_and_then_giving_up(params):
 # ------------------------------------------------------------- the retry
 
 def test_a_retryable_no_go_backs_off_and_tries_again(params):
-    """Athreya chose "back off and run the loop again, once" on 2026-10-19."""
+    """D50: "back off and run the loop again, once"."""
     machine = at_checking(params)
     for i in range(params['checking_frames']):
         machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)

@@ -217,7 +217,7 @@ done
 
 # The Ouster driver runs on the robot PC, so --with-lidar means its cloud crosses
 # the network into the Jetson's container. That is the mirror image of the trap in
-# CLAUDE.md item 7, where a remote subscriber throttled the ZED to 0.2 Hz: these
+# docs/SYSTEM.md's network rule, where a remote subscriber throttled the ZED to 0.2 Hz: these
 # topics are RELIABLE, so a subscriber that cannot keep up slows the publisher.
 # The difference is scale and medium -- 31 MB/s over the wired switch rather than
 # 136 MB/s over wifi -- so it is expected to work, but it has not been measured.

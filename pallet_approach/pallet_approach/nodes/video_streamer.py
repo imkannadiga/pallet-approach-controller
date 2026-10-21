@@ -18,13 +18,20 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Image
 
-from pallet_approach.video_stream import VideoStreamer
+# NOT imported here: pallet_approach.video_stream runs Gst.init() at import
+# time, and on amd64 (the Gazebo sim's stack container) a process that has
+# NumPy and an initialised GStreamer loaded aborts inside rcl the first time it
+# creates a node -- no message, exit -11 from launch. Created the other way
+# round, node first, everything works, including nodes created afterwards.
+# Measured 2026-10-20; the root cause was not found. The Jetson never showed
+# it, but the import is deferred on every platform so there is one code path.
 
 
 class VideoStreamerNode(Node):
 
     def __init__(self) -> None:
         super().__init__('video_streamer')
+        from pallet_approach.video_stream import VideoStreamer   # see the note at the top
 
         topic = self.declare_parameter(
             'image_topic', '/zed2/zed_node/rgb/color/rect/image').value

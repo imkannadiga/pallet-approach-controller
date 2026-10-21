@@ -14,6 +14,9 @@ the stack cannot produce a robot that reports it is driving and does not move.
 
 Arguments:
     params:=<path>       override config/params.yaml
+    overlay_params:=<path>  a second file applied on top of params; the
+                         Gazebo sim uses config/sim_overlay.yaml (sim time,
+                         no camera tilt correction). See sim/README.md.
     cmd_vel:=/cmd_vel_dry   DRY RUN: arbitrate as normal, but send the winning
                          command somewhere the base is not listening. The whole
                          sequence runs on a real pallet with the wheels
@@ -77,6 +80,7 @@ def generate_launch_description():
     mux_params = os.path.join(share, 'config', 'twist_mux.yaml')
 
     params = LaunchConfiguration('params')
+    overlay_params = LaunchConfiguration('overlay_params')
     cmd_vel = LaunchConfiguration('cmd_vel')
     overlay = LaunchConfiguration('overlay')
     dashboard = LaunchConfiguration('dashboard')
@@ -90,6 +94,11 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('params', default_value=default_params,
                               description='parameter file'),
+        DeclareLaunchArgument(
+            'overlay_params',
+            default_value=os.path.join(share, 'config', 'no_overlay.yaml'),
+            description='applied on top of params; the Gazebo sim passes '
+                        'config/sim_overlay.yaml'),
         DeclareLaunchArgument(
             'cmd_vel', default_value='/cmd_vel',
             description='where the mux sends the winning command; set to '
@@ -131,7 +140,7 @@ def generate_launch_description():
         # that has wedged still leaves a stationary robot.
         Node(
             package='pallet_approach', executable='watchdog', name='watchdog',
-            output='screen', parameters=[params], arguments=arguments,
+            output='screen', parameters=[params, overlay_params], arguments=arguments,
             condition=IfCondition(watchdog),
         ),
 
@@ -140,7 +149,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='virtual_forks',
             name='virtual_forks', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
         ),
 
         # Passive: it publishes a track per estimate and drives nothing. It
@@ -149,7 +158,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='pallet_tracker',
             name='pallet_tracker', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
         ),
 
         # Managed by the coordinator. They come up unconfigured, so the
@@ -157,22 +166,22 @@ def generate_launch_description():
         LifecycleNode(
             package='pallet_approach', executable='pallet_perception',
             name='pallet_perception', namespace='', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
         ),
         LifecycleNode(
             package='pallet_approach', executable='approach_controller',
             name='approach_controller', namespace='', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
         ),
         Node(
             package='pallet_approach', executable='coordinator',
             name='coordinator', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
         ),
         Node(
             package='pallet_approach', executable='fork_overlay',
             name='fork_overlay', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
             condition=IfCondition(overlay),
         ),
         # Subscribes to fork_overlay's image, so it has nothing to draw on if
@@ -184,7 +193,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='dashboard',
             name='dashboard', output='screen',
-            parameters=[params], arguments=arguments,
+            parameters=[params, overlay_params], arguments=arguments,
             condition=IfCondition(dashboard),
         ),
 

@@ -23,8 +23,7 @@ a sensor has slid along the plane (x, y) or spun about its normal (yaw), because
 none of those change what the plane looks like. So this module corrects pitch
 and roll only. The height came out right already (-0.0246 m measured against
 -0.025 m from the tape measure, agreeing to 1.7 mm). Yaw, x and y need a
-different reference -- an object at a taped position, which is the other half of
-the Day 6 task.
+different reference -- an object at a taped position.
 """
 
 from __future__ import annotations

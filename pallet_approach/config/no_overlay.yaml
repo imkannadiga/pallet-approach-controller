@@ -1,0 +1,9 @@
+# The default for the launch file's overlay_params: overrides nothing, so the
+# robot runs on params.yaml alone. See sim_overlay.yaml for what an overlay is.
+#
+# The one key below is declared by no node, so it is never applied; it is here
+# because an empty ros__parameters block is not reliably accepted by rcl's
+# parser, and a launch that fails on its own default would be worse.
+/**:
+  ros__parameters:
+    overlay_name: none

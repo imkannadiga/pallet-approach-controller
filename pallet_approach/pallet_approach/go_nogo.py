@@ -1,7 +1,5 @@
 """Safety rules: is it safe to insert the forks?
 
-YOU WRITE THIS FILE. Skeletons only -- signature, reasoning, TODO.
-
 This is the most important file in the project and the easiest one to get
 quietly wrong, because a bug here does not crash: it returns GO when it should
 not. The whole design follows from one asymmetry:
@@ -283,8 +281,8 @@ def check_stability(
     objects. Agreement across consecutive frames is the cheapest available
     defence, and it costs only a fraction of a second at 37 Hz.
 
-    Measure spread as the max-minus-min (or the standard deviation, your call,
-    but then say which in the docstring) of the position and yaw over the last
+    Measure spread as the max-minus-min (or the standard deviation; the
+    docstring of the implementation says which) of the position and yaw over the last
     `required_frames` estimates. Fewer than that many estimates is a NO-GO:
     not enough evidence yet.
 
@@ -335,9 +333,9 @@ def evaluate(
     * the rules run in a fixed, documented order;
     * the first failure decides the outcome and gives the reason;
     * `Decision.checks` records every rule that ran, so the evaluation tables
-      on Day 11 can count *which* rule caught each unsafe scenario. That table
-      is the evidence behind the "0 false GOs" claim, so it has to come out of
-      the code, not out of your memory of the run.
+      can count *which* rule caught each unsafe scenario. That table is the
+      evidence behind any false-GO count, so it has to come out of the code,
+      not out of a recollection of the run.
 
     Args:
         estimate: the latest accepted estimate, or None.

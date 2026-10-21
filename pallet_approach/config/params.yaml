@@ -93,7 +93,7 @@
       # face is this much further than the standoff. One noisy range reading
       # must not make the robot creep forward a frame at a time.
       resume_range: 0.10
-      # [choice, Athreya 2026-10-19] The floor on the run-up. Variable standoff
+      # [choice, 2026-10-19] The floor on the run-up. Variable standoff
       # with a 3 m minimum: the required distance is computed from the lateral
       # error, and never less than this.
       min_run_up: 3.0
@@ -112,7 +112,7 @@
       # asks for another centimetre and dies on max_backoffs having done
       # everything right. Caught by the offline harness (test_sequence.py).
       run_up_tolerance: 0.05
-      # [choice, Athreya 2026-10-19] Abort after this many consecutive frames
+      # [choice, 2026-10-19] Abort after this many consecutive frames
       # of growing lateral error, provided the total growth is at least
       # min_divergence_growth.
       #
@@ -131,8 +131,8 @@
       # the false aborts were coming from and is also where the servo stops
       # correcting anyway.
       #
-      # The mechanism is still the one Athreya chose. If 1.6 s is too slow to
-      # notice, the alternative is a model-based check -- compare the error
+      # The mechanism (N growing frames, 2026-10-19) is unchanged. If 1.6 s
+      # is too slow to notice, the alternative is a model-based check -- compare the error
       # against what the servo's own decay model predicts after the distance
       # travelled -- which is robust to noise over a long baseline and would
       # catch a divergence in half the frames. That is a decision, not a tweak.
@@ -141,8 +141,8 @@
 
     # ------------------------------------------------------------- reverse
     # Backing off to make room for the run-up, and backing out after the lift.
-    # Athreya chose our own reverse controller with a LiDAR check over handing
-    # the reverse to Nav2 (2026-10-19, D41).
+    # Our own reverse controller with a LiDAR check, chosen over handing the
+    # reverse to Nav2 (2026-10-19, D42).
     reverse:
       # [choice] D8's insertion speed, used for the reverse too. Reversing is
       # the blindest thing this robot does -- the costmap that would remember
@@ -423,8 +423,8 @@
 
       # [choice] D27: ONE setting for both faces, not one per face.
       #
-      # D21 had these per side, matching each face's pocket centres. Athreya
-      # decided 2026-10-19 that the forks keep a single spacing whichever face
+      # D21 had these per side, matching each face's pocket centres. Decided
+      # 2026-10-19 that the forks keep a single spacing whichever face
       # is entered -- which is what a carriage without a hydraulic positioner
       # actually does, and it removes a way for the overlay and the insertion
       # to disagree about what the forks are.
@@ -482,7 +482,7 @@ pallet_perception:
     diagnostics_period: 1.0
 
     depth:
-      # [choice] ZED min_depth is 0.30 m. The far limit is provisional: the Day 5
+      # [choice] ZED min_depth is 0.30 m. The far limit is provisional: a measured
       # noise curve replaces it with the range where depth is actually usable.
       min_range: 0.40
       max_range: 4.00
@@ -680,7 +680,7 @@ coordinator:
       frames: 5                 # confirmed frames the rules are evaluated over
 
     # --------------------------------------------------------------- retries
-    # [choice, Athreya 2026-10-19] "Back off and run the loop again, once."
+    # [choice, 2026-10-19] "Back off and run the loop again, once."
     max_retries: 1
     # Separate from max_retries: this counts reverses taken to GET enough
     # run-up before the first approach, which is a different thing from
@@ -747,7 +747,7 @@ fork_overlay:
     # subscriber to a raw ZED image topic from the main PC dropped the whole
     # ZED node to ~0.2 Hz, and even compressed full-rate images were unusable
     # remotely. So the one image this stack publishes is downscaled and
-    # low-rate (CLAUDE.md "What changed" item 7). The render happens at full
+    # low-rate (docs/SYSTEM.md, the network rule). The render happens at full
     # resolution and the result is shrunk, because drawing small would mean
     # scaling the intrinsics -- one more place to get a factor of two wrong, in
     # the tool whose job is to make a millimetre error visible.
@@ -863,6 +863,15 @@ watchdog:
       # frames.tf_fallback_to_latest is true, and the node says so in a warning
       # at startup.
       tf: 0.30
+
+    # [choice, 2026-10-20] D58. How long after a run starts perception
+    # may stay silent before its first estimate. Perception is activated by
+    # the run and needs a frame plus processing before it says anything, and
+    # this node judges at 2 Hz, so without it a run aborted whenever the first
+    # judgement came first (2 runs in 4 in the Gazebo sim). Only covers the
+    # FIRST estimate: after that max_age.estimate applies as before. The robot
+    # does not drive before a confirmed track, so the grace never covers motion.
+    first_estimate_grace: 2.0   # s
 
     min_rate:
       camera_info: 10.0         # twice what perception consumes

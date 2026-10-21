@@ -119,6 +119,15 @@ def estimate_from_msg(msg: PalletEstimateMsg) -> PalletEstimate | None:
                if msg.floor_valid else None),
         stamp=stamp_to_seconds(msg.header.stamp),
         frame_id=msg.header.frame_id,
+        # Round-tripped, not left at their defaults: the tracker republishes
+        # every estimate, and without these the coordinator saw every pallet
+        # as unclassified ("side not classified; assuming the short face")
+        # although perception had classified it. Found 2026-10-20 in the
+        # Gazebo sim. Only the side's reason travels in the message, so that
+        # is all of side_detail that can come back.
+        side=msg.side or 'unknown',
+        side_detail={'reason': msg.side_reason} if msg.side_reason else {},
+        face_width=float(msg.face_width),
     )
 
 

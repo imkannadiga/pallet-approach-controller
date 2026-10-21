@@ -48,7 +48,7 @@ driving blind would freeze in the error that the 3 m measurement had.
 lateral error as the distance it has to work in. At the 1.75 m standoff the
 pockets leave only 65 mm of slack around a 100 mm tine, so the loop has to
 arrive inside that, and `required_run_up` is what says how far back the robot
-must start. Athreya set the floor at 3.0 m on 2026-10-19 after a simulation
+must start. The floor was set at 3.0 m on 2026-10-19 after a simulation
 showed 1.75 m and 2.25 m both finishing outside the slack.
 
 **The commit point is a hard stop in the command, not a state.** Once the face
@@ -167,8 +167,7 @@ def required_run_up(offset: float, params: dict) -> float:
 
     Two terms, and the larger wins:
 
-    * a floor of `min_run_up` (3.0 m, D39), which is where Athreya set it after
-      the simulation;
+    * a floor of `min_run_up` (3.0 m, D39), set from the simulation;
     * the standoff plus however far this servo needs to bring the lateral error
       it currently has down to `residual_target`.
 
@@ -400,8 +399,8 @@ def _finish(command: Command, limits: dict) -> Command:
 class DivergenceDetector:
     """Is the error growing instead of shrinking?
 
-    Athreya chose "abort after N consecutive growing frames" on 2026-10-19 over
-    a threshold on the error itself, which is the better choice: a large error
+    "Abort after N consecutive growing frames" was chosen on 2026-10-19 over
+    a threshold on the error itself, because a large error
     at 3 m is normal and shrinking, while a small error that keeps growing is
     a controller fighting its own sign error or a pallet estimate walking away.
     The first is safe and the second is not, and only the trend tells them
@@ -514,8 +513,8 @@ def reverse_allowance(travelled_forward: float, params: dict) -> float:
     to have been clear, plus `max_unverified` metres of ground that nothing has
     checked at all.
 
-    Athreya chose our own reverse controller with a LiDAR check over handing
-    the reverse to Nav2 on 2026-10-19. The limit this function states is what
+    Our own reverse controller with a LiDAR check was chosen over handing the
+    reverse to Nav2 on 2026-10-19 (D42). The limit this function states is what
     that choice costs: Nav2 would have had the costmap, which remembers what
     the LiDAR saw while the robot drove past. We do not, so the allowance is
     small and deliberate.

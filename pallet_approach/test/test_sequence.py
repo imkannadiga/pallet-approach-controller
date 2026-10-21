@@ -17,7 +17,7 @@ points, so every run came back NO_GO.
 
 **What it does not cover**: discovery, QoS, lifecycle transitions, tf and the
 clock. Every failure on the real robot so far has come from exactly that layer.
-Passing here is the offline replay CLAUDE.md requires before anything drives;
+Passing here is the offline replay required before anything drives;
 it is not a substitute for lab session B.
 """
 
@@ -192,7 +192,7 @@ def test_approach_only_runs_the_whole_approach_and_stops(params, slack):
 # ------------------------------------------------------------- the run-up
 
 def test_starting_too_close_reverses_first(params):
-    """Athreya's design: variable standoff with a 3 m minimum (D39)."""
+    """Variable standoff with a 3 m minimum (D39)."""
     run = fresh().run(S.facing(2.7))
     assert run.outcome == 'INSERTED', run.describe()
     assert run.visited('BACKING_OFF')

@@ -60,6 +60,63 @@ class Result:
         return self.command.is_zero() and not self.arrived
 
 
+def executor_params(get) -> dict:
+    """Everything `DriveExecutor` reads, from parameter names.
+
+    `get(name)` returns one parameter by its params.yaml name, such as
+    'closing.k_cross'. The controller node passes its own get_parameter; the
+    tests pass a lookup into params.yaml and build a real DriveExecutor from the
+    result, so a key the executor reads and this function forgets fails at a
+    desk instead of inside a lifecycle callback. That is not hypothetical: on
+    2026-10-20 the Gazebo sim found `divergence_frames` and
+    `min_divergence_growth` declared, set in params.yaml, and never passed on,
+    so the controller raised KeyError on every configure -- which rclpy's
+    lifecycle swallows, leaving only "could not configure the managed nodes"
+    on the coordinator.
+    """
+    def group(prefix, keys):
+        return {key: get(f'{prefix}.{key}') for key in keys}
+
+    closing_params = group('closing', (
+        'k_cross', 'k_heading', 'max_approach_angle', 'straighten_offset',
+        'max_turn_in_place', 'closing_speed', 'taper_range',
+        'range_tolerance', 'arrival_yaw', 'resume_range', 'min_run_up',
+        'residual_target', 'run_up_margin',
+        'divergence_frames', 'min_divergence_growth'))
+    closing_params['target_range'] = get('standoff_distance')
+    closing_params['carriage_x'] = get('forks.carriage_x')
+    closing_params['tine_length'] = get('forks.tine_length')
+
+    reverse_params = group('reverse', (
+        'speed', 'max_unverified', 'side_margin', 'min_height',
+        'max_height', 'clearance_margin'))
+    reverse_params['rear_bumper_x'] = get('robot.rear_bumper_x')
+    reverse_params['half_width'] = get('robot.width') / 2.0
+    reverse_params['floor_z'] = get('floor_z')
+
+    insert_params = group('insert', (
+        'speed', 'stop_tolerance', 'max_disagreement', 'max_travel',
+        'max_unmeasured_frames'))
+    insert_params['lidar'] = group('insert.lidar', (
+        'half_width', 'min_height', 'max_height', 'min_x', 'min_points'))
+    insert_params['lidar']['floor_z'] = get('floor_z')
+    insert_params['carriage_x'] = get('forks.carriage_x')
+    insert_params['tine_length'] = get('forks.tine_length')
+    insert_params['sides'] = {
+        side: group(f'pallet.sides.{side}', (
+            'insertion_stop_face_x', 'depth', 'insertable'))
+        for side in ('short', 'long')
+    }
+
+    return {
+        'limits': group('limits', ('max_linear', 'max_angular',
+                                   'min_linear', 'min_angular')),
+        'closing': closing_params,
+        'reverse': reverse_params,
+        'insert': insert_params,
+    }
+
+
 class DriveExecutor:
     """One drive request at a time. `start` resets everything per move."""
 

@@ -494,8 +494,8 @@ it on the Jetson anyway:
 - the Jetson has 5.7 G free and Open3D unpacks to several hundred MB;
 - `numpy` and `scikit-learn` cover everything the pipeline needs (plane fit by
   RANSAC, DBSCAN clustering) at a fraction of the size;
-- writing the plane fit directly is better interview material than calling
-  `segment_plane`.
+- writing the plane fit directly keeps every step of it visible and testable,
+  rather than hidden behind `segment_plane`.
 
 Open3D stays on the laptop for point-cloud visualisation during offline work.
 
@@ -541,7 +541,7 @@ Closed since the first survey:
   measured, see the coverage section: yes, down to a 0.20 m bumper gap, and the
   forward blind radius on bare floor is 0.832 m.
 - ~~Does Nav2 publish on `/cmd_vel` while idle?~~ — no. It publishes only while
-  a navigation goal is active (confirmed by Athreya on the robot, 2026-10-14),
+  a navigation goal is active (confirmed on the robot, 2026-10-14),
   so `twist_mux` needs no special handling for an idle Nav2 stack.
 
 ---

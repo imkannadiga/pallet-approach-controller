@@ -171,7 +171,7 @@ def test_every_yaml_block_addresses_a_real_node(params_file):
 @pytest.mark.parametrize('node_name', sorted(NODE_NAMES.values()))
 def test_every_declared_parameter_is_in_the_yaml(node_name, declared, params_file):
     """Otherwise the node's compiled-in default wins and the YAML is not the
-    single source of truth that CLAUDE.md requires."""
+    single source of truth for every tunable value."""
     available = available_to(node_name, params_file)
     missing = sorted(name for name in declared[node_name] if name not in available)
     assert not missing, f'{node_name} declares but params.yaml does not set: {missing}'
@@ -184,7 +184,7 @@ def test_the_nodes_declare_something_at_all(declared):
 
 
 def test_speed_limits_are_the_lab_limits(params_file):
-    """A tripwire. CLAUDE.md: never raise these without being asked."""
+    """A tripwire: the lab limits are never raised as a side effect."""
     limits = flatten(params_file['approach_controller']['ros__parameters'])
     assert limits['limits.max_linear'] <= 0.20, 'linear speed limit was raised'
     assert limits['limits.max_angular'] <= 0.30, 'angular speed limit was raised'
@@ -621,3 +621,86 @@ def test_the_controller_builds_its_executor_before_any_subscription_exists():
         'created, which reopens the AttributeError measured 2026-10-19: a '
         'message arriving during _wait_for_a_subscriber\'s spin loop would '
         'call _on_drive with self._executor still None')
+
+
+def test_the_sim_overlay_puts_every_node_on_sim_time(params_file):
+    """Every node block in params.yaml pins use_sim_time: false, and a node's
+    own block beats /**, so the sim overlay has to name each node again. A node
+    left out would run on wall time against Gazebo's stamps -- every age it
+    measured would be decades -- and nothing else would say why."""
+    overlay = yaml.safe_load((PACKAGE / 'config' / 'sim_overlay.yaml').read_text())
+    nodes = {block for block in params_file if block != '/**'}
+    on_sim_time = {block for block, body in overlay.items()
+                   if block != '/**' and body['ros__parameters'].get('use_sim_time') is True}
+    assert on_sim_time == nodes
+    assert overlay['/**']['ros__parameters']['use_sim_time'] is True
+
+
+def test_the_default_overlay_overrides_nothing_a_node_reads(declared):
+    overlay = yaml.safe_load((PACKAGE / 'config' / 'no_overlay.yaml').read_text())
+    assert list(overlay) == ['/**']
+    keys = set(overlay['/**']['ros__parameters'])
+    for node_name, names in declared.items():
+        assert not keys & set(names), (node_name, keys & set(names))
+
+
+def test_the_streamer_creates_its_node_before_gstreamer_initialises():
+    """video_stream.py calls Gst.init() at import. On amd64 a process with
+    NumPy and an initialised GStreamer aborts in rcl when it then creates a
+    node (measured 2026-10-20 in the Gazebo sim's stack container). The import
+    has to stay inside __init__, after super().__init__."""
+    source = strip_comments((NODES / 'video_streamer.py').read_text())
+    head = source[:source.index('class VideoStreamerNode')]
+    assert 'video_stream' not in head.replace('video_streamer', '')
+    init = source[source.index('def __init__'):]
+    assert init.index("super().__init__('video_streamer')") < init.index(
+        'from pallet_approach.video_stream import VideoStreamer')
+
+
+def test_the_controller_can_build_its_executor_from_params_yaml(declared, params_file):
+    """The configure step, minus ROS: every name executor_params asks for must
+    be declared by the controller and set in params.yaml, and the dict it
+    builds must be enough to construct a DriveExecutor and run a move with it.
+
+    Found by the Gazebo sim on 2026-10-20: two closing keys were declared and
+    set, never passed on, and the controller raised KeyError inside
+    on_configure on every run -- invisible, because rclpy's lifecycle does not
+    log a callback's exception."""
+    from pallet_approach.drive import DriveExecutor, Request, executor_params
+    available = available_to('approach_controller', params_file)
+    asked = []
+
+    def get(name):
+        asked.append(name)
+        assert name in declared['approach_controller'], f'{name} is not declared'
+        assert name in available, f'{name} is not in params.yaml'
+        return available[name]
+
+    executor = DriveExecutor(executor_params(get))
+    for mode in ('STOP', 'CLOSE', 'REVERSE', 'INSERT', 'BACKOUT'):
+        executor.start(Request(mode))
+    assert asked
+
+
+def test_lifecycle_callbacks_log_their_exceptions():
+    """rclpy's lifecycle turns an exception in on_configure into a failed
+    transition and logs nothing, so the node that broke stays silent and the
+    coordinator reports only that configuring failed. Every lifecycle callback
+    in both managed nodes goes through `logged_transition`."""
+    for filename in ('controller_node.py', 'perception_node.py'):
+        source = strip_comments((NODES / filename).read_text())
+        for match in re.finditer(r'\n(\s*)def (on_\w+)\(self, state', source):
+            before = source[:match.start()].rstrip().splitlines()[-1].strip()
+            assert before == '@logged_transition', (
+                f'{filename}: {match.group(2)} is not decorated with @logged_transition')
+
+
+def test_the_coordinator_never_spins_itself():
+    """The coordinator runs in a MultiThreadedExecutor. rclpy.spin_once(self)
+    anywhere in it moves the node to the global executor, after which main()'s
+    executor spins nothing and the coordinator goes silent mid-run (measured
+    2026-10-20 in the Gazebo sim)."""
+    source = strip_comments((NODES / 'coordinator_node.py').read_text())
+    assert 'MultiThreadedExecutor()' in source
+    for forbidden in ('spin_once(', 'spin_until_future_complete(', 'rclpy.spin('):
+        assert forbidden not in source, forbidden

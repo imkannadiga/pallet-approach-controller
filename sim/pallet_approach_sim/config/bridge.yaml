@@ -1,0 +1,66 @@
+# Gazebo <-> ROS, onto the topic names the REAL robot uses (docs/SYSTEM.md),
+# so the stack runs on its own params.yaml topics and the sim is invisible to it.
+
+- ros_topic_name: /clock
+  gz_topic_name: /clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: ignition.msgs.Clock
+  direction: GZ_TO_ROS
+
+# Base: odometry and odom -> base_link, like scout_ros2.
+- ros_topic_name: /odom
+  gz_topic_name: /model/scout/odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /tf
+  gz_topic_name: /model/scout/tf
+  ros_type_name: tf2_msgs/msg/TFMessage
+  gz_type_name: ignition.msgs.Pose_V
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /joint_states
+  gz_topic_name: /model/scout/joint_states
+  ros_type_name: sensor_msgs/msg/JointState
+  gz_type_name: ignition.msgs.Model
+  direction: GZ_TO_ROS
+
+# What twist_mux sends on. Unstamped Twist, as on the robot.
+- ros_topic_name: /cmd_vel
+  gz_topic_name: /model/scout/cmd_vel
+  ros_type_name: geometry_msgs/msg/Twist
+  gz_type_name: ignition.msgs.Twist
+  direction: ROS_TO_GZ
+
+# ZED. Two Gazebo sensors at the left camera's pose with one field of view
+# (see robot_model._camera_xml), so the depth is in the image's pixels, which
+# is what depth_registered means on the ZED.
+- ros_topic_name: /zed2/zed_node/rgb/color/rect/image
+  gz_topic_name: /sim/zed_rgb/image
+  ros_type_name: sensor_msgs/msg/Image
+  gz_type_name: ignition.msgs.Image
+  direction: GZ_TO_ROS
+
+# camera_info goes to an intermediate topic, NOT to the ZED's names:
+# Fortress fills it with a 320x240 camera's intrinsics. camera_info_fix.py
+# corrects it and publishes both of the ZED's camera_info topics.
+- ros_topic_name: /sim/zed/camera_info_gazebo
+  gz_topic_name: /sim/zed/camera_info
+  ros_type_name: sensor_msgs/msg/CameraInfo
+  gz_type_name: ignition.msgs.CameraInfo
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /zed2/zed_node/depth/depth_registered
+  gz_topic_name: /sim/zed/depth_image
+  ros_type_name: sensor_msgs/msg/Image
+  gz_type_name: ignition.msgs.Image
+  direction: GZ_TO_ROS
+
+# Ouster. PointCloud2 like the driver's (x, y, z, intensity, ring), not the
+# LaserScan the sim repo bridges.
+- ros_topic_name: /ouster/points
+  gz_topic_name: /sim/lidar/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: ignition.msgs.PointCloudPacked
+  direction: GZ_TO_ROS

@@ -56,6 +56,9 @@ published before it existed.
 
 from __future__ import annotations
 
+import functools
+import threading
+import time
 from collections import deque
 
 import rclpy
@@ -64,7 +67,7 @@ from lifecycle_msgs.msg import Transition as LifecycleTransition
 from lifecycle_msgs.srv import ChangeState
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
-from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -88,6 +91,7 @@ from pallet_approach.coordinator import (
     MODES,
     PICKUP,
     Coordinator,
+    machine_params,
     DriveInfo,
     ForkInfo,
     Outcome,
@@ -114,12 +118,47 @@ TRIGGER = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
 MANAGED = ('pallet_perception', 'approach_controller')
 
 
+def _serialised(method):
+    """Run a callback under the machine lock.
+
+    The machine's own callbacks are already one-at-a-time (a mutually
+    exclusive group), but the action server's are not and cannot be: `_execute`
+    blocks for a whole run. So everything that reads or changes the machine
+    takes this lock, and the action path takes it around exactly the steps that
+    touch the machine, never around its wait.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._machine_lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class CoordinatorNode(Node):
 
     def __init__(self):
         super().__init__('coordinator')
         self._declare()
-        self._group = ReentrantCallbackGroup()
+        # Three groups, because the coordinator both IS a state machine and
+        # WAITS inside it.
+        #
+        # Everything that reads or changes the machine -- the tick, the
+        # trigger, every subscription -- is mutually exclusive, so one of them
+        # runs at a time. With one reentrant group (the earlier version) a new
+        # `_tick` started every 50 ms while an older one was still waiting on a
+        # lifecycle call, the overlapping ticks each issued the same transition,
+        # and the duplicate timed out (measured 2026-10-20 in the Gazebo sim:
+        # "pallet_perception transition 4 timed out" after perception had
+        # already reported itself inactive).
+        #
+        # The lifecycle clients get their own reentrant group, so a response is
+        # delivered on another thread while the machine's thread waits for it.
+        # The action server gets another, because `_execute` blocks for the
+        # whole run and must not hold the machine's group while it does.
+        self._group = MutuallyExclusiveCallbackGroup()
+        self._machine_lock = threading.RLock()
+        self._service_group = ReentrantCallbackGroup()
+        self._action_group = ReentrantCallbackGroup()
         self._machine = Coordinator(self._machine_params())
         self._pose = Pose2D(0.0, 0.0, 0.0)
         self._estimate = None
@@ -195,14 +234,14 @@ class CoordinatorNode(Node):
 
         self._managed_clients = {
             name: self.create_client(ChangeState, f'/{name}/change_state',
-                                     callback_group=self._group)
+                                     callback_group=self._service_group)
             for name in MANAGED
         }
 
         self._action = ActionServer(
             self, PalletTask, self._get('action_name'),
             execute_callback=self._execute, goal_callback=self._on_goal,
-            cancel_callback=self._on_cancel, callback_group=self._group)
+            cancel_callback=self._on_cancel, callback_group=self._action_group)
 
         self.create_timer(0.05, self._tick, callback_group=self._group)
         self.get_logger().info('coordinator ready; send a goal to start a run')
@@ -234,7 +273,7 @@ class CoordinatorNode(Node):
             ('go_nogo.max_yaw_spread', 0.035),
             ('closing.k_cross', 2.5), ('closing.max_approach_angle', 0.25),
             ('closing.min_run_up', 3.0), ('closing.residual_target', 0.020),
-            ('closing.run_up_margin', 0.20),
+            ('closing.run_up_margin', 0.20), ('closing.run_up_tolerance', 0.05),
             ('reverse.max_unverified', 0.50),
             ('forks.bottom_height', 0.040), ('forks.tine_thickness', 0.040),
             ('forks.lift_travel', 0.070),
@@ -274,32 +313,7 @@ class CoordinatorNode(Node):
         }
 
     def _machine_params(self) -> dict:
-        """Flat, with the names `coordinator.py` uses at the point of use.
-
-        Flattened here rather than in the machine so the pure module takes a
-        plain dict and stays testable without ROS -- the same split as
-        perception and the tracker.
-        """
-        closing = self._group_params('closing', (
-            'k_cross', 'max_approach_angle', 'min_run_up', 'residual_target',
-            'run_up_margin'))
-        closing['target_range'] = self._get('standoff_distance')
-        return {
-            'confirm_timeout': self._get('timeouts.confirm'),
-            'lost_pallet_timeout': self._get('timeouts.lost_pallet'),
-            'fork_timeout': self._get('timeouts.forks'),
-            'run_timeout': self._get('timeouts.run'),
-            'settle_time': self._get('checking.settle_time'),
-            'checking_frames': self._get('checking.frames'),
-            'max_retries': self._get('max_retries'),
-            'max_backoffs': self._get('max_backoffs'),
-            'min_retry_backoff': self._get('min_retry_backoff'),
-            'retryable_checks': list(self._get('retryable_checks')),
-            'entry_face': self._get('pallet.entry_face'),
-            'sides': self._sides(),
-            'closing': closing,
-            'reverse': {'max_unverified': self._get('reverse.max_unverified')},
-        }
+        return machine_params(self._get)
 
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
@@ -314,9 +328,20 @@ class CoordinatorNode(Node):
         request = ChangeState.Request()
         request.transition.id = transition_id
         future = client.call_async(request)
-        start = self._now()
-        while not future.done() and self._now() - start < 5.0:
-            rclpy.spin_once(self, timeout_sec=0.05)
+        # WAIT, do not spin. This node runs in a MultiThreadedExecutor with a
+        # reentrant callback group, so the response is delivered on another
+        # thread while this one waits. An earlier version called
+        # rclpy.spin_once(self) here, which hands the node to the GLOBAL
+        # executor -- and rclpy moves a node to whichever executor last added
+        # it, so after the first configure the MultiThreadedExecutor in main()
+        # was spinning nothing: no ticks, no status, no subscriptions, and the
+        # run sat in CONFIRMING forever with a confirmed track waiting.
+        # Measured 2026-10-20 in the Gazebo sim (py-spy: main thread idle in
+        # executor.spin()). Wall time for the deadline, so it holds even if
+        # the clock is the thing that has stopped.
+        deadline = time.monotonic() + 5.0
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
         if not future.done():
             self.get_logger().error(f'{node_name} transition {transition_id} timed out')
             return False
@@ -396,15 +421,18 @@ class CoordinatorNode(Node):
 
     # ------------------------------------------------------------ callbacks
 
+    @_serialised
     def _on_odom(self, msg: Odometry):
         self._pose = pose2d_from_odometry(msg)
 
+    @_serialised
     def _on_health(self, msg: Health):
         self._health = msg
         if not msg.ok and msg.phase == 'running':
             self._apply(self._machine.on_unhealthy(
                 self._now(), '; '.join(msg.failures) or 'unknown'))
 
+    @_serialised
     def _on_start(self, msg: String):
         """The trigger topic. Fire and forget, so every refusal is logged AND
         published on `~/result` -- there is nobody waiting on a return value."""
@@ -415,15 +443,16 @@ class CoordinatorNode(Node):
                 f'({self._machine.state.value}). Cancel it first.')
             return
         if mode not in MODES:
-            self._refuse(f'unknown mode {mode!r}; known: {", ".join(MODES)}')
+            self._refuse(f'unknown mode {mode!r}; known: {", ".join(MODES)}', mode)
             return
         reason = self._unhealthy_reason() if self._get('require_healthy_to_start') else ''
         if reason:
-            self._refuse(reason)
+            self._refuse(reason, mode)
             return
         if not self._start_run(mode):
-            self._refuse('could not configure the managed nodes')
+            self._refuse('could not configure the managed nodes', mode)
 
+    @_serialised
     def _on_cancel_topic(self, msg: Empty):
         """Stop a run started from the trigger topic.
 
@@ -451,12 +480,17 @@ class CoordinatorNode(Node):
         self._apply(self._machine.trigger(self._now(), mode))
         return True
 
-    def _refuse(self, reason: str) -> None:
-        self.get_logger().error(f'refusing to start: {reason}')
+    def _refuse(self, reason: str, mode: str) -> None:
+        self.get_logger().error(f'refusing to start {mode!r}: {reason}')
         self._last_outcome = Outcome.ABORTED
         self._last_reason = reason
         self._reported = True
-        self._result_pub.publish(self._result(Outcome.ABORTED, reason))
+        result = self._result(Outcome.ABORTED, reason)
+        # The machine was never triggered, so it still holds the PREVIOUS
+        # run's mode and side; report what was asked for, and no side.
+        result.mode = mode
+        result.side = ''
+        self._result_pub.publish(result)
 
     def _on_cluster_points(self, msg: PointCloud2):
         self._cluster_points = unpack_cloud(msg)
@@ -464,6 +498,7 @@ class CoordinatorNode(Node):
     def _on_scene_points(self, msg: PointCloud2):
         self._scene_points = unpack_cloud(msg)
 
+    @_serialised
     def _on_tracked(self, msg: TrackedPallet):
         estimate = estimate_from_msg(msg.estimate)
         if estimate is None:
@@ -488,6 +523,7 @@ class CoordinatorNode(Node):
                       reason=msg.reason),
             self._now()))
 
+    @_serialised
     def _on_drive_status(self, msg: DriveStatus):
         self._apply(self._machine.on_drive(
             DriveInfo(mode=msg.mode, arrived=bool(msg.arrived),
@@ -495,12 +531,14 @@ class CoordinatorNode(Node):
                       reason=msg.reason, travelled=float(msg.travelled)),
             self._now()))
 
+    @_serialised
     def _on_fork_state(self, msg: ForkState):
         self._apply(self._machine.on_forks(
             ForkInfo(state=msg.state, height=float(msg.height),
                      moving=bool(msg.moving), loaded=bool(msg.loaded)),
             self._now()))
 
+    @_serialised
     def _tick(self):
         now = self._now()
         if self._machine.state not in (State.IDLE, State.DONE, State.ABORTED):
@@ -579,6 +617,7 @@ class CoordinatorNode(Node):
 
     # --------------------------------------------------------------- action
 
+    @_serialised
     def _on_goal(self, goal_request):
         if self._machine.state not in (State.IDLE, State.DONE, State.ABORTED):
             self.get_logger().warning('rejecting goal: a run is already in progress')
@@ -608,6 +647,7 @@ class CoordinatorNode(Node):
             return 'stack unhealthy: ' + '; '.join(self._health.failures)
         return ''
 
+    @_serialised
     def _on_cancel(self, goal_handle):
         self.get_logger().info('cancel requested')
         self._apply(self._machine.cancel(self._now()))
@@ -623,7 +663,9 @@ class CoordinatorNode(Node):
         self._goal_handle = goal_handle
         mode = (goal_handle.request.mode or '').strip() or PICKUP
 
-        if not self._start_run(mode):
+        with self._machine_lock:
+            started = self._start_run(mode)
+        if not started:
             self._goal_handle = None
             goal_handle.abort()
             return self._result(Outcome.ABORTED,
@@ -631,16 +673,21 @@ class CoordinatorNode(Node):
 
         while rclpy.ok() and self._last_outcome is None:
             if goal_handle.is_cancel_requested:
-                self._apply(self._machine.cancel(self._now()))
+                with self._machine_lock:
+                    self._apply(self._machine.cancel(self._now()))
                 break
-            goal_handle.publish_feedback(self._feedback())
+            with self._machine_lock:
+                feedback = self._feedback()
+            goal_handle.publish_feedback(feedback)
             self.get_clock().sleep_for(rclpy.duration.Duration(seconds=0.1))
 
         outcome = self._last_outcome or Outcome.ABORTED
         reason = self._last_reason or 'interrupted'
         cancelled = goal_handle.is_cancel_requested
 
-        self._apply(self._machine.to_idle(self._now()))
+        with self._machine_lock:
+            self._apply(self._machine.to_idle(self._now()))
+            result = self._result(outcome, reason)
         # The lock is not republished from here on, so it expires 0.5 s from
         # now and Nav2 can drive again.
 
@@ -649,7 +696,7 @@ class CoordinatorNode(Node):
         else:
             goal_handle.succeed()
         self._goal_handle = None
-        return self._result(outcome, reason)
+        return result
 
     def _feedback(self):
         feedback = PalletTask.Feedback()

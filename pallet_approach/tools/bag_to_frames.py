@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Pull frames out of a rosbag without needing ROS installed.
 
-This is the Day 1 tool -- "images are just arrays" -- and it stays useful for
-the whole project: every offline debugging session starts by getting one frame
+Images are just arrays, and this tool stays useful for the whole project: every offline debugging session starts by getting one frame
 out of a bag and looking at it.
 
 It uses the `rosbags` library, which reads bag files directly, so it runs on

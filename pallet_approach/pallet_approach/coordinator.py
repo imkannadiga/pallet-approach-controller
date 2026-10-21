@@ -187,6 +187,47 @@ class Transition:
         return self.drive is not None
 
 
+
+def machine_params(get) -> dict:
+    """Everything `Coordinator` reads, from parameter names.
+
+    `get(name)` returns one parameter by its params.yaml name. The coordinator
+    node passes its own get_parameter, and test/sequence.py passes a lookup into
+    params.yaml -- so the whole-pickup harness runs on exactly the dict the
+    robot builds. Before 2026-10-20 the harness copied whole YAML blocks while
+    the node picked keys by hand, so a key the node forgot was invisible to
+    every test: the Gazebo sim found `closing.run_up_tolerance` missing, and
+    the coordinator died with a KeyError the moment a track confirmed.
+    """
+    def group(prefix, keys):
+        return {key: get(f'{prefix}.{key}') for key in keys}
+
+    closing = group('closing', (
+        'k_cross', 'max_approach_angle', 'min_run_up', 'residual_target',
+        'run_up_margin', 'run_up_tolerance'))
+    closing['target_range'] = get('standoff_distance')
+    return {
+        'confirm_timeout': get('timeouts.confirm'),
+        'lost_pallet_timeout': get('timeouts.lost_pallet'),
+        'fork_timeout': get('timeouts.forks'),
+        'run_timeout': get('timeouts.run'),
+        'settle_time': get('checking.settle_time'),
+        'checking_frames': get('checking.frames'),
+        'max_retries': get('max_retries'),
+        'max_backoffs': get('max_backoffs'),
+        'min_retry_backoff': get('min_retry_backoff'),
+        'retryable_checks': list(get('retryable_checks')),
+        'entry_face': get('pallet.entry_face'),
+        'sides': {
+            side: group(f'pallet.sides.{side}', (
+                'pocket_width', 'opening_top', 'opening_bottom', 'insertable',
+                'depth'))
+            for side in ('short', 'long')
+        },
+        'closing': closing,
+        'reverse': {'max_unverified': get('reverse.max_unverified')},
+    }
+
 class Coordinator:
     """One instance per node, reused across runs."""
 
@@ -556,7 +597,7 @@ class Coordinator:
     def _retry(self, now: float, reason: str) -> Transition:
         """Back off and run the closing loop again.
 
-        Athreya chose one retry on 2026-10-19. The reverse distance is the
+        One retry (D50). The reverse distance is the
         run-up the geometry asks for from where the robot now stands, which is
         normally short -- it is at the standoff, so it needs to get back to
         3 m.

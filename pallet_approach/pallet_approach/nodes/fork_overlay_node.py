@@ -11,8 +11,8 @@ The drawing itself is in `fork_overlay.py`.
 Measured 2026-10-13: one subscriber to a raw ZED image topic from the main PC
 dropped the whole ZED node to about 0.2 Hz, and even compressed full-rate
 images were unusable remotely. So anything meant to be looked at from another
-machine is a separate, downscaled, low-rate topic (CLAUDE.md, "What changed"
-item 7). This is that topic, and it is the only image this stack publishes.
+machine is a separate, downscaled, low-rate topic (docs/SYSTEM.md, the
+network rule). This is that topic, and it is the only image this stack publishes.
 
 It renders at FULL resolution and downscales afterwards, rather than drawing on
 a downscaled image. Drawing small would mean scaling the intrinsics, which is

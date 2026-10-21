@@ -21,7 +21,7 @@ Three design points worth defending:
 image and which is a few dozen bytes. Watching the 3.7 MB/frame image topic to
 read its timestamp would cost real memory bandwidth on the Jetson for
 information that arrives free next door. It also means this node obeys the
-network rule (CLAUDE.md, "What changed" item 7) by construction, wherever it
+network rule (docs/SYSTEM.md) by construction, wherever it
 runs.
 
 **The LiDAR subscription is BEST_EFFORT.** `/ouster/points` publishes
@@ -37,6 +37,8 @@ holds until the run ends, and the reason reaches the operator through
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -85,6 +87,7 @@ class WatchdogNode(Node):
         self._latched = False
         self._latched_reason = ''
         self._report = None
+        self._running_since = None
 
         self._tf_required = not self.get_parameter('frames.tf_fallback_to_latest').value
         self._monitor = HealthMonitor(self._limits(), self.get_parameter('window').value)
@@ -139,7 +142,7 @@ class WatchdogNode(Node):
             ('max_age.estimate', 0.50), ('min_rate.estimate', 2.5),
             ('max_age.odom', 0.20), ('min_rate.odom', 20.0),
             ('max_age.lidar', 0.50), ('min_rate.lidar', 5.0),
-            ('max_age.tf', 0.30),
+            ('max_age.tf', 0.30), ('first_estimate_grace', 2.0),
         ):
             self.declare_parameter(name, default)
 
@@ -159,7 +162,10 @@ class WatchdogNode(Node):
                           min_rate=float(floor), when=when)
         return {
             'camera_info': limits('camera_info'),
-            'estimate': limits('estimate', WHILE_RUNNING),
+            'estimate': dataclasses.replace(
+                limits('estimate', WHILE_RUNNING),
+                first_message_grace=float(
+                    self.get_parameter('first_estimate_grace').value)),
             'odom': limits('odom'),
             'lidar': limits('lidar'),
             # Reported either way; enforced only when the stamped-lookup path
@@ -179,7 +185,10 @@ class WatchdogNode(Node):
         was_running = self._state not in NOT_RUNNING
         self._state = msg.data
         running = self._state not in NOT_RUNNING
+        if running and not was_running:
+            self._running_since = self._now()
         if was_running and not running:
+            self._running_since = None
             # The run is over. Release the stop and forget the estimates it
             # produced: last run's perception is not evidence about this one.
             if self._latched:
@@ -213,7 +222,8 @@ class WatchdogNode(Node):
         self._poll_tf()
         now = self._now()
         running = self._state not in NOT_RUNNING
-        report = self._monitor.check(now, WHILE_RUNNING if running else ALWAYS)
+        report = self._monitor.check(now, WHILE_RUNNING if running else ALWAYS,
+                                     running_since=self._running_since)
         self._report = report
 
         if running and not report.ok and not self._latched:

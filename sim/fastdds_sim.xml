@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+FastDDS for the two sim containers (run_sim.sh mounts this into both).
+
+Why it exists: FastDDS's default shared-memory segment is 0.5 MB. A 1280x720
+image is 2.7 MB (rgb8) or 3.7 MB (depth), so it does not fit and goes out as
+fragmented UDP over loopback instead. RELIABLE subscribers recover the lost
+fragments; BEST_EFFORT ones get nothing at all, ever. Measured 2026-10-20: the
+same subscriber received 228 depth frames in 20 s as RELIABLE and 0 colour
+frames as BEST_EFFORT. In this stack the best-effort image subscribers are the
+two video streamers (on purpose: they must never make the camera wait), so
+without this the browser shows nothing while everything else works.
+
+32 MB segments put every image through shared memory. UDP stays for
+discovery and is pinned to loopback, which is what ROS_LOCALHOST_ONLY=1 would
+otherwise have done (a custom transport list replaces that setting).
+-->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>sim_shm</transport_id>
+      <type>SHM</type>
+      <segment_size>33554432</segment_size>
+    </transport_descriptor>
+    <transport_descriptor>
+      <transport_id>sim_udp</transport_id>
+      <type>UDPv4</type>
+      <interfaceWhiteList>
+        <address>127.0.0.1</address>
+      </interfaceWhiteList>
+    </transport_descriptor>
+  </transport_descriptors>
+
+  <participant profile_name="sim_participant" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>sim_shm</transport_id>
+        <transport_id>sim_udp</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>

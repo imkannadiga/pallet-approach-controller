@@ -1,9 +1,9 @@
 # Roadmap: from current state to full pallet pickup
 
-Working model: Athreya decides the logic, Claude writes the code. Each stage
-starts with a **logic sheet** (the decisions below, with recommended defaults),
-then implementation, then offline tests on synthetic data and recorded bags,
-then a robot test by Athreya. Decisions go into `docs/decisions.md`.
+Each stage starts with a **logic sheet** (the decisions below, with
+recommended defaults), then implementation, then offline tests on synthetic
+data and recorded bags, then a robot test. Decisions go into
+`docs/decisions.md`.
 
 ## Scenario
 
@@ -147,7 +147,7 @@ a warning. Two consequences, decided now rather than discovered on day 13:
    the one stage whose absence costs nothing but a sentence in the README —
    CLASSIFYING already has a defined answer for the wrong side (NO-GO, "unclear
    side").
-2. **Stage 10 is not negotiable.** The portfolio weight sits in measured
+2. **Stage 10 is not negotiable.** The project's weight sits in measured
    accuracy and a false-GO count, not in the number of states in the machine. If
    time runs short, stage 8 gets a plain overlay and stage 7 gets fewer recovery
    paths, and the trials still happen.
@@ -216,7 +216,7 @@ The controller drives for the first time. Insertion is **not** enabled.
 
 ## Stages
 
-Each stage lists the decisions Athreya makes. Defaults are proposals only.
+Each stage lists the decisions it needs. Defaults are proposals only.
 
 ### Stage 5a: Fork and insertion geometry — DONE 2026-10-14 (D15–D18)
 Taken first because the standoff depends on it and stages 3, 4, 6 and 8 all read

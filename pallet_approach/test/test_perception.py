@@ -1,4 +1,4 @@
-"""Tests for perception.py -- the stages Athreya writes.
+"""Tests for perception.py, one or more per pipeline stage.
 
 Every stage has its own tests, checked against exact answers from
 `synthetic.py`, so a failure is a real disagreement rather than a tolerance

@@ -15,7 +15,7 @@ something.
 What it still does not include: the ROS layer itself -- discovery, QoS,
 lifecycle transitions, tf and the clock. Every failure on the robot so far has
 come from exactly that layer, so passing here is necessary and nowhere near
-sufficient. It is the offline replay CLAUDE.md asks for before anything drives,
+sufficient. It is the offline replay required before anything drives,
 not a substitute for lab session B.
 """
 
@@ -36,13 +36,14 @@ import simulate as S  # noqa: E402
 from pallet_approach import go_nogo  # noqa: E402
 from pallet_approach.closing import geometry_of  # noqa: E402
 from pallet_approach.coordinator import (  # noqa: E402
+    machine_params,
     Coordinator,
     DriveInfo,
     ForkInfo,
     State,
     TrackInfo,
 )
-from pallet_approach.drive import DriveExecutor, Request  # noqa: E402
+from pallet_approach.drive import DriveExecutor, Request, executor_params  # noqa: E402
 from pallet_approach.forks import ForkSimulator  # noqa: E402
 from pallet_approach.model import Pose2D  # noqa: E402
 from pallet_approach.tracker import Tracker  # noqa: E402
@@ -65,38 +66,18 @@ def load() -> dict:
     forks = raw['virtual_forks']['ros__parameters']
     tracker = raw['pallet_tracker']['ros__parameters']
 
-    closing = dict(shared['closing'])
-    closing['target_range'] = shared['standoff_distance']
-    closing['carriage_x'] = shared['forks']['carriage_x']
-    closing['tine_length'] = shared['forks']['tine_length']
+    # The machine and the executor get EXACTLY what their nodes build, from
+    # the same functions: `machine_params` and `executor_params` take a getter,
+    # and this one reads params.yaml the way ROS would -- the shared block
+    # under the node's own. Copying whole YAML blocks instead (as this did
+    # until 2026-10-20) handed the harness keys the nodes never passed on.
+    def getter(node_block):
+        flat = _flatten(raw['/**']['ros__parameters'])
+        flat.update(_flatten(node_block))
+        return flat.__getitem__
 
-    reverse = dict(shared['reverse'])
-    reverse['rear_bumper_x'] = shared['robot']['rear_bumper_x']
-    reverse['half_width'] = shared['robot']['width'] / 2.0
-    reverse['floor_z'] = shared['floor_z']
-
-    insert = dict(controller['insert'])
-    insert['lidar'] = dict(insert['lidar'], floor_z=shared['floor_z'])
-    insert['carriage_x'] = shared['forks']['carriage_x']
-    insert['tine_length'] = shared['forks']['tine_length']
-    insert['sides'] = shared['pallet']['sides']
-
-    machine = {
-        'confirm_timeout': coordinator['timeouts']['confirm'],
-        'lost_pallet_timeout': coordinator['timeouts']['lost_pallet'],
-        'fork_timeout': coordinator['timeouts']['forks'],
-        'run_timeout': coordinator['timeouts']['run'],
-        'settle_time': coordinator['checking']['settle_time'],
-        'checking_frames': coordinator['checking']['frames'],
-        'max_retries': coordinator['max_retries'],
-        'max_backoffs': coordinator['max_backoffs'],
-        'min_retry_backoff': coordinator['min_retry_backoff'],
-        'retryable_checks': coordinator['retryable_checks'],
-        'entry_face': shared['pallet']['entry_face'],
-        'sides': shared['pallet']['sides'],
-        'closing': closing,
-        'reverse': reverse,
-    }
+    machine = machine_params(getter(coordinator))
+    drive = executor_params(getter(controller))
 
     tracker_params = dict(
         {k: v for k, v in tracker.items() if k != 'lidar'},
@@ -106,8 +87,7 @@ def load() -> dict:
 
     return {
         'machine': machine,
-        'drive': {'limits': controller['limits'], 'closing': closing,
-                  'reverse': reverse, 'insert': insert},
+        'drive': drive,
         'forks': dict(forks, insert_height=shared['forks']['bottom_height'],
                       lift_travel=shared['forks']['lift_travel'],
                       tine_thickness=shared['forks']['tine_thickness']),
@@ -115,6 +95,17 @@ def load() -> dict:
         'go_nogo': dict(coordinator['go_nogo'], sides=shared['pallet']['sides']),
         'shared': shared,
     }
+
+
+
+def _flatten(block, prefix=''):
+    flat = {}
+    for key, value in (block or {}).items():
+        if isinstance(value, dict):
+            flat.update(_flatten(value, f'{prefix}{key}.'))
+        else:
+            flat[f'{prefix}{key}'] = value
+    return flat
 
 
 @dataclass

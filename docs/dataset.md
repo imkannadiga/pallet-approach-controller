@@ -221,7 +221,7 @@ repeated here.
 ## Bags
 
 **The eight bags from 2026-10-15 carry their _target_ distances, not measured
-ones.** Athreya recorded them to the targets below; the `dL`/`dR`/`lat` readings
+ones.** They were recorded to the targets below; the `dL`/`dR`/`lat` readings
 have not been transcribed yet. Until they are, these bags are good for
 behaviour ("does it find two pockets?") but **not for an accuracy number**,
 because the error would be against an intended distance rather than a measured
@@ -243,7 +243,7 @@ one. Mark the row ✓ once the tape readings are in.
 | `floor_lidar_pose1` | — | — | — | — | — | 10 | LiDAR | 0.398 | bare floor; `lidar_coverage.py` input |
 | `floor_lidar_pose2` | — | — | — | — | — | 10 | LiDAR | 0.398 | bare floor, second heading |
 
-### Two faults in these eight bags, both mine
+### Two faults in these eight bags, both in the recording script
 
 **1. The depth rate climbs through the session: 4.8 → 8.7 → 12.8 → 18.2 → 22.2
 → 25.7 → 27.6 → 32.4 Hz**, on a topic that `topic_tools throttle` was told to

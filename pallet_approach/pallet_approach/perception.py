@@ -1,13 +1,8 @@
 """Depth image -> pallet pose and fork pockets.
 
-YOU WRITE THIS FILE. Every function below is a skeleton: signature, an
-explanation of what it does and why, and a TODO. Claude explains, reviews and
-fixes, but does not fill these in unless you ask for a specific one by name.
-
-Work through them in order. Each one is small enough to test on its own, and
-`test/test_perception.py` already has a test per function using synthetic
-pallet clouds with known answers, so you can go red -> green one function at a
-time. Run them with:
+Each stage is a small function that can be tested on its own, and
+`test/test_perception.py` has a test per function using synthetic pallet clouds
+with known answers. Run them with:
 
     cd pallet_approach && python -m pytest test/test_perception.py -x -v
 
@@ -32,7 +27,7 @@ Conventions, which are the single most common source of bugs here:
 * The working frame is **`base_footprint`**: x forward, y left, z up. Not
   `base_link` -- that is the chassis body frame 0.235 m up, where every height
   would be a large negative offset. At ground level the numbers read as what
-  they are: pocket centre 0.072 above the floor, fork underside 0.052.
+  they are: pocket centre 0.050 above the floor, fork underside 0.030.
 * **base_footprint is not exactly on the floor.** Measured 2026-10-14, the real
   floor is at z = -0.025 there: the URDF's base_footprint joint is 25 mm out
   (its wheel geometry is right to 0.2 mm). So do not write `z > 0` anywhere and
@@ -265,8 +260,7 @@ def fit_plane_ransac(
     Args:
         points: (N, 3).
         distance_threshold: how close counts as an inlier, metres. Set it near
-            the sensor noise at the range you care about -- your Day 5 noise
-            curve is exactly this number.
+            the sensor noise at the working range.
         iterations: how many random guesses.
         rng: pass a seeded `np.random.default_rng(0)` in tests so results repeat.
 
@@ -383,9 +377,8 @@ def cluster_points(
     Returns:
         (N,) int array of labels; -1 is noise.
 
-    TODO: implement.
-    Hint: `from sklearn.cluster import DBSCAN`. scikit-learn is in the container
-    (see docker/Dockerfile.jetson); Open3D deliberately is not.
+    Uses scikit-learn's DBSCAN; Open3D is deliberately not a dependency on the
+    Jetson (see docker/Dockerfile.jetson).
     """
     if len(points) == 0:
         return np.empty(0, dtype=int)
@@ -511,9 +504,8 @@ def fit_front_face(
         inlier_mask: (N,) bool over `points`.
         Or None if no acceptable face was found.
 
-    TODO: implement.
-    Hint: "nearly vertical" means `abs(normal[2])` is small -- the normal has
-    almost no z component. Convert `max_tilt_from_vertical` into that test.
+    "Nearly vertical" means `abs(normal[2])` is small: the normal has almost
+    no z component, bounded by `max_tilt_from_vertical`.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -578,9 +570,8 @@ def face_yaw(normal: np.ndarray) -> float:
     `atan2(normal[1], normal[0])`. That is the whole conversion from "a plane
     in 3D" to "the one angle the controller needs".
 
-    This is the Day 8 check question, so be able to say out loud why a plane
-    normal is enough to recover yaw, and why pitch and roll are not recoverable
-    from a single vertical plane.
+    A plane normal is enough to recover yaw; pitch and roll are not
+    recoverable from a single vertical plane.
 
     Returns:
         radians.
@@ -931,8 +922,6 @@ def estimate_pallet(
 
     Returns:
         PalletEstimate, or None.
-
-    TODO: implement last, once the stages above pass their tests.
     """
     rng = np.random.default_rng(params.get('seed'))
  

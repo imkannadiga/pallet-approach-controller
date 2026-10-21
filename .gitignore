@@ -30,3 +30,8 @@ frames/
 pipeline_stages.png
 *.png
 !docs/*.png
+!docs/images/*.png
+
+# Local-only: assistant instructions and personal machine addresses
+CLAUDE.md
+sim/remote.env

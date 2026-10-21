@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import functools
+import traceback
+
 import numpy as np
 
 # sensor_msgs/Image encoding -> (dtype, channels). Our depth is 32FC1 and the
@@ -93,3 +96,25 @@ def points_to_cloud(points, frame_id: str, stamp):
     cloud.is_dense = True
     cloud.data = array.tobytes()
     return cloud
+
+
+def logged_transition(callback):
+    """Log a lifecycle callback's exception before letting it propagate.
+
+    rclpy's lifecycle catches an exception raised in on_configure (or any
+    transition callback), fails the transition, and logs nothing: the node that
+    broke stays silent, and the caller only learns the transition failed.
+    Measured 2026-10-20 in the Gazebo sim -- a KeyError in the controller's
+    on_configure showed up as nothing but the coordinator's "could not
+    configure the managed nodes". Re-raised, so the transition still fails
+    exactly as it would have; this only makes it say why.
+    """
+    @functools.wraps(callback)
+    def wrapper(self, state):
+        try:
+            return callback(self, state)
+        except Exception:
+            self.get_logger().error(
+                f'{callback.__name__} raised:\n{traceback.format_exc()}')
+            raise
+    return wrapper

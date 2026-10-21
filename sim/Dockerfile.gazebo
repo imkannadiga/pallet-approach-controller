@@ -1,0 +1,20 @@
+# Gazebo side of the sim: the intelligent-fleet-sim-env image (Gazebo
+# Fortress, ros_gz, and the lab robot's ugv_descriptions already built at
+# /ros2_ws/install -- the robot meshes are referenced by that absolute path),
+# plus our sim package on top. Nothing in that repo is modified.
+#
+# Build that image first, in its own repo:
+#   (in intelligent-fleet-sim-env)  docker compose build hunter-ugv-avp-sim
+ARG BASE_IMAGE=sim-env/hunter-ugv-avp-sim:1.1
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-lc"]
+
+WORKDIR /sim_ws
+COPY pallet_approach_sim src/pallet_approach_sim
+RUN source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash \
+    && colcon build --event-handlers console_direct+
+
+# The base image's own entrypoint/command start the AVP scenario; replace both.
+ENTRYPOINT []
+CMD ["bash", "-lc", "source /sim_ws/install/setup.bash && ros2 launch pallet_approach_sim sim.launch.py"]

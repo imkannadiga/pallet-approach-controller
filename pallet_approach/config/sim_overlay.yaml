@@ -1,0 +1,48 @@
+# Applied ON TOP of params.yaml when the stack runs against the Gazebo sim
+# (sim/run_sim.sh passes overlay_params:=<this file>). Everything not listed
+# here is the robot's own value -- the point of the sim is to run the real
+# configuration, so this file stays as short as it can.
+#
+# Only two things are genuinely different in the sim:
+#
+# 1. Time comes from Gazebo's /clock. Every node block in params.yaml pins
+#    use_sim_time: false, and a node block beats /**, so it is overridden here
+#    per node rather than once. test_params.py checks this list matches the
+#    node blocks in params.yaml, so a node added later cannot run on wall time
+#    against sim-time stamps.
+#
+# 2. The simulated camera is mounted exactly as the URDF says. The real one is
+#    pitched 0.698 deg and rolled -0.516 deg (measured, docs/SYSTEM.md), and
+#    params.yaml corrects for that. Applied here it would tilt a camera that is
+#    not tilted by the same amount the other way.
+/**:
+  ros__parameters:
+    use_sim_time: true
+    frames:
+      extrinsic_correction:
+        enabled: false
+
+pallet_perception:
+  ros__parameters:
+    use_sim_time: true
+approach_controller:
+  ros__parameters:
+    use_sim_time: true
+coordinator:
+  ros__parameters:
+    use_sim_time: true
+fork_overlay:
+  ros__parameters:
+    use_sim_time: true
+dashboard:
+  ros__parameters:
+    use_sim_time: true
+watchdog:
+  ros__parameters:
+    use_sim_time: true
+pallet_tracker:
+  ros__parameters:
+    use_sim_time: true
+virtual_forks:
+  ros__parameters:
+    use_sim_time: true

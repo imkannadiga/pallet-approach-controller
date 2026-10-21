@@ -49,7 +49,8 @@ from pallet_approach_interfaces.msg import DriveCommand, DriveStatus, TrackedPal
 
 from pallet_approach import closing
 from pallet_approach.controller import ZERO, RateLimiter
-from pallet_approach.drive import MODES, DriveExecutor, Request, Result
+from pallet_approach.drive import MODES, DriveExecutor, Request, Result, executor_params
+from pallet_approach.nodes._common import logged_transition
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     command_to_twist,
@@ -139,54 +140,12 @@ class ControllerNode(LifecycleNode):
     def _get(self, name):
         return self.get_parameter(name).value
 
-    def _group(self, prefix, keys):
-        return {key: self._get(f'{prefix}.{key}') for key in keys}
-
-    def _limits(self) -> dict:
-        return self._group('limits', ('max_linear', 'max_angular',
-                                      'min_linear', 'min_angular'))
-
-    def _closing_params(self) -> dict:
-        params = self._group('closing', (
-            'k_cross', 'k_heading', 'max_approach_angle', 'straighten_offset',
-            'max_turn_in_place', 'closing_speed', 'taper_range',
-            'range_tolerance', 'arrival_yaw', 'resume_range', 'min_run_up',
-            'residual_target', 'run_up_margin'))
-        params['target_range'] = self._get('standoff_distance')
-        params['carriage_x'] = self._get('forks.carriage_x')
-        params['tine_length'] = self._get('forks.tine_length')
-        return params
-
-    def _reverse_params(self) -> dict:
-        params = self._group('reverse', (
-            'speed', 'max_unverified', 'side_margin', 'min_height',
-            'max_height', 'clearance_margin'))
-        params['rear_bumper_x'] = self._get('robot.rear_bumper_x')
-        params['half_width'] = self._get('robot.width') / 2.0
-        params['floor_z'] = self._get('floor_z')
-        return params
-
-    def _insert_params(self) -> dict:
-        params = self._group('insert', (
-            'speed', 'stop_tolerance', 'max_disagreement', 'max_travel',
-            'max_unmeasured_frames'))
-        params['lidar'] = self._group('insert.lidar', (
-            'half_width', 'min_height', 'max_height', 'min_x', 'min_points'))
-        params['lidar']['floor_z'] = self._get('floor_z')
-        params['carriage_x'] = self._get('forks.carriage_x')
-        params['tine_length'] = self._get('forks.tine_length')
-        params['sides'] = {
-            side: self._group(f'pallet.sides.{side}', (
-                'insertion_stop_face_x', 'depth', 'insertable'))
-            for side in ('short', 'long')
-        }
-        return params
-
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
     # ----------------------------------------------------------- lifecycle
 
+    @logged_transition
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         topic = self._get('topics.cmd_vel_pallet')
 
@@ -204,12 +163,7 @@ class ControllerNode(LifecycleNode):
         # the service was no longer there to answer it.
         self._limiter = RateLimiter(self._get('limits.max_linear_accel'),
                                     self._get('limits.max_angular_accel'))
-        self._executor = DriveExecutor({
-            'limits': self._limits(),
-            'closing': self._closing_params(),
-            'reverse': self._reverse_params(),
-            'insert': self._insert_params(),
-        })
+        self._executor = DriveExecutor(executor_params(self._get))
         self._buffer = Buffer()
         self._listener = TransformListener(self._buffer, self)
 
@@ -259,6 +213,7 @@ class ControllerNode(LifecycleNode):
             rclpy.spin_once(self, timeout_sec=0.1)
         return self.count_subscribers(topic) > 0
 
+    @logged_transition
     def on_activate(self, state: State) -> TransitionCallbackReturn:
         self._executor.start(Request('STOP'))
         self._start_pose = self._pose
@@ -271,6 +226,7 @@ class ControllerNode(LifecycleNode):
         self.get_logger().info('active')
         return super().on_activate(state)
 
+    @logged_transition
     def on_deactivate(self, state: State) -> TransitionCallbackReturn:
         self._active = False
         if self._timer is not None:
@@ -280,6 +236,7 @@ class ControllerNode(LifecycleNode):
         self.get_logger().info('inactive, zero command sent')
         return super().on_deactivate(state)
 
+    @logged_transition
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
         self._active = False
         self._stop()
