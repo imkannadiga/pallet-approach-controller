@@ -1,7 +1,8 @@
 # System facts (measured, not assumed)
 
 Source: `pallet_approach/tools/survey_ros2.sh` run inside the ZED container on the Jetson and the
-scout container on the robot PC, 2026-10-13. Raw output in `docs/survey/`.
+scout container on the robot PC, 2026-10-13. The raw output is not published: it
+lists the lab's network addresses and hardware identifiers.
 Every number here came from that run. Nothing in this file is a guess; where
 something is still open it says so.
 

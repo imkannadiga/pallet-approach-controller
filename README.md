@@ -3,12 +3,20 @@
 Stereo-vision pallet detection, fork-pocket alignment and a virtual pickup on an
 AgileX SCOUT 2.0 with a ZED 2i camera and an Ouster LiDAR, in ROS 2 Humble.
 
-Nav2 brings the robot to within a few metres of a pallet. From there this stack
-takes over. It confirms the pallet in stereo depth, cross-checked by the LiDAR,
-and works out which face it is looking at. It drives onto the fork-pocket centre
-line, then decides **GO** or **NO-GO** with a stated reason. On GO it performs a
-**virtual pickup**: it lowers imaginary forks to pocket height, drives them in,
-lifts, backs out, and hands control back to Nav2.
+Nav2 brings the robot to within a few metres of a pallet. This stack is
+designed to take over from there. It confirms the pallet in stereo depth,
+cross-checked by the LiDAR, and works out which face it is looking at. It then
+drives onto the fork-pocket centre line and decides **GO** or **NO-GO** with a
+stated reason. On GO it performs a **virtual pickup**: it lowers imaginary forks
+to pocket height, drives them in, lifts, backs out, and hands control back to
+Nav2.
+
+> **Status.** Perception has been validated on depth recorded on the robot. The
+> full sequence has so far been demonstrated in an offline replay that drives
+> the real state machine, control laws and safety rules against a simulated
+> world. It has not yet run closed-loop on the robot. In Gazebo the run
+> currently aborts during the approach on a stale perception estimate, which is
+> being investigated.
 
 There is no trained model. The pipeline is plane fitting, clustering and gap
 analysis, so it needs no labelled data and every decision it makes can be read
@@ -119,9 +127,11 @@ are not.
 
 ### The blind insertion
 
-The pockets leave the camera's view about 0.9 m ahead of the robot. Insertion
-therefore runs straight on odometry with angular velocity exactly zero, at the
-slowest speed. It stops on the earlier of the planned travel and the LiDAR
+The camera loses the pockets' top edge once the face is closer than 1.17 m to
+the robot centre (computed from the measured camera pose), 0.58 m into the
+1.05 m insertion. Insertion therefore runs straight on odometry with angular
+velocity exactly zero, at the slowest speed, and the LiDAR keeps the face in
+view all the way to the stop. It stops on the earlier of the planned travel and the LiDAR
 seeing the face at 0.70 m, which leaves 0.91 m of fork depth and a 0.24 m gap
 between the real bumper and the pallet. Half a second without a LiDAR reading
 aborts it.
@@ -236,9 +246,11 @@ The first real bag, taken at 2.0 m, with the three fixes it prompted applied
        alt="Perception pipeline on the first real bag at 2.0 m">
 </p>
 
-Status: perception has run on recorded bags from the robot; the closed-loop
-approach and the virtual pickup have run in the offline harness and in Gazebo,
-not yet on the robot. See [docs/ROADMAP.md](docs/ROADMAP.md).
+Status: perception has run on recorded bags from the robot. The closed-loop
+approach and the virtual pickup complete in the offline harness. In Gazebo the
+run reaches the approach and then aborts on a stale estimate, a known issue
+under investigation. Nothing has yet driven on the robot. See
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Simulation
 
@@ -402,3 +414,7 @@ docs/                            design record, system facts, roadmap, dataset, 
 - Ouster OS0 LiDAR
 - ROS 2 Humble, Ubuntu 22.04, Python 3.10, Docker; NumPy and scikit-learn for
   the geometry, GStreamer and MediaMTX for video
+
+## License
+
+[MIT](LICENSE)

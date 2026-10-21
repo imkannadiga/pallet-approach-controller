@@ -40,8 +40,10 @@ sight expected); re-acquire at the line-up point; final leg on perception
 robot turns. (Stage 3)
 
 **D7. Blind insertion on odometry with a LiDAR stop, robot body stays clear.**
-*Why:* the pockets leave the camera's view about 0.9 m ahead of the robot
-centre; the forks are imaginary but the robot is not. Exact distances: Stage 5.
+*Why:* the pockets leave the camera's view before the forks are in; the forks
+are imaginary but the robot is not. (The first estimate here was ~0.9 m; D16
+replaces it with 1.17 m, computed from the measured camera pose: the pocket's
+top edge leaves the frame once the face is closer than that.)
 (Stages 5–6)
 
 **D8. Speed limits for autonomous runs.** 0.20 m/s and 0.30 rad/s normally;

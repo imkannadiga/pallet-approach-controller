@@ -777,8 +777,8 @@ stays at -0.025.
 
 **Done**
 
-- Surveyed both machines with `pallet_approach/tools/survey_ros2.sh` (read-only). Raw output in
-  `docs/survey/`, findings in `docs/SYSTEM.md`.
+- Surveyed both machines with `pallet_approach/tools/survey_ros2.sh` (read-only). Findings in
+  `docs/SYSTEM.md`; the raw output stays off the repository (lab network details).
 - Repo scaffolded: `pallet_approach_interfaces` (action + 2 messages) and
   `pallet_approach` (logic, nodes, launch, config, tests, tools), plus
   `docker/Dockerfile.jetson`.

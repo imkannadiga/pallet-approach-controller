@@ -23,8 +23,6 @@ bags/
 frames/
 *.npy
 
-# Survey output is kept: it is the record of what the system actually was.
-!docs/survey/*.txt
 
 # replay.py and the other tools write their plots wherever they are run
 pipeline_stages.png
@@ -35,3 +33,5 @@ pipeline_stages.png
 # Local-only: assistant instructions and personal machine addresses
 CLAUDE.md
 sim/remote.env
+# Raw system surveys list lab network addresses and MACs; keep them local.
+docs/survey/
