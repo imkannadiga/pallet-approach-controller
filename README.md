@@ -12,11 +12,10 @@ to pocket height, drives them in, lifts, backs out, and hands control back to
 Nav2.
 
 > **Status.** Perception has been validated on depth recorded on the robot. The
-> full sequence has so far been demonstrated in an offline replay that drives
-> the real state machine, control laws and safety rules against a simulated
-> world. It has not yet run closed-loop on the robot. In Gazebo the run
-> currently aborts during the approach on a stale perception estimate, which is
-> being investigated.
+> complete pipeline runs end to end in Gazebo against a model of the lab robot,
+> and in an offline replay that drives the real state machine, control laws and
+> safety rules against a simulated world. The approach controller is still being
+> tuned, and nothing has run closed-loop on the robot yet.
 
 There is no trained model. The pipeline is plane fitting, clustering and gap
 analysis, so it needs no labelled data and every decision it makes can be read
@@ -246,10 +245,9 @@ The first real bag, taken at 2.0 m, with the three fixes it prompted applied
        alt="Perception pipeline on the first real bag at 2.0 m">
 </p>
 
-Status: perception has run on recorded bags from the robot. The closed-loop
-approach and the virtual pickup complete in the offline harness. In Gazebo the
-run reaches the approach and then aborts on a stale estimate, a known issue
-under investigation. Nothing has yet driven on the robot. See
+Status: perception has run on recorded bags from the robot. The complete
+pipeline runs end to end in Gazebo and in the offline harness; the approach
+controller is still being tuned. Nothing has yet driven on the robot. See
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Simulation
@@ -287,8 +285,10 @@ tf and the clock.
 ./sim/run_sim.sh stop
 ```
 
-The simulation runs on its own ROS domain, localhost only, so it cannot reach
-the real robot. What it does and does not show is in
+Run it on a machine with a dedicated GPU. On a laptop iGPU the rendered depth
+arrives too slowly, perception falls behind, and the watchdog correctly aborts
+the run on a stale estimate. The simulation runs on its own ROS domain,
+localhost only, so it cannot reach the real robot. What it does and does not show is in
 [sim/README.md](sim/README.md).
 
 ## Getting started
