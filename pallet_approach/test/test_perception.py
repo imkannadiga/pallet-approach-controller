@@ -18,7 +18,7 @@ import pytest
 import synthetic as S
 
 from pallet_approach import perception
-from pallet_approach.model import Plane
+from pallet_approach.model import Plane, Pocket
 
 
 # ------------------------------------------------------- depth_to_points
@@ -363,3 +363,35 @@ def test_estimate_pallet_returns_none_on_an_empty_scene(params, intrinsics):
     depth = np.full((S.IMAGE_HEIGHT, S.IMAGE_WIDTH), np.nan, dtype=np.float32)
     assert perception.estimate_pallet(
         depth, intrinsics, S.camera_to_base_matrix(), params) is None
+
+
+# ------------------------------------------------- D62: the pocket line
+
+def test_pocket_line_normal_is_perpendicular_to_the_pockets_and_keeps_the_sign():
+    floor = Plane(np.array([0.0, 0.0, 1.0]), 0.025)
+    pockets = (Pocket(np.array([2.0, 0.18, 0.05]), 0.23, 0.10),
+               Pocket(np.array([2.1, -0.18, 0.05]), 0.23, 0.10))
+    face_normal = np.array([-1.0, 0.0, 0.0])            # towards the robot
+    n = perception.pocket_line_normal(pockets, face_normal, floor)
+    line = pockets[1].center - pockets[0].center
+    assert abs(n @ line) < 1e-9 and n @ face_normal > 0
+    assert perception.pocket_line_normal(pockets[:1], face_normal, floor) is None
+
+
+def test_the_pallet_direction_holds_still_under_depth_noise(params, intrinsics):
+    """D62. The face plane's normal wobbled +-2.3 deg frame to frame in the sim;
+    the pocket line must not. Same pallet, eight independent noisy frames."""
+    yaws = []
+    for seed in range(8):
+        points, truth = S.pallet_cloud(distance=1.8, yaw=0.10, noise=0.01,
+                                       spacing=0.0015, floor_spacing=0.012,
+                                       seed=seed)
+        estimate = perception.estimate_pallet(
+            S.depth_image(points), intrinsics, S.camera_to_base_matrix(), params)
+        assert estimate is not None and len(estimate.pockets) == 2
+        yaws.append(estimate.yaw)
+    true_yaw = math.atan2(truth['normal'][1], truth['normal'][0])
+    errors = [math.degrees(math.atan2(math.sin(y - true_yaw), math.cos(y - true_yaw)))
+              for y in yaws]
+    assert max(errors) - min(errors) < 2.0, errors       # the stability limit
+    assert max(abs(e) for e in errors) < 2.0, errors

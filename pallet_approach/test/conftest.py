@@ -61,6 +61,7 @@ def params():
         # boards to lower blocks, so a 15 mm RANSAC inlier band misses most of
         # the blocks. 60 mm takes the lot.
         'pocket_slab_half_depth': 0.06,
+        'pocket_frame_margin': 0.05,
         'pocket_min_gap_width': 0.15,
         'pocket_max_gap_width': 0.32,
         'pocket_min_points_per_bin': 2,

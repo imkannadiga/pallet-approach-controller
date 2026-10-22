@@ -933,6 +933,26 @@ it noise-robust; the option discussed was per-strip medians across the face
 width (5 cm strips, at least 20 points each, the same 20 mm margin).
 (Athreya, 2026-10-22)
 
+**D62. The pallet's direction is the normal of the line through the two
+pocket centres; the pockets are the reference for everything.** Perception
+gives each pocket centre its own depth (the median distance, from the fitted
+plane, of the face-slice points framing that pocket: the blocks either side
+and the deck above, within `pallet.pocket_frame_margin: 0.05`), draws the line
+through the two centres, and reports that line's outward normal as the
+estimate's `normal` and `yaw`. The tracker, the closing loop, every GO/NO-GO
+rule and the stability rule therefore all use it; the fitted face only stands
+in when fewer than two pockets are found (and GO/NO-GO refuses such a frame).
+*Why:* the face plane is fitted to whichever points RANSAC draws, so its
+direction jumps from frame to frame. Before this, the pocket centres were
+placed ON that plane, so even a line through them inherited its wobble.
+Measured on the real bag `pallet_2m_0deg` (pallet square to the robot), over
+the five frames with both pockets: face-fit yaw +1.65, +1.94, -3.10, +2.35,
++2.25 deg (spread 5.45 deg, failing the 2 deg stability limit); pocket-line
+yaw -1.45, -0.61, -1.70, -0.73, -1.30 deg (spread 1.09 deg). In the Gazebo
+sim the face yaw had failed stability at 2.4 deg on a parked robot. Athreya's
+method, 2026-10-22: "estimate the centre of both pocket squares, draw a line
+through, find the midpoint and draw a normal outwards".
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

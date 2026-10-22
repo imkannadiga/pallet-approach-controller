@@ -593,6 +593,7 @@ def find_pockets(
     bin_width: float = 0.02,
     min_points_per_bin: int = 1,
     opening_bottom: float = 0.0,
+    frame_margin: float = 0.05,
 ) -> tuple[Pocket, ...]:
     """Find the fork pockets as gaps in the face, left to right.
 
@@ -721,6 +722,19 @@ def find_pockets(
         center = (face_centroid
                   + s_center * along
                   + (center_height - floor.height_of(face_centroid)) * up)
+
+        # D62 (Athreya, 2026-10-22): each pocket gets its OWN depth -- the
+        # median distance from the fitted plane of the wood framing it (the
+        # blocks either side and the deck above, within `frame_margin` of the
+        # opening; the opening itself is empty). Without this both centres sit
+        # on the one fitted plane and the line through them is just that
+        # plane's direction, which RANSAC re-draws every frame (+-2.3 deg in
+        # the sim). With it, the line through the two pockets is measured from
+        # the pallet's own structure, and that line is the pallet's direction.
+        near = np.abs(s - s_center) <= width / 2 + frame_margin
+        if np.count_nonzero(near) >= 10:
+            depth = float(np.median((face_points[near] - face_centroid) @ face_normal))
+            center = center + depth * np.asarray(face_normal, dtype=float)
  
         # ADAPT TO model.py: field names of Pocket.
         pockets.append(Pocket(center=center, width=float(width),
@@ -890,6 +904,28 @@ def _face_axis_of(normal: np.ndarray) -> np.ndarray:
     return axis / float(np.linalg.norm(axis))
 
 
+def pocket_line_normal(pockets, face_normal: np.ndarray, floor: Plane):
+    """The pallet's direction from its two pocket centres (D62), or None.
+
+    Line through the two centres, flattened onto the floor plane; its normal in
+    that plane, pointing the same way as the fitted face's normal so every
+    sign convention downstream is unchanged. Needs exactly the structure the
+    forks need: two pockets.
+    """
+    if len(pockets) < 2:
+        return None
+    up = np.asarray(floor.normal, dtype=float)
+    along = np.asarray(pockets[-1].center, dtype=float) - np.asarray(pockets[0].center, dtype=float)
+    along = along - (along @ up) * up
+    length = float(np.linalg.norm(along))
+    if length < 1e-6:
+        return None
+    normal = np.cross(along / length, up)
+    if normal @ np.asarray(face_normal, dtype=float) < 0:
+        normal = -normal
+    return normal / np.linalg.norm(normal)
+
+
 def estimate_pallet(
     depth: np.ndarray,
     intrinsics: dict,
@@ -1040,7 +1076,16 @@ def estimate_pallet(
         geometry['pocket_band_half_height'], geometry['pocket_min_gap_width'],
         geometry['pocket_max_gap_width'], geometry['pocket_center_height'],
         bin_width=params['voxel_size'], min_points_per_bin=min_per_bin,
-        opening_bottom=geometry.get('pocket_opening_bottom', 0.0))
+        opening_bottom=geometry.get('pocket_opening_bottom', 0.0),
+        frame_margin=params.get('pocket_frame_margin', 0.05))
+
+    # D62: with both pockets found, the pallet's direction is the outward
+    # normal of the line through their centres. The fitted face only stands
+    # in when a pocket is missing (and such a frame is refused by GO/NO-GO).
+    normal_from_pockets = pocket_line_normal(pockets, face_normal, floor)
+    if normal_from_pockets is not None:
+        face_normal = normal_from_pockets
+        yaw = face_yaw(face_normal)
 
     # `position` and `normal` describe the front face; `face_inlier_count` is
     # the support the face fit had, which go_nogo checks before trusting it.

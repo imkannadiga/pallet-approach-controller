@@ -281,3 +281,32 @@ def test_a_switched_off_overhang_check_is_reported_not_passed(go_nogo_params, sq
     assert not on.go and on.reason.startswith('overhang')
 
 
+def test_stability_yaw_comes_from_the_pocket_line():
+    # D62: a face normal wobbling 2.3 deg with steady pockets is stable.
+    import dataclasses
+    base = make_estimate()
+    history = []
+    for k, w in enumerate((0.0, 0.04, -0.04, 0.02, -0.03)):
+        n = np.array([-math.cos(w), -math.sin(w), 0.0])
+        pockets = base.pockets if k % 2 else tuple(reversed(base.pockets))
+        history.append(dataclasses.replace(base, normal=n, yaw=math.atan2(n[1], n[0]),
+                                           pockets=pockets))
+    ok, reason = go_nogo.check_stability(history, 5, 0.030, 0.035)
+    assert ok, reason
+
+
+def test_a_turning_pocket_line_is_still_unstable():
+    import dataclasses
+    base = make_estimate()
+    history = [base] * 4
+    a, b = (np.asarray(p.center, dtype=float) for p in base.pockets)
+    mid = (a + b) / 2
+    turn = math.radians(4.0)
+    rot = np.array([[math.cos(turn), -math.sin(turn), 0], [math.sin(turn), math.cos(turn), 0], [0, 0, 1]])
+    turned = tuple(dataclasses.replace(p, center=mid + rot @ (np.asarray(p.center) - mid))
+                   for p in base.pockets)
+    history.append(dataclasses.replace(base, pockets=turned))
+    ok, reason = go_nogo.check_stability(history, 5, 0.030, 0.035)
+    assert not ok and 'pocket line' in reason
+
+

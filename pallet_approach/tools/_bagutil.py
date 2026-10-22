@@ -187,6 +187,7 @@ def load_params(package_root: pathlib.Path) -> dict:
         'face_min_points': block['face']['min_points'],
         'max_facing_angle': block['face']['max_facing_angle'],
         'pocket_slab_half_depth': shared['pallet']['pocket_slab_half_depth'],
+        'pocket_frame_margin': shared['pallet']['pocket_frame_margin'],
         'pocket_min_points_per_bin': shared['pallet']['pocket_min_points_per_bin'],
         'extrinsic_correction': dict(shared['frames']['extrinsic_correction']),
         **side_params(shared['pallet']),

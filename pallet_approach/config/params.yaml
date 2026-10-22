@@ -319,6 +319,12 @@
 
       # Shared by both sides.
       pocket_slab_half_depth: 0.06   # face slice thickness: ZED depth at ~2 m
+      # [choice, Athreya 2026-10-22] D62. Each pocket's depth is the median of
+      # the face-slice points within the pocket's half width plus this much
+      # (the blocks either side and the deck above), and the pallet's
+      # direction is the normal of the line through the two pocket centres.
+      # 0.05 stays inside the narrowest block (0.10 m) on both faces.
+      pocket_frame_margin: 0.05
                                      # scatters a few cm, so plane inliers miss
                                      # much of the real face (D5)
       pocket_min_points_per_bin: 2   # one stray point is not wood (D5)

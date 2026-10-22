@@ -127,7 +127,7 @@ class PerceptionNode(LifecycleNode):
         # of truth without anything failing.
         for name, default in (
             ('pallet.pallet_height', 0.145),
-            ('pallet.pocket_slab_half_depth', 0.06),
+            ('pallet.pocket_slab_half_depth', 0.06), ('pallet.pocket_frame_margin', 0.05),
             ('pallet.pocket_min_points_per_bin', 2),
             ('pallet.entry_face', 'short'),
 
@@ -206,6 +206,7 @@ class PerceptionNode(LifecycleNode):
             'pallet_height': get('pallet.pallet_height'),
 
             'pocket_slab_half_depth': get('pallet.pocket_slab_half_depth'),
+            'pocket_frame_margin': get('pallet.pocket_frame_margin'),
             'pocket_min_points_per_bin': get('pallet.pocket_min_points_per_bin'),
 
             **self._side_params(),

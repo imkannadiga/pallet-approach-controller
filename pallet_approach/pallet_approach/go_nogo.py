@@ -268,6 +268,28 @@ def check_pocket_clearance(
     return True, f'both pocket approaches clear to {clearance_depth * 1000:.0f} mm'
 
 
+def pocket_line_yaw(estimate: PalletEstimate) -> float:
+    """Heading of the line through the two pocket centres, radians in the
+    estimate's frame, in (-pi/2, pi/2].
+
+    The line has no front or back, so it is always taken pointing to the
+    robot's left (+y), which makes two frames comparable whichever order
+    perception listed the pockets in. With fewer than two pockets there is no
+    line; the face normal's along-face direction stands in, and a frame like
+    that is unusual enough at the standoff to be worth the noise.
+    """
+    if len(estimate.pockets) >= 2:
+        a = np.asarray(estimate.pockets[0].center, dtype=float)[:2]
+        b = np.asarray(estimate.pockets[-1].center, dtype=float)[:2]
+        dx, dy = b - a
+    else:
+        n = np.asarray(estimate.normal, dtype=float)
+        dx, dy = -n[1], n[0]
+    if dy < 0 or (dy == 0 and dx < 0):
+        dx, dy = -dx, -dy
+    return math.atan2(dy, dx)
+
+
 def check_stability(
     history: Sequence[PalletEstimate],
     required_frames: int,
@@ -313,14 +335,19 @@ def check_stability(
             f'pocket midpoint moved {spread * 1000:.0f} mm across '
             f'{required_frames} frames, limit {max_position_spread * 1000:.0f} mm')
 
-    yaws = np.array([e.yaw for e in recent])
+    # D62 (Athreya, 2026-10-22): the direction of the line through the two
+    # pocket centres, not the face plane's normal -- the pockets are the
+    # reference. The face normal wobbled +-0.04 rad (+-2.3 deg) from frame to
+    # frame in the sim and failed this rule on a parked robot; pocket centres
+    # 0.365 m apart and steady to +-2 mm give the line to about +-0.3 deg.
+    yaws = np.array([pocket_line_yaw(e) for e in recent])
     # Wrapped about the first sample, so a pair straddling +-pi does not read
     # as a 360 degree spread.
     relative = np.array([wrap_angle(y - yaws[0]) for y in yaws])
     yaw_spread = float(relative.max() - relative.min())
     if yaw_spread > max_yaw_spread:
         return False, (
-            f'face yaw moved {math.degrees(yaw_spread):.1f} deg across '
+            f'pocket line turned {math.degrees(yaw_spread):.1f} deg across '
             f'{required_frames} frames, limit {math.degrees(max_yaw_spread):.1f} deg')
     return True, (f'stable over {required_frames} frames: '
                   f'{spread * 1000:.0f} mm, {math.degrees(yaw_spread):.1f} deg')
