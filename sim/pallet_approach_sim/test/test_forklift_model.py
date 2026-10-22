@@ -116,3 +116,20 @@ def test_the_meshes_carry_no_texture_coordinates():
         assert '\nvt ' not in text, path.name
         assert 'mtllib forklift.mtl' in text, path.name
 
+
+def test_the_depth_filter_removes_points_inside_a_blade_and_nothing_else():
+    from pallet_approach_sim.depth_mask import mask_boxes, optical_to_base
+    camera = optical_to_base((0.39, 0.06, 0.373))
+    fx = fy = 949.17
+    cx, cy = 640.0, 360.0
+    depth = np.full((720, 1280), 2.0, np.float32)    # a wall 2 m ahead
+    # One pixel looking at a blade point: base (1.2, 0.1825, 0.12)
+    p = np.linalg.inv(camera) @ np.array([1.2, 0.1825, 0.12, 1.0])
+    u, v = int(round(fx * p[0] / p[2] + cx)), int(round(fy * p[1] / p[2] + cy))
+    depth[v, u] = p[2]
+    blade = (0.4625, 1.657, 0.119, 0.246, 0.1068, 0.1412)
+    out = mask_boxes(depth, fx, fy, cx, cy, camera, [blade])
+    assert np.isinf(out[v, u])
+    assert np.isfinite(np.delete(out.ravel(), v * 1280 + u)).all()
+    assert np.array_equal(mask_boxes(depth, fx, fy, cx, cy, camera, []), depth)
+

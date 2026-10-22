@@ -30,6 +30,7 @@ setup(
             'camera_tf = pallet_approach_sim.camera_tf:main',
             'camera_info_fix = pallet_approach_sim.camera_info_fix:main',
             'fork_lift_bridge = pallet_approach_sim.fork_lift_bridge:main',
+            'depth_self_filter = pallet_approach_sim.depth_self_filter:main',
         ],
     },
 )

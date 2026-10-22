@@ -51,7 +51,10 @@
   gz_type_name: ignition.msgs.CameraInfo
   direction: GZ_TO_ROS
 
-- ros_topic_name: /zed2/zed_node/depth/depth_registered
+# To an intermediate topic: depth_self_filter.py removes the forklift's own
+# fork blades (Fortress's depth camera ignores visibility flags) and publishes
+# the ZED's depth_registered. With the SCOUT it passes frames through.
+- ros_topic_name: /sim/zed/depth_gazebo
   gz_topic_name: /sim/zed/depth_image
   ros_type_name: sensor_msgs/msg/Image
   gz_type_name: ignition.msgs.Image

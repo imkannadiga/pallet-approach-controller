@@ -65,8 +65,15 @@ def _setup(context):
                           output='screen',
                           parameters=[{'rest_height': geometry['tine']['bottom_above_floor']},
                                       {'use_sim_time': True}]))
+        tine = geometry['tine']
+        blades = []
+        for side in (1, -1):
+            centre = side * tine['centre_y']
+            blades += [tine['heel_x'], tine['tip_x'], centre - tine['width'] / 2,
+                       centre + tine['width'] / 2, tine['bottom_z'], tine['top_z']]
         pallet_static = False
     elif robot == 'scout':
+        blades = [0.0]          # no forks: the depth filter passes frames through
         import xacro   # only needed here, and only inside the sim image
         expanded = xacro.process_file(
             os.path.join(share, 'urdf', 'scout_sim.urdf.xacro')).toxml()
@@ -120,6 +127,9 @@ def _setup(context):
         Node(package='ros_gz_sim', executable='create', output='screen',
              arguments=['-world', 'pallet_lab', '-file', pallet_file, '-name', 'pallet',
                         '-x', str(px), '-y', str(py), '-Y', str(pyaw)]),
+        Node(package='pallet_approach_sim', executable='depth_self_filter', output='screen',
+             parameters=[{'blades': blades, 'hfov': camera.hfov}, sim_time]),
+        *extra,
     ]
 
 
