@@ -39,6 +39,7 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+from pallet_approach.nodes._common import LatestRaw, lookup_waiting
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 from pallet_approach_interfaces.msg import TrackedPallet
 
@@ -66,7 +67,7 @@ class TrackerNode(Node):
         self._declare()
         self._tracker = Tracker(self._params())
         self._odom: deque[tuple[float, Pose2D]] = deque(maxlen=200)
-        self._cloud = None
+        self._cloud = LatestRaw(PointCloud2)
         self._state = ''
 
         self._pub = self.create_publisher(TrackedPallet, '~/tracked', RELIABLE)
@@ -75,11 +76,11 @@ class TrackerNode(Node):
         self.create_subscription(Odometry, self.get_parameter('topics.odom').value,
                                  self._on_odom, RELIABLE)
         self.create_subscription(PointCloud2, self.get_parameter('topics.lidar').value,
-                                 self._on_cloud, BEST_EFFORT)
+                                 self._on_cloud, BEST_EFFORT, raw=True)
         self.create_subscription(String, '/coordinator/state', self._on_state, RELIABLE)
 
         self._buffer = Buffer()
-        self._listener = TransformListener(self._buffer, self)
+        self._listener = TransformListener(self._buffer, self, spin_thread=True)
         self.get_logger().info('tracking; publishing ~/tracked per estimate')
 
     # -------------------------------------------------------------- params
@@ -152,9 +153,9 @@ class TrackerNode(Node):
         self._odom.append((stamp_to_seconds(msg.header.stamp),
                            pose2d_from_odometry(msg)))
 
-    def _on_cloud(self, msg: PointCloud2):
-        """Keep the message; decode it when an estimate needs it."""
-        self._cloud = msg
+    def _on_cloud(self, raw: bytes):
+        """Keep the bytes; decode them when an estimate needs them."""
+        self._cloud.store(raw)
 
     def _pose_at(self, stamp: float) -> Pose2D | None:
         """The odometry sample nearest `stamp`, or None if none is close enough.
@@ -178,7 +179,7 @@ class TrackerNode(Node):
         "the cross-check did not run" has to be attributable. The caller turns
         None into NOT EVALUATED, never into agreement.
         """
-        cloud = self._cloud
+        cloud = self._cloud.get()
         if cloud is None:
             return None
         age = stamp - stamp_to_seconds(cloud.header.stamp)
@@ -189,8 +190,7 @@ class TrackerNode(Node):
             return None
         ground = self.get_parameter('frames.ground').value
         try:
-            transform = self._buffer.lookup_transform(
-                ground, cloud.header.frame_id, cloud.header.stamp,
+            transform = lookup_waiting(self._buffer, ground, cloud.header.frame_id, cloud.header.stamp,
                 rclpy.duration.Duration(
                     seconds=float(self.get_parameter('frames.tf_timeout').value)))
         except Exception as error:

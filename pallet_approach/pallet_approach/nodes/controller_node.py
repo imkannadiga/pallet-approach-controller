@@ -50,7 +50,7 @@ from pallet_approach_interfaces.msg import DriveCommand, DriveStatus, TrackedPal
 from pallet_approach import closing
 from pallet_approach.controller import ZERO, RateLimiter
 from pallet_approach.drive import MODES, DriveExecutor, Request, Result, executor_params
-from pallet_approach.nodes._common import logged_transition
+from pallet_approach.nodes._common import LatestRaw, logged_transition, lookup_waiting
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     command_to_twist,
@@ -77,7 +77,7 @@ class ControllerNode(LifecycleNode):
         self._frames_seen = 0
         self._frames_stepped = 0
         self._tracked_at = 0.0
-        self._cloud = None
+        self._cloud = LatestRaw(PointCloud2)
         self._limiter = None
         self._timer = None
         self._cmd_pub = None
@@ -167,7 +167,7 @@ class ControllerNode(LifecycleNode):
                                     self._get('limits.max_angular_accel'))
         self._executor = DriveExecutor(executor_params(self._get))
         self._buffer = Buffer()
-        self._listener = TransformListener(self._buffer, self)
+        self._listener = TransformListener(self._buffer, self, spin_thread=True)
 
         self._cmd_pub = self.create_lifecycle_publisher(Twist, topic, RELIABLE)
         self._status_pub = self.create_lifecycle_publisher(
@@ -178,7 +178,7 @@ class ControllerNode(LifecycleNode):
         self.create_subscription(TrackedPallet, '/pallet_tracker/tracked',
                                  self._on_tracked, RELIABLE)
         self.create_subscription(PointCloud2, self._get('topics.lidar'),
-                                 self._on_cloud, BEST_EFFORT)
+                                 self._on_cloud, BEST_EFFORT, raw=True)
 
         if not self._wait_for_a_subscriber(topic):
             self.get_logger().error(
@@ -294,8 +294,8 @@ class ControllerNode(LifecycleNode):
                          (msg.center_odom.x, msg.center_odom.y), float(msg.yaw_odom))
         self._tracked_at = self._now()
 
-    def _on_cloud(self, msg: PointCloud2):
-        self._cloud = msg
+    def _on_cloud(self, raw: bytes):
+        self._cloud.store(raw)      # decoded only if a move asks for it
 
     def _on_drive(self, msg: DriveCommand):
         if self._executor is None:
@@ -335,13 +335,12 @@ class ControllerNode(LifecycleNode):
 
     def _lidar_in_ground(self):
         """The newest cloud in `frames.ground`, or None with a logged reason."""
-        cloud = self._cloud
+        cloud = self._cloud.get()
         if cloud is None:
             return None
         ground = self._get('frames.ground')
         try:
-            transform = self._buffer.lookup_transform(
-                ground, cloud.header.frame_id, cloud.header.stamp,
+            transform = lookup_waiting(self._buffer, ground, cloud.header.frame_id, cloud.header.stamp,
                 rclpy.duration.Duration(seconds=float(self._get('frames.tf_timeout'))))
         except Exception as error:
             self.get_logger().warning(f'tf {ground} <- {cloud.header.frame_id}: '
@@ -405,7 +404,10 @@ class ControllerNode(LifecycleNode):
             self._start_pose = self._pose
 
         geometry, note = self._geometry(now)
-        points = self._lidar_in_ground()
+        # Only the straight moves read the LiDAR (drive.step); CLOSE and STOP
+        # never do, so the cloud is not decoded and transformed for them.
+        points = (self._lidar_in_ground()
+                  if self._executor.mode in ('REVERSE', 'BACKOUT', 'INSERT') else None)
         new_frame = self._frames_seen != self._frames_stepped
         self._frames_stepped = self._frames_seen
         result = self._executor.step(geometry=geometry, lidar_points=points,

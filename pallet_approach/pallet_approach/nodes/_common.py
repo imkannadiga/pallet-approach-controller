@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import array as pyarray
+
 import functools
+import time
 import traceback
 
 import numpy as np
@@ -94,7 +97,10 @@ def points_to_cloud(points, frame_id: str, stamp):
     cloud.point_step = 12
     cloud.row_step = 12 * len(array)
     cloud.is_dense = True
-    cloud.data = array.tobytes()
+    # array.array, not bytes: rclpy checks a bytes value element by element in
+    # Python (58.5 ms for a 640x360 image, measured 2026-10-22), an array.array
+    # of typecode 'B' is copied in C (1.3 ms).
+    cloud.data = pyarray.array('B', array.tobytes())
     return cloud
 
 
@@ -118,3 +124,54 @@ def logged_transition(callback):
                 f'{callback.__name__} raised:\n{traceback.format_exc()}')
             raise
     return wrapper
+
+
+def lookup_waiting(buffer, target: str, source: str, stamp, timeout=None):
+    """`buffer.lookup_transform`, but waiting by SLEEPING, not spinning.
+
+    rclpy's tf2 `lookup_transform(..., timeout)` waits in a hot loop. Measured
+    2026-10-22 with py-spy: 81 % of fork_overlay's CPU was `can_transform`,
+    the node at 87 % of a core, every time tf ran behind the image. On the
+    Jetson that core is taken from perception. Here the wait polls every 5 ms
+    and sleeps in between, which releases the GIL so the listener's own
+    thread (`spin_thread=True`, see the nodes) can deliver the transform being
+    waited for. Same timeout, same exceptions: after the deadline it makes the
+    ordinary lookup, which raises exactly what it always did.
+
+    `timeout` is an rclpy Duration, seconds as a float, or None for no wait.
+    The deadline is wall time, so it means the same in sim time and real time.
+    """
+    seconds = 0.0
+    if timeout is not None:
+        seconds = (timeout.nanoseconds * 1e-9 if hasattr(timeout, 'nanoseconds')
+                   else float(timeout))
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline and not buffer.can_transform(target, source, stamp):
+        time.sleep(0.005)
+    return buffer.lookup_transform(target, source, stamp)
+
+
+class LatestRaw:
+    """The newest message of one topic, kept serialized and decoded on demand.
+
+    For big messages a node only sometimes reads: subscribe with `raw=True`,
+    `store` every arrival (a reference, no work), and `get` decodes the newest
+    one the first time it is asked for and caches it until the next arrival.
+    A 64 x 1024 Ouster cloud is ~1.6 MB at 10 Hz; the tracker reads one per
+    estimate and the controller one per tick only while it drives.
+    """
+
+    def __init__(self, msg_type):
+        self._type = msg_type
+        self._raw = None
+        self._decoded = None
+
+    def store(self, raw: bytes) -> None:
+        self._raw = raw
+        self._decoded = None
+
+    def get(self):
+        if self._decoded is None and self._raw is not None:
+            from rclpy.serialization import deserialize_message
+            self._decoded = deserialize_message(self._raw, self._type)
+        return self._decoded

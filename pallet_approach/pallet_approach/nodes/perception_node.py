@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 import rclpy
+from rclpy.serialization import deserialize_message
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
@@ -27,6 +28,7 @@ from pallet_approach.perception import flatten_side
 from pallet_approach.rate_limit import FrameGate
 from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.nodes._common import (
+    lookup_waiting,
     image_to_array,
     intrinsics_from_camera_info,
     logged_transition,
@@ -242,7 +244,7 @@ class PerceptionNode(LifecycleNode):
     @logged_transition
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self)
+        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=True)
         self._publisher = self.create_lifecycle_publisher(
             PalletEstimateMsg, '~/estimate', 10)
         # Diagnostics are a few hundred bytes of text at 1 Hz, so they are safe
@@ -289,9 +291,14 @@ class PerceptionNode(LifecycleNode):
         self._warned = False
         self._latest = None
         self._gate.reset(self._now())
+        # raw=True: the callback gets the serialized bytes, and only the frames
+        # actually processed are deserialized. Converting a 1280x720 32FC1
+        # image into a Python message costs 4.2 ms on a laptop core (measured
+        # 2026-10-22), about twice that on an Orin; at the ZED's 37 Hz that is
+        # 16-30 % of a core spent on frames the rate gate then drops.
         self._depth_sub = self.create_subscription(
             Image, self.get_parameter('topics.depth').value,
-            self._on_depth, SENSOR_QOS)
+            self._on_depth, SENSOR_QOS, raw=True)
         period = self.get_parameter('diagnostics_period').value
         if period > 0:
             self._diag_timer = self.create_timer(period, self._publish_diagnostics)
@@ -335,7 +342,7 @@ class PerceptionNode(LifecycleNode):
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
-    def _on_depth(self, msg: Image):
+    def _on_depth(self, msg: bytes):
         """Keep the newest frame; process at most `max_rate` times a second.
 
         Depth arrives at ~37 Hz and one frame costs ~90 ms, so the node cannot
@@ -355,7 +362,7 @@ class PerceptionNode(LifecycleNode):
         if not self._gate.offer(self._now()):
             return
         try:
-            self._process(self._latest)
+            self._process(deserialize_message(self._latest, Image))
         finally:
             self._gate.finished(self._now())
 
@@ -430,8 +437,7 @@ class PerceptionNode(LifecycleNode):
             # clock before stage 3.
             lookup_time = (rclpy.time.Time() if mismatched
                            else msg.header.stamp)
-            transform = self._tf_buffer.lookup_transform(
-                ground_frame, camera_frame, lookup_time, timeout)
+            transform = lookup_waiting(self._tf_buffer, ground_frame, camera_frame, lookup_time, timeout)
         except Exception as error:
             self._last_skip = f'tf {ground_frame} <- {camera_frame}: {error}'
             self.get_logger().warning(

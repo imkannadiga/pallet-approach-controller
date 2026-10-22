@@ -704,3 +704,24 @@ def test_the_coordinator_never_spins_itself():
     assert 'MultiThreadedExecutor()' in source
     for forbidden in ('spin_once(', 'spin_until_future_complete(', 'rclpy.spin('):
         assert forbidden not in source, forbidden
+
+
+def test_tf_waits_sleep_and_listeners_have_their_own_thread():
+    """rclpy's lookup_transform(timeout) spins hot, and a listener without its
+    own thread cannot deliver the transform being waited for: 81 % of
+    fork_overlay's CPU, measured 2026-10-22. Every node goes through
+    _common.lookup_waiting, with a threaded listener."""
+    for path in NODES.glob('*_node.py'):
+        source = strip_comments(path.read_text())
+        assert '_buffer.lookup_transform(' not in source, path.name
+        for call in re.findall(r'TransformListener\([^)]*\)', source):
+            assert 'spin_thread=True' in call, (path.name, call)
+
+
+def test_message_payloads_are_assigned_as_array_array():
+    """`msg.data = some_bytes` is checked element by element in Python: 58.5 ms
+    for one 640x360 image (measured 2026-10-22), where array.array('B', ...)
+    takes 1.3 ms."""
+    for path in [*NODES.glob('*.py')]:
+        source = strip_comments(path.read_text())
+        assert not re.search(r'\.data = [\w.]+\.tobytes\(\)', source), path.name

@@ -15,6 +15,8 @@ it needs as arguments -- this file's only job is to keep that function fed.
 
 from __future__ import annotations
 
+import array as pyarray
+
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -174,7 +176,10 @@ class DashboardNode(Node):
         out.encoding = 'bgr8'
         out.is_bigendian = 0
         out.step = out.width * 3
-        out.data = annotated.tobytes()
+        # array.array, not bytes: rclpy checks a bytes value element by element in
+        # Python (58.5 ms for a 640x360 image, measured 2026-10-22), an array.array
+        # of typecode 'B' is copied in C (1.3 ms).
+        out.data = pyarray.array('B', annotated.tobytes())
         self._publisher.publish(out)
 
 

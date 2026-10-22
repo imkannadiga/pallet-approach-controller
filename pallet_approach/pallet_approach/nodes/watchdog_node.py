@@ -50,6 +50,7 @@ from sensor_msgs.msg import CameraInfo, PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
+from pallet_approach.nodes._common import lookup_waiting
 from pallet_approach_interfaces.msg import Health
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
@@ -109,12 +110,14 @@ class WatchdogNode(Node):
                                  lambda _: self._seen('estimate'), RELIABLE)
         self.create_subscription(Odometry, self.get_parameter('topics.odom').value,
                                  lambda _: self._seen('odom'), RELIABLE)
+        # raw=True: only the arrival is timed, so the ~1.6 MB cloud is never
+        # decoded here.
         self.create_subscription(PointCloud2, self.get_parameter('topics.lidar').value,
-                                 lambda _: self._seen('lidar'), BEST_EFFORT)
+                                 lambda _: self._seen('lidar'), BEST_EFFORT, raw=True)
         self.create_subscription(String, '/coordinator/state', self._on_state, RELIABLE)
 
         self._buffer = Buffer()
-        self._listener = TransformListener(self._buffer, self)
+        self._listener = TransformListener(self._buffer, self, spin_thread=True)
 
         self.create_timer(1.0 / float(self.get_parameter('publish_rate').value),
                           self._publish_health)
@@ -210,8 +213,7 @@ class WatchdogNode(Node):
         ground = self.get_parameter('frames.ground').value
         optical = self.get_parameter('frames.camera_optical').value
         try:
-            transform = self._buffer.lookup_transform(
-                ground, optical, rclpy.time.Time())
+            transform = lookup_waiting(self._buffer, ground, optical, rclpy.time.Time())
         except Exception:
             return
         self._monitor.seen('tf', stamp_to_seconds(transform.header.stamp))

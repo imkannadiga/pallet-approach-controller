@@ -33,8 +33,11 @@ see `docs/SYSTEM.md`. This node's own job is unchanged.
 
 from __future__ import annotations
 
+import array as pyarray
+
 import numpy as np
 import rclpy
+from rclpy.serialization import deserialize_message
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
@@ -48,7 +51,7 @@ from pallet_approach import fork_overlay
 from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.dashboard import STATE_COLOR_KEYS as STATE_COLORS
 from pallet_approach.model import Plane
-from pallet_approach.nodes._common import image_to_array, intrinsics_from_camera_info
+from pallet_approach.nodes._common import image_to_array, intrinsics_from_camera_info, lookup_waiting
 from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matrix
 
 SENSOR_QOS = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
@@ -97,14 +100,18 @@ class ForkOverlayNode(Node):
             if self.get_parameter(f'{prefix}.enabled').value else None)
 
         self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self)
+        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=True)
         self._publisher = self.create_publisher(Image, '~/image', SENSOR_QOS)
 
         self.create_subscription(CameraInfo,
                                  self.get_parameter('topics.left_camera_info').value,
                                  self._on_camera_info, SENSOR_QOS)
+        # raw=True, and deserialized only once the 5 Hz check passes: a ZED
+        # colour frame is 3.7 MB, arrives at ~37 Hz and would otherwise cost a
+        # Python conversion for every frame this node then drops (see
+        # perception_node, measured 2026-10-22).
         self.create_subscription(Image, self.get_parameter('topics.left_image').value,
-                                 self._on_image, SENSOR_QOS)
+                                 self._on_image, SENSOR_QOS, raw=True)
         self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
                                  self._on_estimate, 10)
         self.create_subscription(String, '/coordinator/state', self._on_state, 10)
@@ -209,7 +216,7 @@ class ForkOverlayNode(Node):
     def _on_state(self, msg: String):
         self._state = msg.data
 
-    def _on_image(self, msg: Image):
+    def _on_image(self, raw: bytes):
         if self._intrinsics is None:
             return
         now = self.get_clock().now().nanoseconds * 1e-9
@@ -251,12 +258,10 @@ class ForkOverlayNode(Node):
             # the extrinsic correction is applied by the same code path, then
             # invert it. Correcting an already-inverted transform would need the
             # inverse correction too, which is one easy sign error away.
-            transform = self._tf_buffer.lookup_transform(
-                ground_frame, camera_frame, msg.header.stamp, timeout)
+            transform = lookup_waiting(self._tf_buffer, ground_frame, camera_frame, msg.header.stamp, timeout)
         except Exception as stamped_error:
             try:
-                transform = self._tf_buffer.lookup_transform(
-                    ground_frame, camera_frame, rclpy.time.Time(), timeout)
+                transform = lookup_waiting(self._tf_buffer, ground_frame, camera_frame, rclpy.time.Time(), timeout)
             except Exception as error:
                 # Neither lookup worked -- the ORIGINAL (stamped) failure is
                 # the informative one; the latest-transform attempt failing
@@ -320,7 +325,10 @@ class ForkOverlayNode(Node):
         out.encoding = 'bgr8'
         out.is_bigendian = 0
         out.step = out.width * 3
-        out.data = annotated.tobytes()
+        # array.array, not bytes: rclpy checks a bytes value element by element in
+        # Python (58.5 ms for a 640x360 image, measured 2026-10-22), an array.array
+        # of typecode 'B' is copied in C (1.3 ms).
+        out.data = pyarray.array('B', annotated.tobytes())
         self._publisher.publish(out)
         self._last_published = now
 

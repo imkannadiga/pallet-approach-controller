@@ -84,6 +84,14 @@ RUN source /opt/ros/humble/setup.bash \
 # wrong interface:
 #   -v /ros2_ws/src/scout_nlp/configs:/dds:ro \
 #   -e FASTRTPS_DEFAULT_PROFILES_FILE=/dds/fastdds_jetson.xml
+# One BLAS thread per process. NumPy's OpenBLAS otherwise starts a worker per
+# core in EVERY Python node and lets them spin after each matrix operation:
+# measured 2026-10-22, three such threads held fork_overlay at 85 % of a core
+# while its Python did almost nothing. A dozen nodes on a 12-core Orin would
+# mean a dozen spinning pools. The matrices here are small (3x3 transforms,
+# plane fits), where one thread is as fast anyway.
+ENV OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+
 ENV ROS_DOMAIN_ID=10
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 ENV ROS_LOCALHOST_ONLY=0
