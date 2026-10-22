@@ -921,6 +921,18 @@ CHECKING. The midpoint is also the point the forks aim at, so a stable
 midpoint is the stability that matters. Synthetic numbers: re-check the real
 ZED's scatter on a bag before relying on the 30 mm. (Athreya, 2026-10-22)
 
+**D61. The overhang rule is switched off for now.** `go_nogo.check_overhang:
+false`: nothing is assumed to stick out of the pallet towards the robot.
+Every GO says "overhang NOT checked", so a GO is never read as "checked and
+clear". *Why:* the rule fires on any single point above the pocket opening
+more than `overhang_margin` (20 mm) in front of the face plane, and depth
+noise alone does that: in the Gazebo sim, with 1 cm of noise and no load,
+77 of the pallet's own deck points sat 20-44 mm out and the run was refused
+(2026-10-22). The real ZED scatters more. To switch it back on, first make
+it noise-robust; the option discussed was per-strip medians across the face
+width (5 cm strips, at least 20 points each, the same 20 mm margin).
+(Athreya, 2026-10-22)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

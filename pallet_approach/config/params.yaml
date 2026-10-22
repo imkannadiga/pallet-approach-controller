@@ -729,6 +729,13 @@ coordinator:
       min_pocket_count: 2
       # a load point this far in front of the fitted face counts as overhang
       overhang_margin: 0.020
+      # [choice, Athreya 2026-10-22] D61. OFF for now: nothing is assumed to
+      # stick out of the pallet. The rule as written fires on any single
+      # point beyond the margin, and 1 cm of depth noise put 77 of the pallet's
+      # own deck points 20-44 mm out in the sim. Every GO says the overhang was
+      # not checked. Before switching it back on, make it robust to noise
+      # (e.g. per-strip medians across the face, discussed 2026-10-22).
+      check_overhang: false
       # clear volume that must be empty in front of each pocket
       pocket_clearance_depth: 0.10
       # stability over the last N accepted frames

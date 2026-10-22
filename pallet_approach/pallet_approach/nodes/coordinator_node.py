@@ -274,6 +274,7 @@ class CoordinatorNode(Node):
             ('go_nogo.pocket_width_tolerance', 0.040),
             ('go_nogo.pocket_height_tolerance', 0.030),
             ('go_nogo.min_pocket_count', 2), ('go_nogo.overhang_margin', 0.020),
+            ('go_nogo.check_overhang', True),
             ('go_nogo.pocket_clearance_depth', 0.10),
             ('go_nogo.stability_frames', 5), ('go_nogo.max_position_spread', 0.030),
             ('go_nogo.max_yaw_spread', 0.035),
@@ -619,7 +620,8 @@ class CoordinatorNode(Node):
         params = self._group_params('go_nogo', (
             'min_face_inliers', 'max_yaw_error', 'max_lateral_offset',
             'pocket_width_tolerance', 'pocket_height_tolerance',
-            'min_pocket_count', 'overhang_margin', 'pocket_clearance_depth',
+            'min_pocket_count', 'overhang_margin', 'check_overhang',
+            'pocket_clearance_depth',
             'stability_frames', 'max_position_spread', 'max_yaw_spread'))
         params['sides'] = self._sides()
         try:

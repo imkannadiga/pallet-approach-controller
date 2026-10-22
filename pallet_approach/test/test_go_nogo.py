@@ -258,3 +258,26 @@ def test_a_moving_pocket_midpoint_is_still_unstable():
     assert not ok and 'pocket midpoint' in reason
 
 
+def test_a_switched_off_overhang_check_is_reported_not_passed(go_nogo_params, square_pallet):
+    # D61: off for now. A load 0.3 m in front of the face, above the deck,
+    # must neither block the GO nor be reported as checked.
+    points, _ = square_pallet
+    estimate = make_estimate()
+    normal = np.asarray(estimate.normal, dtype=float)
+    toward_robot = -normal if normal[0] > 0 else normal
+    load = estimate.position + toward_robot * 0.3 + np.array([0.0, 0.0, 0.10])
+    history = [make_estimate(distance=2.0 + 0.001 * i) for i in range(5)]
+    params = dict(go_nogo_params, check_overhang=False)
+    decision = go_nogo.evaluate(estimate, at_standoff(estimate), history, params,
+                                load_points=np.vstack([points, load[None, :]]),
+                                scene_points=points)
+    assert decision.go, decision.reason
+    assert 'overhang' not in decision.checks
+    assert 'overhang NOT checked' in decision.reason
+    # and switched on, the same load is refused
+    on = go_nogo.evaluate(estimate, at_standoff(estimate), history, go_nogo_params,
+                          load_points=np.vstack([points, load[None, :]]),
+                          scene_points=points)
+    assert not on.go and on.reason.startswith('overhang')
+
+

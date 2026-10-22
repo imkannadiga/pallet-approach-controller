@@ -400,8 +400,16 @@ def evaluate(
     run('yaw', check_yaw(estimate, robot, params['max_yaw_error']))
     run('lateral_offset', check_lateral_offset(
         estimate, robot, params['max_lateral_offset']))
-    run('overhang', check_overhang(
-        estimate, load_points, params['overhang_margin']))
+    # D61 (Athreya, 2026-10-22): switched off for now -- nothing is assumed to
+    # stick out of the pallet. As written the rule fires on any single depth
+    # point more than the margin in front of the face, and depth noise alone
+    # put 77 of the pallet's own deck points 20-44 mm out in the sim. It is
+    # reported as skipped in every decision rather than as passed.
+    if params.get('check_overhang', True):
+        run('overhang', check_overhang(
+            estimate, load_points, params['overhang_margin']))
+    else:
+        reasons['overhang'] = 'not checked (go_nogo.check_overhang is false, D61)'
     run('pocket_clearance', check_pocket_clearance(
         estimate, scene_points, params['pocket_clearance_depth']))
 
@@ -415,6 +423,8 @@ def evaluate(
     reason = 'all checks passed'
     if checks.get('pocket_dimensions') is None:
         reason += f' ({reasons["pocket_dimensions"]})'
+    if 'overhang' not in checks:
+        reason += '; overhang NOT checked (D61)'
     return Decision(go=True, reason=reason, checks=checks)
 
 
