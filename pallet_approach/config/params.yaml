@@ -901,6 +901,14 @@ watchdog:
     # does not drive before a confirmed track, so the grace never covers motion.
     first_estimate_grace: 2.0   # s
 
+    # [choice, Athreya 2026-10-22] D64. The coordinator states in which
+    # perception's estimate must be fresh: the ones that use the camera. From
+    # LOWERING on, the pockets are out of the camera's view (D16) and the
+    # insertion runs on odometry with the LiDAR stop, which stay required in
+    # every state. Required everywhere, it aborted 5 of 5 sim pickups ~0.5 m
+    # into the insertion.
+    estimate_required_states: [CONFIRMING, CLASSIFYING, BACKING_OFF, CLOSING, CHECKING]
+
     min_rate:
       camera_info: 10.0         # twice what perception consumes
       estimate: 2.5             # half the 5 Hz target

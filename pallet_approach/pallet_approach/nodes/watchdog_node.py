@@ -55,6 +55,8 @@ from pallet_approach_interfaces.msg import Health
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach.health import (
+    PERCEPTION_STATES,
+    phase_for_state,
     ALWAYS,
     NEVER,
     WHILE_RUNNING,
@@ -146,6 +148,7 @@ class WatchdogNode(Node):
             ('max_age.odom', 0.20), ('min_rate.odom', 20.0),
             ('max_age.lidar', 0.50), ('min_rate.lidar', 5.0),
             ('max_age.tf', 0.30), ('first_estimate_grace', 2.0),
+            ('estimate_required_states', list(PERCEPTION_STATES)),
         ):
             self.declare_parameter(name, default)
 
@@ -224,7 +227,10 @@ class WatchdogNode(Node):
         self._poll_tf()
         now = self._now()
         running = self._state not in NOT_RUNNING
-        report = self._monitor.check(now, WHILE_RUNNING if running else ALWAYS,
+        # D64: the estimate is required only in the states that use the camera.
+        phase = phase_for_state(
+            self._state, self.get_parameter('estimate_required_states').value)
+        report = self._monitor.check(now, phase,
                                      running_since=self._running_since)
         self._report = report
 

@@ -965,6 +965,16 @@ an obstruction when switched on. To switch it back on, first make it robust;
 the option discussed was to start the box 3 cm out, inset its sides 2 cm, and
 require at least 10 points. (Athreya, 2026-10-22)
 
+**D64. Perception's estimate has to be fresh only while the camera is in
+use.** `watchdog.estimate_required_states`: CONFIRMING, CLASSIFYING,
+BACKING_OFF, CLOSING, CHECKING. From LOWERING on the estimate is not judged;
+odometry, the LiDAR, the camera stream and tf stay required in every state.
+Amends D9. *Why:* D9 required a fresh estimate in every state of a run, but by
+D16 the pockets leave the camera's view about 0.9 m ahead and the insertion is
+blind by design, running on odometry with the LiDAR as its stop. Measured on
+the GPU machine, 2026-10-22: 5 of 5 sim pickups aborted ~0.5 m into the
+insertion with "estimate 0.53-0.93 s old". (Athreya, 2026-10-22)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

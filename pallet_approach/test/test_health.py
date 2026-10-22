@@ -208,3 +208,31 @@ def test_no_run_start_means_no_grace():
     monitor = HealthMonitor({'estimate': Limits(max_age=0.5, when=WHILE_RUNNING,
                                                 first_message_grace=2.0)})
     assert not monitor.check(11.0, WHILE_RUNNING).ok
+
+
+def test_the_estimate_is_required_only_while_the_camera_is_used():
+    # D64: from LOWERING on, the insertion is blind by design.
+    from pallet_approach.health import phase_for_state
+    for state in ('CONFIRMING', 'CLASSIFYING', 'BACKING_OFF', 'CLOSING', 'CHECKING'):
+        assert phase_for_state(state) == WHILE_RUNNING
+    for state in ('LOWERING', 'INSERTING', 'LIFTING', 'BACKING_OUT', 'IDLE', 'DONE'):
+        assert phase_for_state(state) == ALWAYS
+    monitor = HealthMonitor({'estimate': Limits(max_age=0.5, when=WHILE_RUNNING),
+                             'odom': Limits(max_age=0.2)})
+    monitor.seen('estimate', 0.0)
+    monitor.seen('odom', 9.9)
+    assert monitor.check(10.0, phase_for_state('INSERTING')).ok       # stale estimate, fine
+    assert not monitor.check(10.0, phase_for_state('CLOSING')).ok     # same, not fine
+    assert not monitor.check(10.5, phase_for_state('INSERTING')).ok   # odometry still required
+
+
+def test_the_perception_states_are_real_coordinator_states():
+    import yaml, pathlib
+    from pallet_approach.coordinator import State
+    from pallet_approach.health import PERCEPTION_STATES
+    params = yaml.safe_load((pathlib.Path(__file__).resolve().parent.parent
+                             / 'config' / 'params.yaml').read_text())
+    listed = params['watchdog']['ros__parameters']['estimate_required_states']
+    names = {s.value for s in State}
+    assert set(listed) <= names and set(PERCEPTION_STATES) <= names
+    assert set(listed) == set(PERCEPTION_STATES)

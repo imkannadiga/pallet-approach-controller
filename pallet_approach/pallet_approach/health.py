@@ -243,3 +243,20 @@ def as_float(value: float | None) -> float:
     that is obviously absent.
     """
     return float('nan') if value is None else float(value)
+
+
+PERCEPTION_STATES = ('CONFIRMING', 'CLASSIFYING', 'BACKING_OFF', 'CLOSING', 'CHECKING')
+"""Coordinator states in which the camera is in use (D64)."""
+
+
+def phase_for_state(state: str, perception_states=PERCEPTION_STATES) -> str:
+    """WHILE_RUNNING only in the states that use the camera; ALWAYS otherwise.
+
+    D64 (Athreya, 2026-10-22): perception's estimate is required to be fresh
+    only while the coordinator is using it. From LOWERING on, the camera
+    cannot see the pockets (they leave its view ~0.9 m ahead, D16) and the
+    insertion runs on odometry with the LiDAR as its stop, both of which stay
+    required in every state. Requiring the estimate there aborted 5 of 5
+    pickups in the Gazebo sim half a metre into the insertion.
+    """
+    return WHILE_RUNNING if state in tuple(perception_states) else ALWAYS
