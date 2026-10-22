@@ -133,3 +133,15 @@ def test_the_depth_filter_removes_points_inside_a_blade_and_nothing_else():
     assert np.isfinite(np.delete(out.ravel(), v * 1280 + u)).all()
     assert np.array_equal(mask_boxes(depth, fx, fy, cx, cy, camera, []), depth)
 
+
+def test_the_drive_wheels_grip_and_the_rear_wheels_slide():
+    # The first version left the rear wheels at full friction with the mass over
+    # them: the truck did not turn while odometry said 38 deg (2026-10-22).
+    root = ET.fromstring(URDF)
+    mu = {g.get('reference'): float(g.find('mu1').text) for g in root.findall('gazebo')
+          if g.find('mu1') is not None}
+    assert mu['front_left_wheel_link'] >= 1.0 and mu['rear_left_wheel_link'] <= 0.05
+    front_x = GEOMETRY['front_left']['xyz'][0]
+    rear_x = GEOMETRY['rear_left']['xyz'][0]
+    assert rear_x < forklift_model.BODY_COM_X < front_x
+

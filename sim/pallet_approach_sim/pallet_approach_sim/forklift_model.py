@@ -33,6 +33,15 @@ CAMERA_MOUNT = (0.40, 0.0, 0.148)        # zed2_camera_link
 LIDAR_MOUNT = (0.173, 0.0, 0.3321)       # os_sensor_base_link
 
 BODY_MASS = 400.0
+# Between the axles, nearer the front: with it over the rear wheels (the first
+# version, -0.6) the driven front wheels carried too little weight and slipped
+# -- commanded a 38 deg turn, the truck did not turn at all (measured
+# 2026-10-22), and odometry, which counts wheel turns, believed it had.
+BODY_COM_X = -0.25
+# Front (driven) wheels grip; rear wheels are casters in effect: nearly no
+# friction, so they slide sideways when the truck turns in place.
+FRONT_MU = 1.2
+REAR_MU = 0.02
 CARRIAGE_MASS = 60.0
 LIFT_JOINT = 'fork_lift'
 LIFT_TOP = 1.5                           # m of travel above the mesh's resting pose
@@ -75,7 +84,7 @@ def forklift_urdf(geometry: dict, mesh_uri: str) -> str:
         'base_link', 'body.obj',
         collisions=[(chassis, (0, 0, 0), _box(chassis_size)),
                     (mast, (0, 0, 0), _box((0.18, hi[1] - lo[1] - 0.2, 1.9)))],
-        mass=BODY_MASS, com=(-0.6, 0.0, 0.35 - base_z), box=(1.9, 1.0, 1.2)))
+        mass=BODY_MASS, com=(BODY_COM_X, 0.0, 0.35 - base_z), box=(1.9, 1.0, 1.2)))
     parts.append('<link name="base_footprint"/>')
     parts.append(fixed('base_footprint_joint', 'base_link', 'base_footprint', (0, 0, -base_z)))
 
@@ -95,6 +104,11 @@ def forklift_urdf(geometry: dict, mesh_uri: str) -> str:
         parts.append(f'<joint name="{name}_wheel" type="continuous"><parent link="base_link"/>'
                      f'<child link="{name}_wheel_link"/><origin xyz="{_v((x, y, z - base_z))}"/>'
                      '<axis xyz="0 1 0"/></joint>')
+
+    for name, mu in (('front_left', FRONT_MU), ('front_right', FRONT_MU),
+                     ('rear_left', REAR_MU), ('rear_right', REAR_MU)):
+        parts.append(f'<gazebo reference="{name}_wheel_link"><mu1>{mu}</mu1><mu2>{mu}</mu2>'
+                     '</gazebo>')
 
     # --- carriage and forks, on the lift.
     length = tine['tip_x'] - tine['heel_x']
