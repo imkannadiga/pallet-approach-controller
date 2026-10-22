@@ -744,6 +744,14 @@ coordinator:
       check_overhang: false
       # clear volume that must be empty in front of each pocket
       pocket_clearance_depth: 0.10
+      # [choice, Athreya 2026-10-22] D63. OFF for now: the pocket approaches
+      # are assumed clear. The rule fires on any single point in a box that
+      # starts 1-2 mm in front of the face with its sides on the block edges,
+      # and depth noise put 1-5 block-edge points 8-44 mm out in 10 of 10 sim
+      # runs. Every GO says it was not checked. Before switching it back on,
+      # make it robust (e.g. start the box 3 cm out, inset its sides 2 cm,
+      # and require at least 10 points, discussed 2026-10-22).
+      check_pocket_clearance: false
       # stability over the last N accepted frames
       stability_frames: 5
       max_position_spread: 0.030  # m

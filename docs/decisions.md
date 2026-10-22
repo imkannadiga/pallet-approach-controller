@@ -953,6 +953,18 @@ sim the face yaw had failed stability at 2.4 deg on a parked robot. Athreya's
 method, 2026-10-22: "estimate the centre of both pocket squares, draw a line
 through, find the midpoint and draw a normal outwards".
 
+**D63. The pocket clearance rule is switched off for now.**
+`go_nogo.check_pocket_clearance: false`: the fork paths into the pockets are
+assumed clear. Every GO says "pocket clearance NOT checked". *Why:* the rule
+requires a box in front of each pocket (pocket width and height, 1-2 mm to
+100 mm out from the face) to hold no point at all, and its sides run along the
+block edges, so depth noise from those edges is enough: in 10 of 10 Gazebo
+runs on the GPU machine (2026-10-22), every other rule passed and this one
+refused with 1-5 points 8-44 mm out. The tests still pin that the rule refuses
+an obstruction when switched on. To switch it back on, first make it robust;
+the option discussed was to start the box 3 cm out, inset its sides 2 cm, and
+require at least 10 points. (Athreya, 2026-10-22)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

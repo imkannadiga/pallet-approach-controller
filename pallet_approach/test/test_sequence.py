@@ -253,9 +253,14 @@ def test_something_in_a_pocket_refuses(params):
     box = np.array([position + normal * 0.05 + axis * (-0.1825 + dx)
                     + np.array([0.0, 0.0, 0.05 - position[2] - 0.025 + dz])
                     for dx in (-0.02, 0.0, 0.02) for dz in (-0.02, 0.0, 0.02)])
-    run = fresh(obstruction=box).run(robot)
+    # The rule is switched off in params.yaml (D63); this pins that it still
+    # works when switched back on, and the second run what "off" now means.
+    rules_on = Q.load()
+    rules_on['go_nogo']['check_pocket_clearance'] = True
+    run = Q.Rig(rules_on, obstruction=box).run(robot)
     assert run.outcome == 'NO_GO'
     assert 'pocket' in run.reason
+    assert fresh(obstruction=box).run(S.facing(3.5)).outcome != 'NO_GO'   # D63: off
 
 
 def test_a_pallet_whose_face_cannot_be_checked_refuses(params):
@@ -266,8 +271,11 @@ def test_a_pallet_whose_face_cannot_be_checked_refuses(params):
     from pallet_approach import go_nogo
     from pallet_approach.model import Pose2D
     estimate = S.truth(S.facing(1.75))
+    # Both rules are switched off in params.yaml (D61, D63); the behaviour is
+    # pinned for when they are switched back on.
+    rules_on = dict(params['go_nogo'], check_overhang=True, check_pocket_clearance=True)
     decision = go_nogo.evaluate(estimate, Pose2D(0.0, 0.0, 0.0),
-                                [estimate] * 5, params['go_nogo'])
+                                [estimate] * 5, rules_on)
     assert not decision.go
     assert 'no points' in decision.reason
 

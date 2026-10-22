@@ -437,8 +437,17 @@ def evaluate(
             estimate, load_points, params['overhang_margin']))
     else:
         reasons['overhang'] = 'not checked (go_nogo.check_overhang is false, D61)'
-    run('pocket_clearance', check_pocket_clearance(
-        estimate, scene_points, params['pocket_clearance_depth']))
+    # D63 (Athreya, 2026-10-22): switched off for now -- the pocket approaches
+    # are assumed clear. As written it fires on any single point in a box that
+    # starts 1-2 mm in front of the face and whose sides run along the block
+    # edges; depth noise put 1-5 block-edge points 8-44 mm out in 10 of 10
+    # Gazebo runs that passed every other rule.
+    if params.get('check_pocket_clearance', True):
+        run('pocket_clearance', check_pocket_clearance(
+            estimate, scene_points, params['pocket_clearance_depth']))
+    else:
+        reasons['pocket_clearance'] = ('not checked '
+                                       '(go_nogo.check_pocket_clearance is false, D63)')
 
     order = ('face_quality', 'stability', 'pocket_count', 'pocket_dimensions',
              'yaw', 'lateral_offset', 'overhang', 'pocket_clearance')
@@ -452,6 +461,8 @@ def evaluate(
         reason += f' ({reasons["pocket_dimensions"]})'
     if 'overhang' not in checks:
         reason += '; overhang NOT checked (D61)'
+    if 'pocket_clearance' not in checks:
+        reason += '; pocket clearance NOT checked (D63)'
     return Decision(go=True, reason=reason, checks=checks)
 
 

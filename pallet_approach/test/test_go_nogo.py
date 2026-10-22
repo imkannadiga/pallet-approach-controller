@@ -310,3 +310,23 @@ def test_a_turning_pocket_line_is_still_unstable():
     assert not ok and 'pocket line' in reason
 
 
+def test_a_switched_off_pocket_clearance_check_is_reported_not_passed(go_nogo_params, square_pallet):
+    # D63: off for now. A point squarely in front of a pocket must neither
+    # block the GO nor be reported as checked; switched on, it blocks.
+    points, _ = square_pallet
+    estimate = make_estimate()
+    normal = np.asarray(estimate.normal, dtype=float)
+    toward_robot = -normal if normal[0] > 0 else normal
+    pocket = np.asarray(estimate.pockets[0].center, dtype=float)
+    stray = pocket + toward_robot * 0.05
+    history = [make_estimate(distance=2.0 + 0.001 * i) for i in range(5)]
+    scene = np.vstack([points, stray[None, :]])
+    off = go_nogo.evaluate(estimate, at_standoff(estimate), history,
+                           dict(go_nogo_params, check_pocket_clearance=False),
+                           load_points=points, scene_points=scene)
+    assert off.go, off.reason
+    assert 'pocket_clearance' not in off.checks
+    assert 'pocket clearance NOT checked' in off.reason
+    on = go_nogo.evaluate(estimate, at_standoff(estimate), history, go_nogo_params,
+                          load_points=points, scene_points=scene)
+    assert not on.go and on.reason.startswith('pocket_clearance')
