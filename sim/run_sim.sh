@@ -87,9 +87,30 @@ case "${1:-}" in
       done
     fi
     X11=()
+    # gui:=true shows the Gazebo window, and opens the dashboard in a browser,
+    # on the screen of the machine running this. It works from an SSH session
+    # too (sim/remote.sh up gui:=true): the display is the first local X
+    # server (/tmp/.X11-unix/X1 -> :1) unless SIM_DISPLAY or DISPLAY says
+    # otherwise, and the desktop's own cookie (gdm's) is what lets xhost allow
+    # local containers to draw on it.
+    GUI=false
     if printf '%s\n' "$@" | grep -qx 'gui:=true'; then
-      X11=(-e DISPLAY="${DISPLAY:-:0}" -v /tmp/.X11-unix:/tmp/.X11-unix:ro)
-      xhost +local:docker >/dev/null 2>&1 || true
+      GUI=true
+      SHOW_DISPLAY=${SIM_DISPLAY:-${DISPLAY:-}}
+      if [ -z "$SHOW_DISPLAY" ]; then
+        sock=$(ls /tmp/.X11-unix 2>/dev/null | sed -n 's/^X//p' | head -1)
+        SHOW_DISPLAY=":${sock:-0}"
+      fi
+      SHOW_AUTH=${XAUTHORITY:-}
+      [ -z "$SHOW_AUTH" ] && [ -f "/run/user/$(id -u)/gdm/Xauthority" ] \
+        && SHOW_AUTH=/run/user/$(id -u)/gdm/Xauthority
+      [ -z "$SHOW_AUTH" ] && SHOW_AUTH=$HOME/.Xauthority
+      if ! DISPLAY=$SHOW_DISPLAY XAUTHORITY=$SHOW_AUTH xhost +local: >/dev/null 2>&1; then
+        echo "warning: could not open display $SHOW_DISPLAY (xhost failed);" >&2
+        echo "  the Gazebo window may not appear. Set SIM_DISPLAY / XAUTHORITY." >&2
+      fi
+      X11=(-e DISPLAY="$SHOW_DISPLAY" -e QT_X11_NO_MITSHM=1
+           -v /tmp/.X11-unix:/tmp/.X11-unix:ro)
     fi
     # As root, like the stack container. The base image's default user is uid
     # 1000, and FastDDS's shared-memory segments in /dev/shm are writable only
@@ -120,6 +141,14 @@ case "${1:-}" in
     echo "  ./sim/run_sim.sh status"
     echo "  ./sim/run_sim.sh start approach_only"
     echo "  http://localhost:8889/dashboard"
+    if [ "$GUI" = true ] && [ "${SIM_OPEN_BROWSER:-true}" = true ]; then
+      # The dashboard next to the Gazebo window: once MediaMTX is serving.
+      # SIM_OPEN_BROWSER=false skips it (batch_runs.sh after its first run:
+      # the open page reconnects to the restarted stream by itself).
+      ( sleep 25; DISPLAY=$SHOW_DISPLAY XAUTHORITY=$SHOW_AUTH \
+          xdg-open http://localhost:8889/dashboard >/dev/null 2>&1 ) &
+      echo "  Gazebo window and dashboard on display $SHOW_DISPLAY"
+    fi
     ;;
 
   start)
