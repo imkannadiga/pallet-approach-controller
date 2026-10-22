@@ -3,7 +3,7 @@
 # here is the robot's own value -- the point of the sim is to run the real
 # configuration, so this file stays as short as it can.
 #
-# Only two things are genuinely different in the sim:
+# Only three things are genuinely different in the sim:
 #
 # 1. Time comes from Gazebo's /clock. Every node block in params.yaml pins
 #    use_sim_time: false, and a node block beats /**, so it is overridden here
@@ -21,6 +21,13 @@
     frames:
       extrinsic_correction:
         enabled: false
+      # 3. Sim plumbing is slower than the ZED's. The camera's dynamic tf link
+      #    is relayed per frame by a Python node (sim/.../camera_tf.py), and on
+      #    a loaded laptop it reached perception's buffer more than 0.15 s after
+      #    the image: 18 % of frames were dropped as "extrapolation into the
+      #    future" (measured 2026-10-22). Waiting longer for it costs nothing on
+      #    the frames that would have succeeded anyway.
+      tf_timeout: 0.5
 
 pallet_perception:
   ros__parameters:

@@ -96,7 +96,13 @@ case "${1:-}" in
     # by their owner: discovery then works (UDP) but no message from Gazebo
     # ever reaches the stack -- `ros2 topic list` shows /clock and every
     # sensor, and nothing arrives.
+    # IGN_IP: Ignition transport (Gazebo <-> the ROS bridge, both in this
+    # container) finds its peers by multicast on the host's network interface.
+    # With the laptop off the network that fails ("Exception sending a
+    # multicast message: Network is unreachable") and no sensor reaches ROS.
+    # Loopback works with or without a network.
     docker run -d --name "$GAZEBO" -u 0 --network host --ipc host "${GPU[@]}" "${X11[@]}" \
+      -e IGN_IP=127.0.0.1 -e GZ_IP=127.0.0.1 \
       "${ROS_ENV[@]}" "$SIM_IMAGE" bash -lc \
       "source /sim_ws/install/setup.bash && ros2 launch pallet_approach_sim sim.launch.py $*"
     # WebRTC over TCP as well as UDP, advertising 127.0.0.1: then the video
