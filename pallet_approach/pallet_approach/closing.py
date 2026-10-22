@@ -102,8 +102,13 @@ class Geometry:
 
     All three are measured in the estimate's own frame, which is
     `base_footprint` -- so the robot is at the origin facing +x and these are
-    read off one frame with no odometry involved. That is deliberate: the servo
-    should act on what it can see now, not on an integrated position.
+    read off one frame with no odometry involved.
+
+    Since D59 (2026-10-20) the closing loop no longer uses that one-frame
+    version: it takes `geometry_from_track`, the tracker's averaged pallet
+    line placed against the robot's pose now. One frame's normal was too noisy
+    to steer by. `geometry_of` is still what everything that judges a single
+    frame uses (GO/NO-GO, the run-up decision, the harness's ground truth).
     """
 
     range: float
@@ -142,9 +147,38 @@ def geometry_of(estimate: PalletEstimate) -> Geometry:
     """
     center = pocket_center(estimate.pockets, fallback=estimate.position)
     normal = outward_normal(estimate.normal, face_point=center)
-    c = np.asarray(center, dtype=float)[:2]
-    n = normal[:2]
+    return _geometry(np.asarray(center, dtype=float)[:2], normal[:2])
 
+
+def geometry_from_track(center_odom, yaw_odom: float, robot) -> Geometry:
+    """The same three numbers from the FUSED pallet line and the robot's pose
+    now, both in `odom` (D59).
+
+    `geometry_of` reads one frame. Its normal wobbles by about +-0.04 rad from
+    frame to frame (measured 2026-10-20 in the Gazebo sim), and at 3 m that
+    swings the pocket centre line sideways by +-120 mm five times a second --
+    the robot then steers after noise. The pallet does not move, so the
+    tracker averages its pose in `odom`, and this places that averaged line
+    relative to wherever odometry says the robot is now. That also gives a
+    fresh geometry on every control tick rather than only when a frame lands.
+
+    `robot` is a Pose2D of `base_footprint` in `odom` (x, y and yaw are the
+    same as base_link's, see params.yaml frames.ground).
+    """
+    dx = float(center_odom[0]) - robot.x
+    dy = float(center_odom[1]) - robot.y
+    cos_r, sin_r = math.cos(robot.yaw), math.sin(robot.yaw)
+    c = np.array([cos_r * dx + sin_r * dy, -sin_r * dx + cos_r * dy])
+    yaw = float(yaw_odom) - robot.yaw
+    n = np.array([math.cos(yaw), math.sin(yaw)])
+    if c @ n > 0.0:
+        n = -n      # outward, towards the robot, as outward_normal does
+    return _geometry(c, n)
+
+
+def _geometry(c: np.ndarray, n: np.ndarray) -> Geometry:
+    """The algebra shared by both: pocket midpoint `c` and outward normal `n`,
+    2D, in the robot's frame."""
     face_range = float(-c @ n)
     left = np.array([n[1], -n[0]])
     offset = float(-c @ left)

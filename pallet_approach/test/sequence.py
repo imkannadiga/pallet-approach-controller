@@ -34,7 +34,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import simulate as S  # noqa: E402
 
 from pallet_approach import go_nogo  # noqa: E402
-from pallet_approach.closing import geometry_of  # noqa: E402
+from pallet_approach.closing import geometry_from_track, geometry_of  # noqa: E402
 from pallet_approach.coordinator import (  # noqa: E402
     machine_params,
     Coordinator,
@@ -197,6 +197,8 @@ class Rig:
         coordinator node keeps. Frames taken while closing span real travel and
         the stability rule reads that as an unstable estimate."""
         self.requested = None
+        self._estimate = None
+        self._cloud = None
         self.commands: list = []
         """Every (linear, angular) actually sent, so a test can assert that no
         run ever exceeded the limits rather than trusting the clamp."""
@@ -216,9 +218,13 @@ class Rig:
 
         while now < limit and self.machine.state not in (State.DONE,
                                                          State.ABORTED):
-            if now >= next_frame:
-                command = self._frame(robot, odom, now, states, trace)
+            new_frame = now >= next_frame
+            if new_frame:
+                self._frame(robot, odom, now, states, trace)
                 next_frame += frame_dt
+            # Every tick, like the controller node: CLOSE steers onto the fused
+            # pallet line against odometry NOW (D59), not once per frame.
+            command = self._drive(odom, now, states, trace, new_frame)
             before = (robot.x, robot.y)
             robot.step(command[0], command[1], dt)
             self.executor.advance(math.hypot(robot.x - before[0],
@@ -281,6 +287,10 @@ class Rig:
             self._note(self.machine.on_decision(decision, now), states, trace, now)
 
         self._note(self.machine.on_tick(now), states, trace, now)
+        self._estimate, self._cloud = estimate, cloud
+
+    def _drive(self, odom, now, states, trace, new_frame=True):
+        """The controller node's tick: one executor step."""
 
         request = self.machine._drive_for(self.machine.state)
         if request is None:
@@ -293,9 +303,15 @@ class Rig:
                                         request.side))
             self.requested = request
 
-        result = self.executor.step(
-            geometry=geometry if self.tracker.confirmed else None,
-            lidar_points=cloud)
+        track = self.tracker.track
+        if not self.tracker.confirmed or self._estimate is None:
+            geometry = None
+        elif request.mode == 'CLOSE':
+            geometry = geometry_from_track(track.center, track.yaw, odom)
+        else:
+            geometry = geometry_of(self._estimate)
+        result = self.executor.step(geometry=geometry, lidar_points=self._cloud,
+                                    new_frame=new_frame)
         self.commands.append((result.command.linear, result.command.angular))
         self._note(self.machine.on_drive(DriveInfo(
             mode=request.mode, arrived=result.arrived, blocked=result.blocked,

@@ -11,6 +11,7 @@ import math
 import numpy as np
 import pytest
 
+from pallet_approach.approach import wrap_angle as wrap
 from pallet_approach.model import PalletEstimate, Plane, Pocket, Pose2D
 from pallet_approach.tracker import Tracker, cross_check_face
 
@@ -185,8 +186,16 @@ def test_a_turning_robot_is_also_taken_out():
     tracker = Tracker(PARAMS)
     for i in range(6):
         turn = math.radians(2.0 * i)
-        tracker.update(estimate(yaw_offset=-turn), Pose2D(0.0, 0.0, turn), 0.2 * i)
+        # The pallet's centre seen from the turned robot: (3, 0) rotated by
+        # -turn. (Until 2026-10-20 this held it at (3, 0) in the robot's frame,
+        # which slides it 0.52 m along an arc in odom; frame-to-frame gating
+        # never noticed, gating against the fused track does.)
+        tracker.update(estimate(distance=3.0 * math.cos(turn),
+                                lateral=-3.0 * math.sin(turn), yaw_offset=-turn),
+                       Pose2D(0.0, 0.0, turn), 0.2 * i)
     assert tracker.consecutive == 6
+    assert np.allclose(tracker.track.center[:2], [3.0, 0.0], atol=1e-9)
+    assert tracker.track.yaw == pytest.approx(math.pi)
 
 
 # ----------------------------------------------------- the LiDAR cross-check
@@ -341,3 +350,36 @@ def test_reset_forgets_everything():
     assert not tracker.confirmed
     assert tracker.confidence == 0.0
     assert tracker.status() == 'SEARCHING'
+
+
+# ----------------------------------------------------- fusion (D59)
+
+def test_frame_noise_on_the_normal_averages_out():
+    """+-0.04 rad of normal wobble, the size measured in the sim, shrinks in
+    the fused yaw by about the square root of the frames averaged."""
+    rng = np.random.default_rng(0)
+    tracker = Tracker(PARAMS)
+    wobble = rng.uniform(-0.04, 0.04, 40)
+    for i, w in enumerate(wobble):
+        tracker.update(estimate(yaw_offset=w), Pose2D(0.0, 0.0, 0.0), 0.2 * i)
+    assert abs(wrap(tracker.track.yaw - math.pi)) < 0.015
+
+
+def test_closer_frames_count_more():
+    tracker = Tracker(PARAMS)
+    # The same pallet at (3, 0) in odom, seen from 1.0 m and from 2.0 m away,
+    # with an error of +50 mm in the far frame only.
+    tracker.update(estimate(distance=2.0, lateral=0.05), Pose2D(1.0, 0.0, 0.0), 0.0)
+    tracker.update(estimate(distance=1.0), Pose2D(2.0, 0.0, 0.0), 0.2)
+    # weights 1/4 and 1 (the far one decayed by memory): mostly the near one
+    assert 0.0 < tracker.track.center[1] < 0.012
+
+
+def test_the_memory_bounds_how_far_back_the_average_reaches():
+    params = dict(PARAMS, fusion_memory=0.5)
+    tracker = Tracker(params)
+    for i in range(3):
+        tracker.update(estimate(lateral=0.10), Pose2D(0.0, 0.0, 0.0), 0.2 * i)
+    for i in range(3, 13):
+        tracker.update(estimate(lateral=0.0), Pose2D(0.0, 0.0, 0.0), 0.2 * i)
+    assert abs(tracker.track.center[1]) < 0.001

@@ -928,6 +928,28 @@ pallet_tracker:
     # instant undoes that silently.
     odom_match_tolerance: 0.05        # s
 
+    # [choice, Athreya 2026-10-20] D59. The pallet does not move, so its pose
+    # in odom is AVERAGED over frames, and the closing loop steers onto that
+    # average rather than onto the newest frame. Measured in the Gazebo sim:
+    # one frame's face normal wobbles by +-0.04 rad, which at 3 m swings the
+    # pocket centre line by +-120 mm, and the robot steered after it (angular
+    # command saturated and flipped sign 20 times in a 20 s approach).
+    #
+    # Each frame is weighted by 1 / range^2, because the normal's error moves
+    # the line by range x angle: a frame at 1.75 m counts three times as much
+    # as one at 3 m. That keeps D34's point -- the measurement improves as the
+    # robot closes in -- without its lag, which came from averaging poses that
+    # were relative to a moving robot.
+    #
+    # memory: each older frame's weight is multiplied by this per new frame,
+    # so the average is over ~1 / (1 - memory) = 20 frames, 4 s at 5 Hz. It is
+    # bounded so that odometry drift (skid steer scrubs when turning) cannot
+    # accumulate into the average for a whole run.
+    fusion_memory: 0.95
+    # Ranges below this are weighted as if at this range, so one very close
+    # frame cannot take over the average.
+    fusion_min_range: 0.5             # m
+
     # LiDAR cross-check (D13 measured that the Ouster sees the face). The
     # camera's plane is the reference and the LiDAR is asked about it; fitting
     # a second plane would need its own correspondence argument.

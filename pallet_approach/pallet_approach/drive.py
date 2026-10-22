@@ -169,11 +169,15 @@ class DriveExecutor:
         self,
         geometry: closing.Geometry | None = None,
         lidar_points: np.ndarray | None = None,
+        new_frame: bool = True,
     ) -> Result:
         """Decide this frame's command.
 
         `geometry` is this frame's pallet geometry, or None when there is no
-        confirmed estimate. `lidar_points` is the newest cloud in
+        confirmed estimate. `new_frame` says whether a camera frame has arrived
+        since the last call: the divergence detector counts FRAMES (8 at 5 Hz,
+        1.6 s), and since D59 the geometry is recomputed on every 20 Hz tick,
+        which would otherwise make it four times as quick to fire. `lidar_points` is the newest cloud in
         `base_footprint`, or None.
         """
         if self.mode == 'STOP':
@@ -181,7 +185,7 @@ class DriveExecutor:
         if self.done or self.abort:
             return Result(ZERO, self.done, self.abort, self.reason)
         if self.mode == 'CLOSE':
-            return self._close(geometry)
+            return self._close(geometry, new_frame)
         if self.mode in ('REVERSE', 'BACKOUT'):
             return self._straight(lidar_points)
         if self.mode == 'INSERT':
@@ -192,13 +196,14 @@ class DriveExecutor:
 
     # ------------------------------------------------------------- the modes
 
-    def _close(self, geometry) -> Result:
+    def _close(self, geometry, new_frame: bool = True) -> Result:
         if geometry is None:
             self.reason = 'no confirmed pallet estimate'
             return Result(ZERO, False, False, self.reason,
                           phase=self.phase.value)
 
-        diverging, detail = self._divergence.update(geometry.offset)
+        diverging, detail = (self._divergence.update(geometry.offset)
+                             if new_frame else (False, ''))
         if diverging:
             self.abort = True
             self.reason = f'diverging: {detail}'

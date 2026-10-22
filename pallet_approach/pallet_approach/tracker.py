@@ -16,12 +16,15 @@ answers three questions the coordinator needs before it will move the robot:
    sensor on a different physical principle is the cheapest check against that
    (D13 measured that the Ouster does see the face).
 
-**It does not smooth the estimate**, and that is a decision rather than an
-omission (D34). Averaging poses over a window lags the truth by half the window
-times the closing speed, and the closing loop's whole design is that the
-measurement improves as the remaining correction shrinks. Feeding it a lagged
-average would undo that. The track carries the LATEST accepted estimate; the
-window is used to decide whether to trust it, not to alter it.
+**It averages the pallet's pose in `odom`, weighted by 1 / range^2** (D59,
+which refines D34). D34 rejected smoothing because averaging poses relative to
+a moving robot lags the truth. In `odom` the pallet stands still, so an average
+there has no lag, only the odometry's drift, which the bounded memory limits;
+and the 1 / range^2 weight keeps D34's point that the measurement improves as
+the robot closes in. One frame's normal wobbles by +-0.04 rad, which at 3 m is
++-120 mm of centre line: steering onto single frames was the robot's wobble.
+`last_estimate` is still the newest single frame, for everything that judges
+one frame (GO/NO-GO, the run-up decision).
 
 Everything here is pure: positions, poses and timestamps come in as arguments,
 and nothing imports ROS.
@@ -176,10 +179,12 @@ class Track:
     """What is known about the pallet across frames."""
 
     center: np.ndarray
-    """Pocket-centre midpoint in `odom`, shape (3,) with z kept for the overlay."""
+    """Pocket-centre midpoint in `odom`, shape (3,), the weighted average over
+    the accepted frames (D59); z is the newest frame's, for the overlay."""
 
     yaw: float
-    """Face normal heading in `odom`."""
+    """Face normal heading in `odom`, the same weighted average (of unit
+    vectors, so it wraps correctly)."""
 
     side: str
     frames: int = 0
@@ -192,6 +197,26 @@ class Track:
     closing loop use this and not an average; see the module docstring."""
 
     cross_check: CrossCheck = field(default=NOT_EVALUATED)
+
+    weight: float = 0.0
+    """Sum of the (decayed) frame weights behind `center` and `yaw`."""
+    heading_sum: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    """Weighted sum of the normal's unit vectors, whose angle is `yaw`."""
+
+    def fuse(self, center: np.ndarray, yaw: float, weight: float,
+             memory: float) -> None:
+        """Fold one accepted frame into the average (D59)."""
+        old = self.weight * memory
+        total = old + weight
+        self.center = np.array([
+            (old * self.center[0] + weight * center[0]) / total,
+            (old * self.center[1] + weight * center[1]) / total,
+            float(center[2]),
+        ])
+        self.heading_sum = (self.heading_sum * memory
+                            + weight * np.array([math.cos(yaw), math.sin(yaw)]))
+        self.yaw = math.atan2(self.heading_sum[1], self.heading_sum[0])
+        self.weight = total
 
 
 class Tracker:
@@ -292,12 +317,17 @@ class Tracker:
 
         check = cross_check_face(estimate, lidar_points, self.params)
 
+        # 1 / range^2: the normal's error moves the line by range x angle.
+        distance = max(float(np.hypot(center[0], center[1])),
+                       float(self.params.get('fusion_min_range', 0.5)))
+        weight = 1.0 / distance ** 2
+        memory = float(self.params.get('fusion_memory', 0.95))
         if self.track is None:
             self.track = Track(center=in_odom, yaw=yaw_in_odom,
                                side=estimate.side, first_seen=now)
+            self.track.fuse(in_odom, yaw_in_odom, weight, 0.0)
         else:
-            self.track.center = in_odom
-            self.track.yaw = yaw_in_odom
+            self.track.fuse(in_odom, yaw_in_odom, weight, memory)
             if estimate.side != 'unknown':
                 self.track.side = estimate.side
         self.track.frames += 1

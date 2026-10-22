@@ -886,6 +886,30 @@ first. *Why:* measured 2026-10-20 in the Gazebo sim, 2 aborts in 4 runs, about
 one has arrived, `max_age.estimate` applies unchanged) and only CONFIRMING,
 where the robot does not drive. Amends D9. (2026-10-20)
 
+**D59. The closing loop steers onto the pallet's averaged pose, recomputed at
+20 Hz against odometry.** Refines D34 and the "act on what it can see now"
+rule in `closing.Geometry`. The tracker keeps a weighted average of the pallet's
+pose in `odom` (`pallet_tracker.fusion_memory: 0.95`, about 20 frames; weight
+1 / range^2, floored at `fusion_min_range: 0.5`), and the controller places
+that line against the robot's odometry pose on every tick
+(`closing.geometry_from_track`). INSERT and every single-frame judgement
+(GO/NO-GO, the run-up decision) still use the newest frame. The divergence
+detector is still fed once per camera frame, so its 8 frames still mean
+1.6 s. *Why:* measured 2026-10-20 in the Gazebo sim: one frame's face normal
+wobbles by +-0.04 rad, which at 3 m swings the pocket centre line by
++-120 mm five times a second; the angular command saturated and flipped sign
+20 times in a 20 s approach while the measured offset jumped by up to 100 mm
+between frames. D34's objection was lag from averaging poses relative to a
+moving robot; in `odom` the pallet stands still, so there is none, and
+1 / range^2 keeps its point that close frames are better. The cost is
+odometry drift, which the bounded memory limits. **Gains unchanged**
+(k_cross 2.5, k_heading 4.0, zeta = 2 at 0.10 m/s): an offline sweep with
+sim-sized normal noise (8 seeds each) gave a median of 6 angular sign flips
+at k_cross 2.5, 13 at 5.0 (zeta 1.4) and 13.5 at 10.0 (zeta 1.0), with no
+better final offset (24, 31, 33 mm). On noisy data, less damping only buys
+more wobble. Not yet confirmed in the Gazebo sim (the GPU machine was down).
+(Athreya, 2026-10-20)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

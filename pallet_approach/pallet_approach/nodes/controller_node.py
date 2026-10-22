@@ -74,6 +74,8 @@ class ControllerNode(LifecycleNode):
         self._command = None
         self._command_at = 0.0
         self._tracked = None
+        self._frames_seen = 0
+        self._frames_stepped = 0
         self._tracked_at = 0.0
         self._cloud = None
         self._limiter = None
@@ -285,7 +287,11 @@ class ControllerNode(LifecycleNode):
         estimate = estimate_from_msg(msg.estimate)
         if estimate is None:
             return
-        self._tracked = (estimate, bool(msg.confirmed))
+        # The fused pallet line in odom (D59) travels with the newest frame:
+        # CLOSE steers onto the former, INSERT still reads the latter.
+        self._frames_seen += 1
+        self._tracked = (estimate, bool(msg.confirmed),
+                         (msg.center_odom.x, msg.center_odom.y), float(msg.yaw_odom))
         self._tracked_at = self._now()
 
     def _on_cloud(self, msg: PointCloud2):
@@ -400,7 +406,10 @@ class ControllerNode(LifecycleNode):
 
         geometry, note = self._geometry(now)
         points = self._lidar_in_ground()
-        result = self._executor.step(geometry=geometry, lidar_points=points)
+        new_frame = self._frames_seen != self._frames_stepped
+        self._frames_stepped = self._frames_seen
+        result = self._executor.step(geometry=geometry, lidar_points=points,
+                                     new_frame=new_frame)
         if result.arrived and not result.abort:
             self.get_logger().info(f'{self._executor.mode} complete: '
                                    f'{result.reason}',
@@ -430,11 +439,17 @@ class ControllerNode(LifecycleNode):
                                           throttle_duration_sec=1.0)
                 return None, f'{note}; stopping'
             return None, ''
-        estimate, confirmed = self._tracked
+        estimate, confirmed, center_odom, yaw_odom = self._tracked
         if not confirmed and self._executor.mode == 'CLOSE':
             # Driving on an unconfirmed track is exactly what the tracker
             # exists to prevent.
             return None, 'the track is not confirmed'
+        if self._executor.mode == 'CLOSE':
+            if self._pose is None:
+                return None, 'no odometry yet'
+            # D59: the averaged pallet line against where the robot is NOW, so
+            # every 20 Hz tick has a current geometry, not one per frame.
+            return closing.geometry_from_track(center_odom, yaw_odom, self._pose), ''
         return closing.geometry_of(estimate), ''
 
     def _displacement(self) -> float:
