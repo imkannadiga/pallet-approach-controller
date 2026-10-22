@@ -84,3 +84,19 @@ def test_the_robot_rate_keeps_the_estimate_inside_the_watchdog_limit():
     interval = 1.0 / 5.0
     worst_frame = 0.150          # generous against 96 ms measured on a laptop
     assert interval + worst_frame < 0.50
+
+
+def test_a_schedule_reaches_25_fps_from_a_37_hz_camera():
+    from pallet_approach.rate_limit import Schedule
+    schedule = Schedule(25.0)
+    frames = [i / 37.0 for i in range(37 * 10)]
+    passed = sum(schedule.due(t) for t in frames)
+    assert 248 <= passed <= 252          # 10 s at 25 fps, not 185 (18.5 fps)
+
+
+def test_a_schedule_does_not_burst_after_a_pause():
+    from pallet_approach.rate_limit import Schedule
+    schedule = Schedule(25.0)
+    assert schedule.due(0.0)
+    assert schedule.due(5.0)             # after a 5 s gap: one frame...
+    assert not schedule.due(5.001)       # ...not a catch-up burst

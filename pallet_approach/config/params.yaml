@@ -760,11 +760,19 @@ fork_overlay:
     # subscriber to a raw ZED image topic from the main PC dropped the whole
     # ZED node to ~0.2 Hz, and even compressed full-rate images were unusable
     # remotely. So the one image this stack publishes is downscaled and
-    # low-rate (docs/SYSTEM.md, the network rule). The render happens at full
-    # resolution and the result is shrunk, because drawing small would mean
-    # scaling the intrinsics -- one more place to get a factor of two wrong, in
-    # the tool whose job is to make a millimetre error visible.
-    publish_rate: 5.0           # Hz, decimated from the camera's ~37 Hz
+    # low-rate (docs/SYSTEM.md, the network rule). Since 2026-10-22 the frame
+    # is shrunk FIRST and drawn at the debug size with the intrinsics scaled
+    # (1.1 ms instead of 7.3 ms a frame); test_fork_overlay.py checks the forks
+    # land on exactly half the full-resolution pixels, which is the factor of
+    # two the old full-resolution render was guarding against.
+    #
+    # [choice, Athreya 2026-10-22] 26 fps for the browser dashboard (asked for
+    # at least 24). 26 rather than 25 because the schedule runs on the node's
+    # clock: in the Gazebo sim at a real-time factor of 0.95, 25 came out as
+    # 23.7 fps in the browser (measured on the GPU machine). Decimated on a schedule (rate_limit.Schedule): from the
+    # ZED's ~37 Hz a "time since the last frame" gate could only give 18.5.
+    # Video only: nothing that drives reads this image.
+    publish_rate: 26.0          # Hz
     debug_width: 640
     debug_height: 360
     # floor_z moved to the shared block above: the overlay, the tracker and the
@@ -787,11 +795,10 @@ dashboard:
 
     use_sim_time: false
 
-    # [choice] Matches fork_overlay's publish_rate: there is no point drawing
-    # the HUD faster than the base image it sits on top of changes. Driven by
-    # a timer rather than the image callback, so the HUD panel keeps updating
-    # (and can show the image itself going stale) even if fork_overlay's feed
-    # stalls -- see stale_after.image below.
+    # [choice] The dashboard publishes one frame per fork_overlay frame (so at
+    # its 25 fps). This timer is the FALLBACK: when no overlay frame has come
+    # for two periods it keeps the HUD panel updating and shows the image
+    # going stale, or the "no camera" placeholder -- see stale_after.image.
     publish_rate: 5.0
 
     # [choice] Used only until the first fork_overlay frame arrives, or if it

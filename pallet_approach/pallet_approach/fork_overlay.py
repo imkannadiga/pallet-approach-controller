@@ -412,7 +412,10 @@ def render(
     # glyph: at this font scale a 4 px outline merges neighbouring letters into
     # a smear, which is how the first version came out. The panel also keeps
     # the text legible over a blown-out window, which half these frames have.
-    scale, pad, line_height = 0.6, 10, 26
+    # text_scale: the node draws on the frame AFTER shrinking it to the debug
+    # size, so it passes the shrink factor and the panel keeps its look.
+    k = float(params.get('text_scale', 1.0))
+    scale, pad, line_height = 0.6 * k, max(1, round(10 * k)), max(1, round(26 * k))
     sizes = [cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0]
              for line in lines]
     panel_w = max(w for w, _ in sizes) + 2 * pad
@@ -421,6 +424,6 @@ def render(
     cv2.rectangle(panel, (0, 0), (panel_w, panel_h), (0, 0, 0), -1)
     annotated = cv2.addWeighted(panel, 0.55, annotated, 0.45, 0.0)
     for index, line in enumerate(lines):
-        cv2.putText(annotated, line, (pad, pad + line_height * index + 14),
+        cv2.putText(annotated, line, (pad, pad + line_height * index + round(14 * k)),
                     cv2.FONT_HERSHEY_SIMPLEX, scale, color, 1, cv2.LINE_AA)
     return annotated

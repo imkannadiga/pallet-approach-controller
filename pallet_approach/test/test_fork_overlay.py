@@ -210,3 +210,37 @@ def test_changing_floor_z_does_move_the_tines():
     b = FO.render(image, None, 'idle', base_to_camera, intrinsics,
                   dict(base, floor_z=-0.075), level)
     assert not np.array_equal(a, b)
+
+
+def test_drawing_at_half_size_puts_the_forks_on_exactly_half_the_pixels():
+    """The overlay now shrinks the frame first and draws small, with fx, fy,
+    cx, cy scaled by the same factor (2026-10-22, for a 25 fps dashboard).
+    This is the factor-of-two error the old full-resolution render guarded
+    against: the tines must land on exactly half the full-size pixels."""
+    rotation = np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]], float)
+    base_to_camera = np.eye(4)
+    base_to_camera[:3, :3] = rotation
+    base_to_camera[:3, 3] = -rotation @ np.array([0.39, 0.06, 0.373])
+    corners = FO.tine_corners(1.15, 0.1, 0.04, 0.365, 0.05, 0.4625,
+                              Plane(np.array([0.0, 0.0, 1.0]), 0.025))
+    in_camera = FO.to_camera_frame(corners, base_to_camera)
+    full, _ = FO.project_points(in_camera, 949.67, 949.67, 640.0, 360.0)
+    half, _ = FO.project_points(in_camera, 949.67 / 2, 949.67 / 2, 320.0, 180.0)
+    assert np.allclose(half, full / 2)
+
+
+def test_the_text_panel_scales_with_the_drawing():
+    import cv2  # noqa: F401
+    rotation = np.array([[0, -1, 0], [0, 0, -1], [1, 0, 0]], float)
+    base_to_camera = np.eye(4)
+    base_to_camera[:3, :3] = rotation
+    base_to_camera[:3, 3] = -rotation @ np.array([0.39, 0.06, 0.373])
+    params = {'forks': dict(tine_length=1.15, tine_width=0.1, tine_thickness=0.04,
+                            spacing=0.365, bottom_height=0.05, carriage_x=0.4625),
+              'floor_z': -0.025}
+    floor = Plane(np.array([0.0, 0.0, 1.0]), 0.025)
+    small = np.zeros((360, 640, 3), np.uint8)
+    out = FO.render(small, None, 'idle', base_to_camera,
+                    dict(fx=474.8, fy=474.8, cx=320.0, cy=180.0),
+                    dict(params, text_scale=0.5, line_thickness=1), floor)
+    assert out.shape == small.shape      # draws at the small size without error

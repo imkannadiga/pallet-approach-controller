@@ -59,7 +59,8 @@ class DashboardNode(Node):
                                  self._on_forks, RELIABLE)
 
         rate = float(self.get_parameter('publish_rate').value)
-        self.create_timer(1.0 / rate, self._tick)
+        self._period = 1.0 / rate
+        self.create_timer(self._period, self._tick)
         self.get_logger().info(
             'dashboard ready; /dashboard/image composites /fork_overlay/image '
             'with coordinator, health, tracker, controller and fork telemetry')
@@ -122,6 +123,17 @@ class DashboardNode(Node):
     def _on_image(self, msg: Image):
         self._image = image_to_array(msg)
         self._snapshot.image_at = self._now()
+        # One dashboard frame per overlay frame, so the stream runs at the
+        # overlay's rate (25 fps) instead of this node's own timer beating
+        # against it. Compositing costs 0.3 ms (measured 2026-10-22).
+        self._compose()
+
+    def _tick(self):
+        """Fallback only: keeps the HUD alive (and the "no camera" placeholder
+        drawn) when no overlay frame has arrived for two timer periods."""
+        at = self._snapshot.image_at
+        if at is None or self._now() - at > 2.0 * self._period:
+            self._compose()
 
     def _on_coordinator(self, msg: CoordinatorStatus):
         self._snapshot.coordinator = dashboard.CoordinatorInfo(
@@ -165,7 +177,7 @@ class DashboardNode(Node):
 
     # ---------------------------------------------------------------- tick
 
-    def _tick(self):
+    def _compose(self):
         self._snapshot.now = self._now()
         annotated = dashboard.render(self._image, self._snapshot, self._params())
 

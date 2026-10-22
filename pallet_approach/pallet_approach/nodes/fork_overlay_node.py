@@ -52,6 +52,7 @@ from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.dashboard import STATE_COLOR_KEYS as STATE_COLORS
 from pallet_approach.model import Plane
 from pallet_approach.nodes._common import image_to_array, intrinsics_from_camera_info, lookup_waiting
+from pallet_approach.rate_limit import Schedule
 from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matrix
 
 SENSOR_QOS = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
@@ -86,6 +87,7 @@ class ForkOverlayNode(Node):
         self._state = 'IDLE'
         self._warned = False
         self._last_published = 0.0
+        self._schedule = Schedule(float(self.get_parameter('publish_rate').value))
         self._fork_height = None
         """The live carriage height from the simulator, or None before it has
         said anything -- in which case the configured `forks.bottom_height` is
@@ -221,8 +223,12 @@ class ForkOverlayNode(Node):
             return
         now = self.get_clock().now().nanoseconds * 1e-9
         period = 1.0 / float(self.get_parameter('publish_rate').value)
-        if now - self._last_published < period:
-            return                       # decimate from the camera's ~37 Hz
+        # Decimate on a schedule (rate_limit.Schedule), not on "time since the
+        # last one", which from the ZED's 37 Hz can only give 18.5 fps.
+        self._schedule.period = period
+        if not self._schedule.due(now):
+            return
+        msg = deserialize_message(raw, Image)
 
         camera_frame = msg.header.frame_id or self.get_parameter(
             'frames.camera_optical').value
@@ -251,8 +257,12 @@ class ForkOverlayNode(Node):
         # perception and the closing loop -- hence the two different log
         # lines below rather than one.
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        timeout = rclpy.duration.Duration(
-            seconds=self.get_parameter('frames.tf_timeout').value)
+        # NO wait (2026-10-22). This node only draws, and it already falls back
+        # to the latest transform; waiting up to frames.tf_timeout per frame
+        # for the stamped one held the overlay to ~2 fps in the sim (0.5 s
+        # timeout) against a 25 fps target. The stamped lookup is tried first
+        # because when it is there it is the accurate one.
+        timeout = None
         try:
             # Look up ground <- camera, the same direction perception uses, so
             # the extrinsic correction is applied by the same code path, then
@@ -300,12 +310,18 @@ class ForkOverlayNode(Node):
             camera_to_ground = correct_transform(camera_to_ground, self._correction)
         ground_to_camera = np.linalg.inv(camera_to_ground)
 
+        # Shrink FIRST, then draw at the debug size with intrinsics, line
+        # width and text scaled by the same factor: 1.1 ms a frame instead of
+        # 7.3 ms for drawing at 1280x720 and shrinking after (measured
+        # 2026-10-22), which is what makes a 25 fps dashboard affordable on
+        # the Jetson. The picture is the same; only the work is smaller.
+        image, intrinsics, params = self._at_debug_size(
+            image_to_array(msg), self._intrinsics, self._params())
         try:
             annotated = fork_overlay.render(
-                image_to_array(msg), self._estimate,
+                image, self._estimate,
                 STATE_COLORS.get(self._state, 'idle'),
-                ground_to_camera, self._intrinsics,
-                self._params(), floor)
+                ground_to_camera, intrinsics, params, floor)
         except NotImplementedError:
             if not self._warned:
                 self.get_logger().error(
@@ -318,7 +334,7 @@ class ForkOverlayNode(Node):
                                     throttle_duration_sec=5.0)
             return
 
-        annotated = self._downscale(annotated)
+        annotated = self._downscale(annotated)      # a no-op unless the camera is smaller
         out = Image()
         out.header = msg.header
         out.height, out.width = annotated.shape[0], annotated.shape[1]
@@ -331,6 +347,22 @@ class ForkOverlayNode(Node):
         out.data = pyarray.array('B', annotated.tobytes())
         self._publisher.publish(out)
         self._last_published = now
+
+    def _at_debug_size(self, image, intrinsics: dict, params: dict):
+        """The camera frame shrunk to the debug size, with the intrinsics and
+        the drawing sizes scaled to match. Unchanged if it is already small."""
+        width = int(self.get_parameter('debug_width').value)
+        if image.shape[1] <= width:
+            return image, intrinsics, params
+        import cv2
+        factor = width / image.shape[1]
+        height = int(round(image.shape[0] * factor))
+        small = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+        scaled = {key: (value * factor if key in ('fx', 'fy', 'cx', 'cy') else value)
+                  for key, value in intrinsics.items()}
+        params = dict(params, text_scale=factor,
+                      line_thickness=max(1, round(params.get('line_thickness', 2) * factor)))
+        return small, scaled, params
 
     def _downscale(self, image):
         """To the debug size, or unchanged if it is already no larger.

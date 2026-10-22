@@ -75,14 +75,16 @@ def generate_launch_description():
             'encoder': LaunchConfiguration('encoder'),
             'width': 640,
             'height': 520,
-            # 5 fps: dashboard_node redraws at config/params.yaml's
-            # dashboard.publish_rate (5 Hz), so encoding faster than that
-            # would just send duplicate frames.
-            'fps': 5,
-            # Mostly static text and a slowly-changing camera frame compress
-            # far better than the live raw feed; 1200 kbps is generous for
-            # that content at 640x520.
-            'bitrate_kbps': 1200,
+            # The dashboard publishes one frame per fork_overlay frame, 25 fps
+            # on average, but scheduled from the ZED's ~37 Hz, so two frames
+            # are sometimes only 27 ms apart. This is the streamer's CEILING,
+            # set above that so it passes every frame rather than dropping the
+            # close ones (a 30 fps ceiling would cut 25 fps to ~19).
+            'fps': 40,
+            # 25 fps of mostly static text and a camera frame at 640x520:
+            # 2500 kbps, about twice the old 1200 for five times the frames,
+            # since consecutive frames differ little.
+            'bitrate_kbps': 2500,
         }],
     )
 

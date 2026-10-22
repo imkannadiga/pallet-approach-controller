@@ -104,8 +104,11 @@ def generate_launch_description():
                               description='face turned away from square, radians CCW'),
         DeclareLaunchArgument('camera_width', default_value='1280'),
         DeclareLaunchArgument('camera_height', default_value='720'),
-        DeclareLaunchArgument('camera_rate', default_value='15.0',
-                              description='Hz; perception uses 5, the watchdog wants 10'),
+        # 30 Hz, near the ZED's ~37, so the 25 fps dashboard is reachable in
+        # the sim too. A weak laptop may need camera_rate:=15 (dashboard then
+        # tops out at 15).
+        DeclareLaunchArgument('camera_rate', default_value='30.0',
+                              description='Hz; perception uses 5, the dashboard 25'),
         DeclareLaunchArgument('depth_noise', default_value='0.01',
                               description='gaussian depth noise, metres'),
         OpaqueFunction(function=_setup),

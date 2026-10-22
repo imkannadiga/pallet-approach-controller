@@ -118,3 +118,27 @@ class FrameGate:
         self.last_start = None
         self.busy = False
         self.window_start = now
+
+
+class Schedule:
+    """Let frames through at an AVERAGE rate, from a faster input.
+
+    "At least 1 / rate since the last one" can only produce the input rate
+    divided by a whole number: from a 37 Hz camera, asking for anything between
+    18.5 and 37 Hz gives 18.5. This advances a due time by one period per frame
+    let through instead, so the average is exactly `rate`. After a pause longer than one period it restarts from
+    the current frame, so a pause does not come out as a burst.
+    """
+
+    def __init__(self, rate: float):
+        self.period = 1.0 / float(rate)
+        self.next_due = None
+
+    def due(self, now: float) -> bool:
+        if self.next_due is not None and now < self.next_due:
+            return False
+        start = self.next_due
+        if start is None or now - start > self.period:
+            start = now         # first frame, or the input paused: restart
+        self.next_due = start + self.period
+        return True
