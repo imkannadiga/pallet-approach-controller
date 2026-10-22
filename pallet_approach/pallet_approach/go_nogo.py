@@ -296,12 +296,21 @@ def check_stability(
                        f'{required_frames} to judge stability')
 
     recent = list(history)[-required_frames:]
-    positions = np.array([np.asarray(e.position, dtype=float) for e in recent])
+    # D60 (Athreya, 2026-10-22): the POCKET MIDPOINT, not the face centre.
+    # The face centre is the middle of whichever points RANSAC took as the
+    # plane, and that set changes every frame: with the robot parked at the
+    # standoff in the Gazebo sim it wandered 56 mm over 20 frames while the
+    # pocket centres held to +-2 mm, so every run was refused. The midpoint is
+    # also what the forks aim at. A frame without two pockets falls back to
+    # the face centre, which then counts against it.
+    positions = np.array([
+        np.asarray(pocket_center(e.pockets, fallback=e.position), dtype=float)
+        for e in recent])
     extent = positions.max(axis=0) - positions.min(axis=0)
     spread = float(np.linalg.norm(extent))
     if spread > max_position_spread:
         return False, (
-            f'face position moved {spread * 1000:.0f} mm across '
+            f'pocket midpoint moved {spread * 1000:.0f} mm across '
             f'{required_frames} frames, limit {max_position_spread * 1000:.0f} mm')
 
     yaws = np.array([e.yaw for e in recent])

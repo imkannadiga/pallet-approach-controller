@@ -233,3 +233,28 @@ def test_no_false_go_in_unsafe_scenarios(go_nogo_params, square_pallet, scenario
                                 load_points=points, scene_points=points)
     assert not decision.go, f'false GO in the {scenario} scenario'
     assert decision.reason, 'a NO-GO must always say why'
+
+
+def test_stability_watches_the_pocket_midpoint_not_the_face_centre():
+    # D60: the face centre wandered 56 mm over 20 frames on a parked robot in
+    # the sim while the pockets held to +-2 mm. That is stable.
+    import dataclasses
+    base = make_estimate()
+    history = [dataclasses.replace(base, position=base.position + np.array([0.0, dy, 0.0]))
+               for dy in (0.0, 0.056, 0.02, -0.01, 0.04)]
+    ok, reason = go_nogo.check_stability(history, 5, 0.030, 0.035)
+    assert ok, reason
+
+
+def test_a_moving_pocket_midpoint_is_still_unstable():
+    import dataclasses
+    base = make_estimate()
+    history = []
+    for dy in (0.0, 0.04, 0.0, 0.0, 0.0):
+        shift = np.array([0.0, dy, 0.0])
+        history.append(dataclasses.replace(base, pockets=tuple(
+            dataclasses.replace(p, center=p.center + shift) for p in base.pockets)))
+    ok, reason = go_nogo.check_stability(history, 5, 0.030, 0.035)
+    assert not ok and 'pocket midpoint' in reason
+
+

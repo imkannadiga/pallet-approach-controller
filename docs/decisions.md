@@ -910,6 +910,17 @@ better final offset (24, 31, 33 mm). On noisy data, less damping only buys
 more wobble. Not yet confirmed in the Gazebo sim (the GPU machine was down).
 (Athreya, 2026-10-20)
 
+**D60. The stability rule watches the pocket midpoint, not the face centre.**
+`go_nogo.check_stability` measures the spread of the midpoint between the two
+pocket centres over the last `stability_frames` estimates (limit unchanged,
+30 mm). *Why:* the face centre is the middle of whichever points the plane
+fit took, which changes every frame. Measured 2026-10-20 in the Gazebo sim
+with the robot parked at the standoff: the face centre wandered 56 mm over 20
+frames while the pocket centres held to +-2 mm, so every run ended NO_GO at
+CHECKING. The midpoint is also the point the forks aim at, so a stable
+midpoint is the stability that matters. Synthetic numbers: re-check the real
+ZED's scatter on a bag before relying on the 30 mm. (Athreya, 2026-10-22)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
