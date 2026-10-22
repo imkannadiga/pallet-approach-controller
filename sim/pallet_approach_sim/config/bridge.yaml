@@ -9,26 +9,26 @@
 
 # Base: odometry and odom -> base_link, like scout_ros2.
 - ros_topic_name: /odom
-  gz_topic_name: /model/scout/odometry
+  gz_topic_name: /model/robot/odometry
   ros_type_name: nav_msgs/msg/Odometry
   gz_type_name: ignition.msgs.Odometry
   direction: GZ_TO_ROS
 
 - ros_topic_name: /tf
-  gz_topic_name: /model/scout/tf
+  gz_topic_name: /model/robot/tf
   ros_type_name: tf2_msgs/msg/TFMessage
   gz_type_name: ignition.msgs.Pose_V
   direction: GZ_TO_ROS
 
 - ros_topic_name: /joint_states
-  gz_topic_name: /model/scout/joint_states
+  gz_topic_name: /model/robot/joint_states
   ros_type_name: sensor_msgs/msg/JointState
   gz_type_name: ignition.msgs.Model
   direction: GZ_TO_ROS
 
 # What twist_mux sends on. Unstamped Twist, as on the robot.
 - ros_topic_name: /cmd_vel
-  gz_topic_name: /model/scout/cmd_vel
+  gz_topic_name: /model/robot/cmd_vel
   ros_type_name: geometry_msgs/msg/Twist
   gz_type_name: ignition.msgs.Twist
   direction: ROS_TO_GZ
@@ -64,3 +64,10 @@
   ros_type_name: sensor_msgs/msg/PointCloud2
   gz_type_name: ignition.msgs.PointCloudPacked
   direction: GZ_TO_ROS
+
+# Forklift only: the carriage's joint position, from fork_lift_bridge.py.
+- ros_topic_name: /sim/fork_lift
+  gz_topic_name: /model/robot/fork_lift
+  ros_type_name: std_msgs/msg/Float64
+  gz_type_name: ignition.msgs.Double
+  direction: ROS_TO_GZ

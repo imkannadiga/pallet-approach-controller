@@ -106,8 +106,17 @@ def _merge(spans):
     return merged
 
 
-def sdf(name: str = 'pallet', color=(0.62, 0.47, 0.30)) -> str:
-    """A static SDF model of the pallet."""
+MASS = 20.0
+"""kg. A wooden EUR pallet is 20-25 kg; this one was never weighed."""
+
+
+def sdf(name: str = 'pallet', color=(0.62, 0.47, 0.30), static: bool = True) -> str:
+    """An SDF model of the pallet.
+
+    Static for the SCOUT, whose forks are virtual and must never touch it.
+    Dynamic for the forklift (physical lift, Athreya 2026-10-22), with its mass
+    at the footprint's centre, half way up.
+    """
     r, g, b = color
     material = (f'<material><ambient>{r} {g} {b} 1</ambient>'
                 f'<diffuse>{r} {g} {b} 1</diffuse></material>')
@@ -121,8 +130,16 @@ def sdf(name: str = 'pallet', color=(0.62, 0.47, 0.30)) -> str:
             f'{geometry}</collision>'
             f'<visual name="{box.name}_v"><pose>{cx:.4f} {cy:.4f} {cz:.4f} 0 0 0</pose>'
             f'{geometry}{material}</visual>')
+    ixx = MASS * (WIDTH ** 2 + HEIGHT ** 2) / 12
+    iyy = MASS * (LENGTH ** 2 + HEIGHT ** 2) / 12
+    izz = MASS * (LENGTH ** 2 + WIDTH ** 2) / 12
+    inertial = ('' if static else
+                f'<inertial><pose>0 0 {HEIGHT / 2:.4f} 0 0 0</pose><mass>{MASS}</mass>'
+                f'<inertia><ixx>{ixx:.4f}</ixx><iyy>{iyy:.4f}</iyy><izz>{izz:.4f}</izz>'
+                '<ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia></inertial>')
     return (f'<?xml version="1.0"?><sdf version="1.8"><model name="{name}">'
-            f'<static>true</static><link name="body">{"".join(links)}</link>'
+            f'<static>{"true" if static else "false"}</static>'
+            f'<link name="body">{inertial}{"".join(links)}</link>'
             f'</model></sdf>')
 
 

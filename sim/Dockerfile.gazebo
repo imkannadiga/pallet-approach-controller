@@ -11,7 +11,10 @@ FROM ${BASE_IMAGE}
 SHELL ["/bin/bash", "-lc"]
 
 WORKDIR /sim_ws
-COPY pallet_approach_sim src/pallet_approach_sim
+# Built from the repo root: the forklift's lift bridge reads the stack's
+# ForkState, so the interfaces package is built here too.
+COPY pallet_approach_interfaces src/pallet_approach_interfaces
+COPY sim/pallet_approach_sim src/pallet_approach_sim
 RUN source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash \
     && colcon build --event-handlers console_direct+
 

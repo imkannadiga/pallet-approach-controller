@@ -128,3 +128,21 @@ sim/
     test/                          pallet vs synthetic.py; URDF processing
 pallet_approach/config/sim_overlay.yaml   the stack's only sim-specific config
 ```
+
+## The forklift
+
+The default robot is a forklift (`robot:=scout` brings the SCOUT back). Its
+camera and LiDAR sit exactly where the SCOUT's do, with the same frame names,
+and its own body is hidden from both sensors, so the stack runs unchanged
+(decisions D65-D70). The forks are physical: the carriage follows the
+virtual_forks height and really lifts the pallet.
+
+Model: "Forklift" by Cole Biesemeyer, OpenRobotics, from Gazebo Fuel,
+licensed CC BY 4.0. Split into parts, re-coloured and given joints and
+sensors by `sim/tools/build_forklift.py` and `forklift_model.py`; the
+original files are in `pallet_approach_sim/urdf/forklift/`.
+
+To regenerate the meshes after changing the build tool (laptop only, needs
+`trimesh` in the venv):
+
+    venv/bin/python sim/tools/build_forklift.py

@@ -55,7 +55,7 @@ case "${1:-}" in
       echo "the base image sim-env/hunter-ugv-avp-sim:1.1 is missing." >&2
       echo "  build it in intelligent-fleet-sim-env: docker compose build hunter-ugv-avp-sim" >&2
       exit 1; }
-    docker build -f "$REPO_ROOT/sim/Dockerfile.gazebo" -t "$SIM_IMAGE" "$REPO_ROOT/sim"
+    docker build -f "$REPO_ROOT/sim/Dockerfile.gazebo" -t "$SIM_IMAGE" "$REPO_ROOT"
     docker build -f "$REPO_ROOT/docker/Dockerfile.jetson" -t "$STACK_IMAGE" "$REPO_ROOT"
     ;;
 

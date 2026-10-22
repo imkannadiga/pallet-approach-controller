@@ -30,7 +30,7 @@ JUMP=()
 SSH=(ssh -A "${JUMP[@]}" "$REMOTE_HOST")
 
 sync() {
-  rsync -az --delete --exclude .git --exclude __pycache__ \
+  rsync -az --delete --exclude .git --exclude __pycache__ --exclude venv \
     -e "ssh ${JUMP[*]}" "$REPO_ROOT/" "$REMOTE_HOST:$REMOTE_DIR/"
 }
 

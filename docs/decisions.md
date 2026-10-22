@@ -975,6 +975,51 @@ blind by design, running on odometry with the LiDAR as its stop. Measured on
 the GPU machine, 2026-10-22: 5 of 5 sim pickups aborted ~0.5 m into the
 insertion with "estimate 0.53-0.93 s old". (Athreya, 2026-10-22)
 
+## 2026-10-22: the simulated forklift (URDF and sensor placement only)
+
+**D65. The sim robot is the OpenRobotics "Forklift" from Gazebo Fuel** (CC BY
+4.0, author Cole Biesemeyer; credit in sim/README.md and any video). Its single
+mesh is split into body, carriage, forks and wheels by
+`sim/tools/build_forklift.py`; masses, joints, plugins and sensors are added
+in `forklift_model.py`, since it ships with none. The SCOUT stays available
+(`robot:=scout`). *Why:* a realistic-looking truck whose parts can move.
+Exported as OBJ with the texture baked into an 8-colour palette, because
+Gazebo Fortress does not load glTF and its Ogre aborts on an OBJ with texture
+coordinates (measured 2026-10-22). (Simulation)
+
+**D66. Fork spacing 0.365 m** (the model ships with 0.526 m). *Why:* matches
+the short-side pocket centres; at 0.526 m each fork overlaps an outer block.
+(Simulation)
+
+**D67. Camera and LiDAR exactly where they are on the SCOUT**, relative to
+base_footprint and with the SCOUT's frame names: left camera (0.390, 0.060,
+0.373), Ouster os_lidar (0.173, 0, 0.628), the same 3D Ouster model. The
+forklift's own visuals are hidden from both sensors (visibility flags), so they
+see what the SCOUT's would. *Why:* calibration stays the same, and the
+stack's extrinsics, LiDAR cross-check and insertion stop work unchanged. This
+replaces the earlier mast camera at 0.30 m behind a carriage window and the
+mast-top 2D LiDAR, which would have needed new extrinsics and could not see
+the pallet face. (Athreya, 2026-10-22)
+
+**D68. base_footprint is placed so the fork heel is 0.4625 m ahead of it**,
+where the virtual forks start (`forks.carriage_x`); base_footprint is 25 mm
+above the floor and base_link 0.21 m above it, as on the SCOUT. *Why:*
+standoff, insertion depth and fork geometry in params.yaml mean the same on
+both robots. The front axle then sits at x = 0.048, so the truck pivots
+4.8 cm ahead of where the SCOUT does. (Athreya, 2026-10-22)
+
+**D69. Differential drive on the front wheels for now**; the rear wheels are
+passive and slide when it turns in place. *Why:* the closing loop turns in
+place (square-up, large aim errors), which a rear-steered Ackermann truck
+cannot. Ackermann steering is deferred to its own stage, with a controller
+that never turns in place. (Athreya, 2026-10-22)
+
+**D70. Physical forks.** The carriage is a prismatic joint that follows the
+virtual_forks height (`fork_lift_bridge.py`), and the pallet is a dynamic
+20 kg body in the forklift sim, so it really comes off the floor. The SCOUT
+sim keeps a static pallet. *Why:* the pickup is then checked by physics,
+not just by the stack's own report. (Athreya, 2026-10-22)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

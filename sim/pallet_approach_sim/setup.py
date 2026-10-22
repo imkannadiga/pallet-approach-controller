@@ -15,6 +15,8 @@ setup(
         ('share/' + package_name + '/config', glob('config/*.yaml')),
         ('share/' + package_name + '/urdf', glob('urdf/*.xacro')),
         ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
+        ('share/' + package_name + '/config', glob('config/*.json')),
+        ('share/' + package_name + '/meshes/forklift', glob('meshes/forklift/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -27,6 +29,7 @@ setup(
         'console_scripts': [
             'camera_tf = pallet_approach_sim.camera_tf:main',
             'camera_info_fix = pallet_approach_sim.camera_info_fix:main',
+            'fork_lift_bridge = pallet_approach_sim.fork_lift_bridge:main',
         ],
     },
 )

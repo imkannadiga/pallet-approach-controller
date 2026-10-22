@@ -83,15 +83,67 @@ class Drive:
     wheel_separation: float = 0.58306
     wheel_radius: float = 0.16459
     odom_rate: float = 50.0
+    left_joints: tuple = WHEELS_LEFT
+    right_joints: tuple = WHEELS_RIGHT
+    joint_states: tuple = WHEELS_LEFT + WHEELS_RIGHT
+
+
+@dataclass(frozen=True)
+class Lift:
+    """A position-controlled prismatic joint (the forklift's carriage).
+
+    Commanded on a Gazebo topic with the joint position in metres; sim's
+    fork_lift_bridge.py turns the virtual_forks height into that. Velocity
+    commands rather than force: the joint follows the command stiffly
+    whatever the load, which is what a hydraulic lift does.
+    """
+    joint: str
+    topic: str = '/model/robot/fork_lift'
 
 
 def for_gazebo(urdf: str, camera: Camera = Camera(), lidar: Lidar = Lidar(),
-               drive: Drive = Drive()) -> str:
+               drive: Drive = Drive(), lift: Lift | None = None) -> str:
     root = ET.fromstring(urdf)
     _strip_gazebo_plugins(root)
-    for block in (_drive_xml(drive), _joint_states_xml(), _camera_xml(camera),
-                  _lidar_xml(lidar)):
+    blocks = [_drive_xml(drive), _joint_states_xml(drive, lift), _camera_xml(camera),
+              _lidar_xml(lidar)]
+    if lift is not None:
+        blocks.append(_lift_xml(lift))
+    for block in blocks:
         root.append(ET.fromstring(block))
+    return ET.tostring(root, encoding='unicode')
+
+
+ROBOT_VISIBILITY = 0x2
+"""Visibility flag on every visual of the robot's own model."""
+SENSOR_MASK = 0xFFFFFFFF & ~ROBOT_VISIBILITY
+"""The camera's and LiDAR's mask: everything except the robot itself."""
+
+
+def hide_robot_from_sensors(sdf: str) -> str:
+    """Make the robot's own visuals invisible to its own camera and LiDAR.
+
+    For the forklift (Athreya, 2026-10-22): its sensors sit exactly where the
+    SCOUT's do, which is inside the mast and behind the carriage plate, so
+    without this the camera would see the inside of its own carriage. With it,
+    both sensors see what the SCOUT's would; the Gazebo window still shows the
+    whole truck (its camera's mask includes this flag). Works on the SDF that
+    `ign sdf -p` makes of the URDF, because URDF cannot carry either element.
+    """
+    root = ET.fromstring(sdf)
+    for visual in root.iter('visual'):
+        flags = visual.find('visibility_flags')
+        if flags is None:
+            flags = ET.SubElement(visual, 'visibility_flags')
+        flags.text = str(ROBOT_VISIBILITY)
+    for sensor in root.iter('sensor'):
+        body = sensor.find('camera') if sensor.find('camera') is not None else sensor.find('lidar')
+        if body is None:
+            continue
+        mask = body.find('visibility_mask')
+        if mask is None:
+            mask = ET.SubElement(body, 'visibility_mask')
+        mask.text = str(SENSOR_MASK)
     return ET.tostring(root, encoding='unicode')
 
 
@@ -135,8 +187,8 @@ def _strip_gazebo_plugins(root):
 
 
 def _drive_xml(d: Drive) -> str:
-    joints = ''.join(f'<left_joint>{j}</left_joint>' for j in WHEELS_LEFT)
-    joints += ''.join(f'<right_joint>{j}</right_joint>' for j in WHEELS_RIGHT)
+    joints = ''.join(f'<left_joint>{j}</left_joint>' for j in d.left_joints)
+    joints += ''.join(f'<right_joint>{j}</right_joint>' for j in d.right_joints)
     return (
         '<gazebo><plugin filename="ignition-gazebo-diff-drive-system" '
         'name="ignition::gazebo::systems::DiffDrive">'
@@ -144,19 +196,29 @@ def _drive_xml(d: Drive) -> str:
         f'<wheel_separation>{d.wheel_separation}</wheel_separation>'
         f'<wheel_radius>{d.wheel_radius}</wheel_radius>'
         f'<odom_publish_frequency>{d.odom_rate}</odom_publish_frequency>'
-        '<topic>/model/scout/cmd_vel</topic>'
-        '<odom_topic>/model/scout/odometry</odom_topic>'
-        '<tf_topic>/model/scout/tf</tf_topic>'
+        '<topic>/model/robot/cmd_vel</topic>'
+        '<odom_topic>/model/robot/odometry</odom_topic>'
+        '<tf_topic>/model/robot/tf</tf_topic>'
         '<frame_id>odom</frame_id>'
         '<child_frame_id>base_link</child_frame_id>'
         '</plugin></gazebo>')
 
 
-def _joint_states_xml() -> str:
-    joints = ''.join(f'<joint_name>{j}</joint_name>' for j in WHEELS_LEFT + WHEELS_RIGHT)
+def _joint_states_xml(d: Drive, lift: Lift | None = None) -> str:
+    names = d.joint_states + ((lift.joint,) if lift is not None else ())
+    joints = ''.join(f'<joint_name>{j}</joint_name>' for j in names)
     return ('<gazebo><plugin filename="ignition-gazebo-joint-state-publisher-system" '
             'name="ignition::gazebo::systems::JointStatePublisher">'
-            f'<topic>/model/scout/joint_states</topic>{joints}</plugin></gazebo>')
+            f'<topic>/model/robot/joint_states</topic>{joints}</plugin></gazebo>')
+
+
+def _lift_xml(lift: Lift) -> str:
+    return ('<gazebo><plugin filename="ignition-gazebo-joint-position-controller-system" '
+            'name="ignition::gazebo::systems::JointPositionController">'
+            f'<joint_name>{lift.joint}</joint_name><topic>{lift.topic}</topic>'
+            '<use_velocity_commands>true</use_velocity_commands>'
+            '<p_gain>5.0</p_gain><cmd_max>0.3</cmd_max><cmd_min>-0.3</cmd_min>'
+            '</plugin></gazebo>')
 
 
 def camera_intrinsics(c: Camera):
