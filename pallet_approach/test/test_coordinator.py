@@ -738,3 +738,13 @@ def test_only_confirmed_frames_count_towards_the_decision(params):
     for i in range(params['checking_frames'] + 2):
         machine.on_track(track(confirmed=False, range_=1.75), 3.1 + 0.1 * i)
     assert not machine.ready_to_decide(10.0)
+
+
+def test_a_second_run_does_not_reconfigure_a_configured_node():
+    # From `inactive`, `configure` does not exist, and rclpy kills the node's
+    # process rather than refusing it (measured 2026-10-22).
+    from pallet_approach.coordinator import transitions_to_inactive
+    assert transitions_to_inactive('unconfigured') == ['configure']
+    assert transitions_to_inactive('inactive') == []
+    assert transitions_to_inactive('active') == ['deactivate']
+    assert transitions_to_inactive('finalized') is None

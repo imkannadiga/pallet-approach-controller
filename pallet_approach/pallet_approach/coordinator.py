@@ -188,6 +188,26 @@ class Transition:
 
 
 
+def transitions_to_inactive(state: str) -> list[str] | None:
+    """Lifecycle transitions that bring a managed node to `inactive`, from the
+    state it reports (its label: 'unconfigured', 'inactive', 'active', ...).
+
+    A run leaves its nodes `inactive`, still configured, so the NEXT run must
+    not send `configure` again: from `inactive` that transition does not exist,
+    and rclpy's lifecycle does not refuse it -- it raises inside the service
+    callback and the node's process dies. Measured 2026-10-22 in the sim: the
+    second run after any first one failed with "could not configure the
+    managed nodes", and perception was gone until the stack restarted. So the
+    coordinator asks first and sends only what is missing. None means a state
+    a run cannot start from (finalized, or mid-transition).
+    """
+    return {
+        'unconfigured': ['configure'],
+        'inactive': [],
+        'active': ['deactivate'],
+    }.get(state)
+
+
 def machine_params(get) -> dict:
     """Everything `Coordinator` reads, from parameter names.
 

@@ -64,7 +64,7 @@ from collections import deque
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from lifecycle_msgs.msg import Transition as LifecycleTransition
-from lifecycle_msgs.srv import ChangeState
+from lifecycle_msgs.srv import ChangeState, GetState
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
@@ -92,6 +92,7 @@ from pallet_approach.coordinator import (
     PICKUP,
     Coordinator,
     machine_params,
+    transitions_to_inactive,
     DriveInfo,
     ForkInfo,
     Outcome,
@@ -237,6 +238,11 @@ class CoordinatorNode(Node):
                                      callback_group=self._service_group)
             for name in MANAGED
         }
+        self._state_clients = {
+            name: self.create_client(GetState, f'/{name}/get_state',
+                                     callback_group=self._service_group)
+            for name in MANAGED
+        }
 
         self._action = ActionServer(
             self, PalletTask, self._get('action_name'),
@@ -364,10 +370,38 @@ class CoordinatorNode(Node):
             self._active_nodes[node_name] = active
         return ok
 
+    def _lifecycle_state(self, node_name: str) -> str | None:
+        """The node's current lifecycle state label, or None if it does not
+        answer (which is also what a dead process looks like)."""
+        client = self._state_clients[node_name]
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error(f'{node_name}/get_state is not available')
+            return None
+        future = client.call_async(GetState.Request())
+        deadline = time.monotonic() + 5.0       # waited, not spun: see _transition
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not future.done():
+            self.get_logger().error(f'{node_name}/get_state timed out')
+            return None
+        return future.result().current_state.label
+
     def _configure_all(self) -> bool:
+        """Bring every managed node to `inactive`, from whatever state it is in."""
+        ids = {'configure': LifecycleTransition.TRANSITION_CONFIGURE,
+               'deactivate': LifecycleTransition.TRANSITION_DEACTIVATE}
         for name in MANAGED:
-            if not self._transition(name, LifecycleTransition.TRANSITION_CONFIGURE):
+            state = self._lifecycle_state(name)
+            steps = None if state is None else transitions_to_inactive(state)
+            if steps is None:
+                self.get_logger().error(
+                    f'{name} is {state or "not answering"}; a run cannot start '
+                    f'from there')
                 return False
+            for step in steps:
+                if not self._transition(name, ids[step]):
+                    self.get_logger().error(f'{name}: {step} from {state} failed')
+                    return False
             self._active_nodes[name] = False
         return True
 
