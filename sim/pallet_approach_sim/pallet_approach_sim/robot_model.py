@@ -217,7 +217,7 @@ def _lift_xml(lift: Lift) -> str:
             'name="ignition::gazebo::systems::JointPositionController">'
             f'<joint_name>{lift.joint}</joint_name><topic>{lift.topic}</topic>'
             '<use_velocity_commands>true</use_velocity_commands>'
-            '<p_gain>5.0</p_gain><cmd_max>0.3</cmd_max><cmd_min>-0.3</cmd_min>'
+            '<p_gain>8.0</p_gain><cmd_max>0.8</cmd_max><cmd_min>-0.8</cmd_min>'
             '</plugin></gazebo>')
 
 

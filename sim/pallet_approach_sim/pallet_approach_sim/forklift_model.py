@@ -156,6 +156,23 @@ def forklift_urdf(geometry: dict, mesh_uri: str) -> str:
     return '\n'.join(parts)
 
 
+def carriage_target(state: str, height: float, target: float, rest: float,
+                    travel: float) -> float:
+    """The carriage's joint position (D71). Heights are tine-underside heights
+    above the floor; `rest` is that height at joint position zero.
+
+    At the travel height while the virtual forks are PARKED or still being
+    LOWERED (MOVING towards a lower target): the coordinator uses the camera
+    until the lowering ends, and forks sweeping down through its view of the
+    face read as a lost pallet (5 of 5 runs, 2026-10-22). From INSERT_HEIGHT
+    on, the virtual forks' own height: the drop takes ~0.5 s at the start of
+    the insertion, where the track is not required (D16), and the fork tips
+    start ~9 cm short of the face.
+    """
+    lowering = state == 'MOVING' and target < height
+    return (travel if state == 'PARKED' or lowering else height) - rest
+
+
 def wheel_separation(geometry: dict) -> float:
     return abs(geometry['front_left']['xyz'][1] - geometry['front_right']['xyz'][1])
 

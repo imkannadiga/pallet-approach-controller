@@ -145,3 +145,15 @@ def test_the_drive_wheels_grip_and_the_rear_wheels_slide():
     rear_x = GEOMETRY['rear_left']['xyz'][0]
     assert rear_x < forklift_model.BODY_COM_X < front_x
 
+
+def test_the_carriage_travels_above_the_camera_and_follows_the_forks_otherwise():
+    # D71: forks in the camera's view hid the pockets, parked or lowering.
+    rest, travel = 0.1318, 0.45
+    def underside(state, height, target):
+        return forklift_model.carriage_target(state, height, target, rest, travel) + rest
+    assert underside('PARKED', 0.15, 0.15) == pytest.approx(travel)
+    assert underside('MOVING', 0.10, 0.04) == pytest.approx(travel)       # lowering
+    assert travel > 0.398 + 0.03                                         # above the camera
+    assert underside('INSERT_HEIGHT', 0.04, 0.04) == pytest.approx(0.04)
+    assert underside('MOVING', 0.06, 0.11) == pytest.approx(0.06)        # lifting
+    assert underside('LIFTED', 0.11, 0.11) == pytest.approx(0.11)

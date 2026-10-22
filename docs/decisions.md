@@ -1020,6 +1020,21 @@ virtual_forks height (`fork_lift_bridge.py`), and the pallet is a dynamic
 sim keeps a static pallet. *Why:* the pickup is then checked by physics,
 not just by the stack's own report. (Athreya, 2026-10-22)
 
+**D71. The forklift carries its forks at 0.45 m while they are parked and
+while they are being lowered**, and follows the virtual forks' height from
+insertion height on (inserting, lifting, backing out). From D13 ("travel lift height at least 0.40 m: the carriage's lowest
+bar must clear the camera's view"). *Why:* the camera sits 0.398 m up, where
+the SCOUT's does (D67); forks parked at 0.15 m stick out 1.66 m in front of
+it, between it and the pockets, and hid a growing strip of the face as the
+truck closed in. The side then read "ambiguous" and the tracker dropped the
+pallet at ~2.4 m in 5 of 5 runs (2026-10-22). Raised above the camera they
+are out of its line of sight. They stay up through LOWERING too, because the
+coordinator still needs the track there and forks sweeping down through the
+view read as a lost pallet (5 of 5 runs); they drop in ~0.5 s at the start of
+INSERTING, where the track is not required (D16), with the tips starting
+~9 cm short of the face. Sim only: the SCOUT has no forks, and the
+coordinator's rules are unchanged. (Simulation, 2026-10-22)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
