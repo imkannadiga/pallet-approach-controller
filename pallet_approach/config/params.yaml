@@ -881,8 +881,8 @@ watchdog:
       # instead of 3.7 MB. Nothing in this node ever subscribes to an image.
       camera_info: 0.30         # ~37 Hz nominal
       estimate: 0.50            # perception's own 5 Hz target (D24)
-      odom: 0.20                # 50 Hz nominal
-      lidar: 0.50               # 10 Hz nominal
+      odom: 0.50                # 50 Hz nominal
+      lidar: 0.80               # 10 Hz nominal, ~0.37 s built-in latency
       # The tf chain's camera link is republished at 58 Hz by the ZED SDK's
       # stereo self-calibration, on the CAMERA's clock. So this is the check
       # that catches clock skew between the Jetson and the camera -- the
@@ -890,7 +890,9 @@ watchdog:
       # tools/clock_audit.py exists. It is measured but NOT enforced while
       # frames.tf_fallback_to_latest is true, and the node says so in a warning
       # at startup.
-      tf: 0.30
+      # [measured 2026-10-22, D72] 0.30 -> 0.50: worst 0.16 s at idle, but
+      # 0.35 s the moment perception starts up (a CPU spike on the Jetson).
+      tf: 0.50
 
     # [choice, 2026-10-20] D58. How long after a run starts perception
     # may stay silent before its first estimate. Perception is activated by

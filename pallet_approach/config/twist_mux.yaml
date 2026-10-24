@@ -23,11 +23,12 @@
 # itself has no command timeout at all (`ros2 param dump /scout`), so this is
 # the only thing between a dead node and a robot that keeps going.
 #
-# 0.5 s against a 20 Hz command rate is ten missed commands. Deliberately
-# looser than the watchdog's staleness limits (D9: 0.20-0.50 s): the watchdog
-# is meant to notice first and stop the robot deliberately, with a reason that
-# reaches the operator. The mux timeout is the backstop for the watchdog itself
-# dying.
+# 0.5 s against a 20 Hz command rate is ten missed commands: a publisher that
+# dies is cut within 10 cm at the 0.20 m/s lab limit. It used to be required
+# to be looser than the watchdog's sensor-age limits; since D72 raised the
+# LiDAR's to 0.80 s, D73 dropped that ordering. The two watch different things:
+# a stale sensor never makes the mux time out (the controller keeps
+# publishing), so the watchdog still stops the robot with its reason.
 twist_mux:
   ros__parameters:
 

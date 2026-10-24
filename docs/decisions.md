@@ -351,10 +351,11 @@ transcription:
   published, so a coordinator that died mid-run would lock the robot out of
   navigation until a human noticed. Expiring means a dead coordinator gives
   control back.
-- **Input timeouts (0.5 s) are deliberately looser than the watchdog's
+- ~~**Input timeouts (0.5 s) are deliberately looser than the watchdog's
   staleness limits (0.20-0.50 s, D9).** The watchdog is meant to notice first
   and stop the robot with a reason the operator can read; the mux timeout is
-  the backstop for the watchdog itself dying.
+  the backstop for the watchdog itself dying.~~ **Superseded 2026-10-22 by
+  D73:** the timeouts stay at 0.5 s and the ordering is dropped.
 
 **Open on the robot:** Nav2 still publishes straight to `/cmd_vel`, which is
 the mux's output. Until its controller server is remapped to `/cmd_vel_nav`,
@@ -1034,6 +1035,31 @@ view read as a lost pallet (5 of 5 runs); they drop in ~0.5 s at the start of
 INSERTING, where the track is not required (D16), with the tips starting
 ~9 cm short of the face. Sim only: the SCOUT has no forks, and the
 coordinator's rules are unchanged. (Simulation, 2026-10-22)
+
+**D72. The watchdog's age limits fitted to the real robot.** LiDAR 0.50 ->
+0.80 s, tf 0.30 -> 0.50 s, odometry 0.20 -> 0.50 s; camera_info unchanged at
+0.30 s. Amends D9. *Why:* runs on the robot aborted on stale LiDAR and tf, and
+the stack idled unhealthy on odometry. Measured 2026-10-22 over 30 s at idle,
+clocks synced to 0.5 ms (so not skew): LiDAR clouds arrive ~0.37 s old (p99
+0.42 s, 7.1 Hz), leaving the 0.50 s limit under 0.1 s of margin; camera tf
+worst 0.16 s at idle but 0.35 s when perception starts up; odometry normally
+4 ms old but stalling up to ~1.0 s (p99 age 0.70 s). 0.50 s for odometry
+covers ordinary jitter while a real stall still stops the robot -- at
+0.20 m/s that is at most 10 cm driven without fresh odometry. Open: the cause
+of the odometry stalls (robot PC or network). (Athreya, 2026-10-22)
+
+**D73. twist_mux input timeouts stay at 0.5 s; they no longer have to be
+slower than the watchdog's sensor-age limits.** Replaces the ordering rule in
+the arbitration notes (input timeouts "deliberately looser than the watchdog's
+staleness limits"). *Why:* D72 raised the LiDAR's age limit to 0.80 s, and
+following the old rule would have meant cutting a crashed command publisher
+after 0.8 s instead of 0.5 s (16 cm instead of 10 cm at 0.20 m/s, with nothing
+else to stop the robot: the base has no timeout). The two watch different
+things: the mux times out on a command publisher going quiet; the watchdog on
+a sensor going stale. A stale sensor never makes the mux time out, because the
+controller keeps publishing, so the watchdog still stops the robot with its
+reason. Each is now checked on its own (`test_arbitration.py`).
+(Athreya, 2026-10-22)
 
 ## Open, with numbers attached
 

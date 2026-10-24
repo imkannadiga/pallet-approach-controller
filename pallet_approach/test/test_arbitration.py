@@ -47,16 +47,19 @@ def test_every_input_has_a_timeout(mux):
         assert block.get('timeout', 0) > 0, f'input {name} has no timeout'
 
 
-def test_the_input_timeouts_are_looser_than_the_watchdog(mux):
-    """Deliberate: the watchdog should notice first and stop the robot with a
-    reason that reaches the operator. The mux timeout is the backstop for the
-    watchdog itself dying, so it has to be the slower of the two."""
+def test_the_input_timeouts_cut_a_dead_publisher_quickly(mux):
+    """D73: the mux's input timeout is the backstop for a command publisher
+    that dies mid-command -- the base has no timeout of its own. It no longer
+    has to be slower than the watchdog's sensor-age limits (D72 put the LiDAR's
+    at 0.80 s): the two watch different things. A stale sensor never makes the
+    mux time out, because the controller keeps publishing, so the watchdog
+    still stops the robot with its reason. Each limit is checked on its own:
+    at most 0.5 s (10 cm at the 0.20 m/s lab limit), and at least two command
+    periods, so ordinary jitter at 20 Hz does not drop a live input."""
     params = yaml.safe_load(PARAMS_FILE.read_text())
-    worst = max(params['watchdog']['ros__parameters']['max_age'].values())
+    rate = params['approach_controller']['ros__parameters']['command_rate']
     for name, block in mux['topics'].items():
-        assert block['timeout'] >= worst, (
-            f'input {name} times out in {block["timeout"]} s, before the '
-            f'watchdog\'s slowest staleness limit of {worst} s')
+        assert 2.0 / rate <= block['timeout'] <= 0.5, (name, block['timeout'])
 
 
 def test_the_mux_inputs_are_the_topics_the_nodes_publish(mux, topics):
