@@ -93,10 +93,15 @@
       # face is this much further than the standoff. One noisy range reading
       # must not make the robot creep forward a frame at a time.
       resume_range: 0.10
-      # [choice, 2026-10-19] The floor on the run-up. Variable standoff
-      # with a 3 m minimum: the required distance is computed from the lateral
-      # error, and never less than this.
-      min_run_up: 3.0
+      # [choice, 2026-10-19; lowered 2026-10-23, D75] The floor on the run-up,
+      # as a FACE distance. Variable standoff with a minimum: the required
+      # distance is computed from the lateral error, and never less than this.
+      # Was 3.0 m, which made every run start where the pockets cannot be
+      # resolved on the robot (3.35 m: about 40 points across the face at
+      # pocket height). The computed term still sizes the run-up for a large
+      # Nav2 error -- 3.40 m for 0.30 m of offset -- and refuses ("reposition")
+      # what the 0.5 m reverse cannot reach.
+      min_run_up: 2.5
       # [choice] Lateral error the run-up is sized to reach. 20 mm is a third
       # of the 65 mm of slack around a 100 mm tine in a 230 mm pocket, and
       # below the 50 mm GO/NO-GO limit with room for the measurement to be

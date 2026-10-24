@@ -192,8 +192,9 @@ def test_approach_only_runs_the_whole_approach_and_stops(params, slack):
 # ------------------------------------------------------------- the run-up
 
 def test_starting_too_close_reverses_first(params):
-    """Variable standoff with a 3 m minimum (D39)."""
-    run = fresh().run(S.facing(2.7))
+    """Variable standoff with a minimum (D39, 2.5 m since D75): 2.2 m is
+    short of it by 0.35 m, inside the 0.5 m the reverse may cover."""
+    run = fresh().run(S.facing(2.2))
     assert run.outcome == 'INSERTED', run.describe()
     assert run.visited('BACKING_OFF')
     assert run.states.index('BACKING_OFF') < run.states.index('CLOSING')
@@ -332,7 +333,7 @@ def test_a_clear_rear_does_not_stop_a_reverse(params):
     """The counterpart: if any rear points stopped it, the test above would
     prove nothing."""
     wall = np.array([[-4.0, y, 0.30] for y in np.linspace(-0.3, 0.3, 12)])
-    run = fresh(rear=wall).run(S.facing(2.7))
+    run = fresh(rear=wall).run(S.facing(2.2))
     assert run.outcome == 'INSERTED', run.describe()
     assert run.visited('BACKING_OFF')
 

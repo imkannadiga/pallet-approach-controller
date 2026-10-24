@@ -48,6 +48,12 @@ def params(yaml_params):
     block = yaml_params['coordinator']['ros__parameters']
     controller = yaml_params['approach_controller']['ros__parameters']
     closing = dict(shared['closing'])
+    # The scenarios below are written in metres against a 3.0 m run-up floor
+    # (2.7 m "too close", 3.2 m "far enough"). They test the machine's logic,
+    # not the floor's value -- that is params.yaml's (2.5 m since D75), checked
+    # in test_params.py and test_closing.py -- so the floor is pinned here
+    # rather than every distance being rewritten around whatever it is today.
+    closing['min_run_up'] = 3.0
     closing['target_range'] = shared['standoff_distance']
     closing['carriage_x'] = shared['forks']['carriage_x']
     closing['tine_length'] = shared['forks']['tine_length']

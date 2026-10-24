@@ -242,7 +242,7 @@ def test_the_run_up_target_fits_the_pockets(params_file):
 
 
 def test_the_minimum_run_up_is_outside_the_fork_tips(params_file):
-    """3.0 m is a long way outside, but the check costs nothing and the
+    """2.5 m is a long way outside, but the check costs nothing and the
     alternative is a run-up that starts with the tines already in the pallet."""
     shared = flatten(params_file['/**']['ros__parameters'])
     reach = shared['forks.carriage_x'] + shared['forks.tine_length']

@@ -1087,6 +1087,19 @@ calibration file, never in params.yaml; a run-time warning if perception's
 floor drifts from it. To be decided in detail when it is built.
 (Athreya, 2026-10-23)
 
+**D75. The run-up floor is 2.5 m from the face, not 3.0 m.** Amends D39.
+`closing.min_run_up` 3.0 -> 2.5; the computed term is unchanged. *Why:* with
+a 3 m floor every run has to start at least 3 m from the face, and on the
+robot that is where the pockets stop being resolvable -- at 3.35 m (2026-10-23)
+the face carried about 40 points at pocket height and pockets were found only
+intermittently, so the side stayed "ambiguous". Perception is verified on the
+robot at about 2 m. The 3 m floor existed to give room to steer out of a large
+error Nav2 might leave; that is kept by the computed term, which sizes the
+run-up from the measured offset (2.32 m of face distance for 5 cm of offset,
+2.59 m for 10 cm, 3.40 m for 30 cm), and a run whose need the 0.5 m reverse
+cannot reach is refused with "reposition" rather than attempted. Start runs
+about 2.5 m from the short face. (Athreya, 2026-10-23)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

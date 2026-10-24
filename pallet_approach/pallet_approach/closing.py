@@ -201,12 +201,12 @@ def required_run_up(offset: float, params: dict) -> float:
 
     Two terms, and the larger wins:
 
-    * a floor of `min_run_up` (3.0 m, D39), set from the simulation;
+    * a floor of `min_run_up` (2.5 m, D39 lowered by D75);
     * the standoff plus however far this servo needs to bring the lateral error
       it currently has down to `residual_target`.
 
-    The second term is why the standoff is "variable with a 3 m minimum" rather
-    than just 3 m: a robot that Nav2 left half a metre off the centre line
+    The second term is why the standoff is "variable with a minimum" rather
+    than fixed: a robot that Nav2 left half a metre off the centre line
     needs more run-up than one left on it, and the amount is geometry rather
     than a guess.
 
