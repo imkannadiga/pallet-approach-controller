@@ -419,3 +419,32 @@ def test_the_pallet_direction_holds_still_under_depth_noise(params, intrinsics):
               for y in yaws]
     assert max(errors) - min(errors) < 2.0, errors       # the stability limit
     assert max(abs(e) for e in errors) < 2.0, errors
+
+
+def _solid_box(x0, x1, y0, y1, z0, z1, spacing):
+    """Points on the visible surfaces of a box (front, top, sides)."""
+    def grid(a0, a1, b0, b1):
+        a, b = np.meshgrid(np.arange(a0, a1, spacing), np.arange(b0, b1, spacing))
+        return a.ravel(), b.ravel()
+    y, z = grid(y0, y1, z0, z1)
+    front = np.c_[np.full_like(y, x0), y, z]
+    x, y2 = grid(x0, x1, y0, y1)
+    top = np.c_[x, y2, np.full_like(x, z1)]
+    x3, z3 = grid(x0, x1, z0, z1)
+    sides = np.r_[np.c_[x3, np.full_like(x3, y0), z3], np.c_[x3, np.full_like(x3, y1), z3]]
+    return np.r_[front, top, sides]
+
+
+def test_a_nearer_pallet_sized_crate_without_pockets_is_not_chosen(params, intrinsics):
+    """D87, from the sim (2026-10-23): a crate of pallet height and pallet-face
+    width passes the size and height gates; when it is the nearest candidate it
+    used to win. Now the nearest candidate with a POCKET PAIR is preferred."""
+    pallet, truth = S.pallet_cloud(distance=2.0, lateral=0.45, noise=0.0,
+                                   spacing=0.0015, floor_spacing=0.012)
+    top = S.FLOOR_Z + S.PALLET_HEIGHT
+    crate = _solid_box(1.6, 2.2, -0.95, -0.15, S.FLOOR_Z, top, 0.0015)
+    depth = S.depth_image(np.vstack([pallet, crate]))
+    est = perception.estimate_pallet(depth, intrinsics, S.camera_to_base_matrix(), params)
+    assert est is not None
+    assert len(est.pockets) == 2
+    assert est.position[1] == pytest.approx(0.45, abs=0.06)      # the pallet, not the crate

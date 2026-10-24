@@ -455,7 +455,26 @@ def select_pallet_cluster(
     widths: tuple[float, ...] = (),
     max_height: float | None = None,
 ) -> np.ndarray | None:
-    """Pick the cluster that could be a pallet, or None.
+    """The nearest cluster that could be a pallet, or None (see
+    `pallet_candidates`, which this wraps)."""
+    candidates = pallet_candidates(points, labels, pallet_width, pallet_height,
+                                   size_tolerance, floor, min_points, widths,
+                                   max_height)
+    return candidates[0] if candidates else None
+
+
+def pallet_candidates(
+    points: np.ndarray,
+    labels: np.ndarray,
+    pallet_width: float,
+    pallet_height: float,
+    size_tolerance: float = 0.25,
+    floor: Plane | None = None,
+    min_points: int = 50,
+    widths: tuple[float, ...] = (),
+    max_height: float | None = None,
+) -> list[np.ndarray]:
+    """Every cluster that could be a pallet, nearest first.
 
     This is the gate that stops the system hallucinating pallets out of boxes
     and table legs. Judge each cluster on geometry only -- no learned model, as
@@ -469,8 +488,8 @@ def select_pallet_cluster(
     * it needs enough points to fit a face to.
 
     Returns:
-        (M, 3) points of the chosen cluster, or None if nothing qualifies.
-        Returning None is a perfectly good answer -- it becomes NO_PALLET.
+        a list of (M, 3) clusters, nearest first; empty if nothing qualifies.
+        Nothing is a perfectly good answer -- it becomes NO_PALLET.
 
     TODO: implement.
     """
@@ -528,12 +547,11 @@ def select_pallet_cluster(
         # Passed every check: remember it with its horizontal distance.
         distance = np.linalg.norm(cluster[:, :2].mean(axis=0))
         candidates.append((distance, cluster))
- 
-    if not candidates:
-        return None
-    # Several candidates: the nearest one is the one to approach.
+
+    # Nearest first. select_pallet_cluster takes the first; estimate_pallet
+    # prefers the nearest that shows two pockets (D87).
     candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    return [cluster for _, cluster in candidates]
 
 
 def fit_front_face(
@@ -1063,20 +1081,45 @@ def estimate_pallet(
     # Every face the pallet could be showing. Which one it IS gets decided
     # below, from the pockets; this gate only has to not throw the cluster away.
     widths = tuple(cfg['face_width'] for cfg in params.get('sides', {}).values())
-    pallet = select_pallet_cluster(
+    candidates = pallet_candidates(
         points, labels, params['pallet_width'], params['pallet_height'],
         size_tolerance=params['size_tolerance'], floor=floor,
         min_points=params['min_cluster_points'], widths=widths,
         max_height=params['pallet_height'] + params['max_height_above_pallet'])
-    if pallet is None:
-        return None
- 
-    # 9-10. Its front face and the angle it faces.
-    face = fit_front_face(pallet, params['face_distance_threshold'],
+    # D87: the nearest candidate that shows a POCKET PAIR, else the nearest.
+    # Size and height alone let a pallet-height crate through, and in the sim
+    # it took over whenever noise made the pallet fail a gate for a frame
+    # (~110 cm jumps that reset the tracker); a crate has no pockets.
+    chosen, chosen_points = None, None
+    for pallet in candidates[:int(params.get('max_candidates', 3))]:
+        local = {} if decision_points is not None else None
+        estimate = _estimate_from_cluster(pallet, points, floor, params, rng, stamp, local)
+        if estimate is None:
+            continue
+        if len(estimate.pockets) == 2:
+            chosen, chosen_points = estimate, local
+            break
+        if chosen is None:
+            chosen, chosen_points = estimate, local
+    if decision_points is not None and chosen_points:
+        decision_points.update(chosen_points)
+    return chosen
+
+
+def _estimate_from_cluster(pallet, points, floor, params, rng, stamp, decision_points):
+    """Steps 9-12 of `estimate_pallet` for one candidate cluster."""
+    # 9-10. Its front face and the angle it faces. Fitted below the top deck
+    # (D88): seen from above the deck is a big patch of points, and a vertical
+    # plane through it rivals the real front face, so the random draw decided.
+    below = pallet[floor.height_of(pallet)
+                   < params['pallet_height'] - params.get('face_deck_margin', 0.0)]
+    fit_on = below if len(below) >= params.get('face_min_points', 60) else pallet
+    face = fit_front_face(fit_on, params['face_distance_threshold'],
                           params['max_tilt_from_vertical'], rng=rng)
     if face is None:
         return None
-    face_normal, face_centroid, face_mask = face
+    face_normal, face_centroid, _ = face
+    face_mask = np.abs((pallet - face_centroid) @ face_normal) < params['face_distance_threshold']
     yaw = face_yaw(face_normal)
 
     if decision_points is not None:

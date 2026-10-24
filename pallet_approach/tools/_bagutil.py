@@ -187,6 +187,8 @@ def load_params(package_root: pathlib.Path) -> dict:
         'face_distance_threshold': block['face']['ransac_distance'],
         'max_tilt_from_vertical': block['face']['max_tilt_from_vertical'],
         'face_min_points': block['face']['min_points'],
+        'face_deck_margin': block['face']['deck_margin'],
+        'floor_score_points': block['floor']['score_points'],
         'max_facing_angle': block['face']['max_facing_angle'],
         'pocket_slab_half_depth': shared['pallet']['pocket_slab_half_depth'],
         'pocket_frame_margin': shared['pallet']['pocket_frame_margin'],

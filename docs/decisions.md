@@ -1192,6 +1192,32 @@ by 10 deg instead was tried first and is a different error: at 2.5 m it swings
 the centre line ~0.4 m off the robot, which correctly ends in "reposition".
 (Athreya, 2026-10-23)
 
+**D87. Perception prefers the nearest candidate that shows two pockets.**
+Every cluster that passes the size and height gates is a candidate, nearest
+first; the face fit and pocket search run on up to `cluster.max_candidates`
+(3) of them, and the first with a pocket pair is the pallet. If none has one,
+the nearest is taken, as before. *Why:* in the third D83 batch three runs were
+lost after ~110 cm jumps: a 0.60 x 0.40 x 0.15 m crate passes the height (D76)
+and width gates, and whenever noise made the pallet's cluster fail a gate for a
+frame, the crate was chosen and the tracker reset. A crate has no pockets.
+Chosen over having the tracker feed the pallet's position back to perception,
+which would make a wrong lock-on persist. Costs extra face fits when the
+nearest candidate is not a pallet. (Athreya, 2026-10-23)
+
+**D88. The face is fitted below the top deck.** `face.deck_margin: 0.03`:
+the vertical-plane RANSAC runs on cluster points lower than pallet_height -
+0.03 m; its inlier mask is then taken over the whole cluster, so everything
+downstream is unchanged. *Why:* found while speeding perception up -- changing
+only the random draws moved results at 2 m by up to 44 mm. Seen from above the
+top deck is a large patch of points, and a vertical plane cut through it
+collects nearly as many as the real front face, so the draw decided: over 10
+seeds on pallet_2m_0deg, two seeds (one of them the default, 0) lost a pocket
+in 4-5 of 30 frames, with 19-25 mm of midpoint scatter and yaw errors up to
+10 deg. Below the deck: both pockets in 300/300 frames over 10 seeds on
+pallet_2m_0deg and on pallet_s_129, worst-seed scatter 5 mm and 1 mm, yaw p95
+2.9 and 0.2 deg. Chosen over "the front-most of the well-supported planes",
+which did worse. (Athreya, 2026-10-23)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

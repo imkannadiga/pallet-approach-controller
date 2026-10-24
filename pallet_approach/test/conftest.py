@@ -51,6 +51,8 @@ def params():
         'face_distance_threshold': 0.015,
         'max_tilt_from_vertical': 0.26,
         'face_min_points': 60,
+        'face_deck_margin': 0.03,
+        'floor_score_points': 3000,
         'max_facing_angle': 1.05,
 
         # The band sits at 0.055 +- 0.02, i.e. 0.035-0.075 above the floor:

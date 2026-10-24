@@ -106,11 +106,13 @@ class PerceptionNode(LifecycleNode):
             ('cluster.eps', 0.05), ('cluster.min_samples', 8),
             ('cluster.min_cluster_points', 100),
             ('face.min_points', 60), ('face.max_tilt_from_vertical', 0.26),
+            ('face.deck_margin', 0.03),
             ('floor.score_points', 3000),
             ('face.ransac_distance', 0.015),
             ('face.max_facing_angle', 1.05),
             ('cluster.size_tolerance', 0.25),
             ('cluster.max_height_above_pallet', 0.04),
+            ('cluster.max_candidates', 3),
             # RANSAC draws random samples, so the same frame can give slightly
             # different planes run to run. A fixed seed makes a replay
             # reproducible, which is the difference between "the bag shows the
@@ -202,10 +204,12 @@ class PerceptionNode(LifecycleNode):
             'min_cluster_points': get('cluster.min_cluster_points'),
             'size_tolerance': get('cluster.size_tolerance'),
             'max_height_above_pallet': get('cluster.max_height_above_pallet'),
+            'max_candidates': get('cluster.max_candidates'),
 
             'face_distance_threshold': get('face.ransac_distance'),
             'max_tilt_from_vertical': get('face.max_tilt_from_vertical'),
             'face_min_points': get('face.min_points'),
+            'face_deck_margin': get('face.deck_margin'),
             'floor_score_points': get('floor.score_points'),
             'max_facing_angle': get('face.max_facing_angle'),
 

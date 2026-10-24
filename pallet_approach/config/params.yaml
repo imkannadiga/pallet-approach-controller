@@ -603,6 +603,11 @@ pallet_perception:
       # 0.14 m) on every frame by being nearer. 4 cm covers the measured
       # pallet's top plus floor-fit and depth noise.
       max_height_above_pallet: 0.04
+      # [choice, Athreya 2026-10-23] D87. Of the clusters that pass the gates,
+      # perception takes the nearest one that shows two pockets, trying at most
+      # this many (nearest first); if none does, the nearest, as before. Each
+      # try is a face fit and a pocket search, so this bounds the extra cost.
+      max_candidates: 3
 
     face:
       # Support the face fit must have before go_nogo will trust it. Derived,
@@ -621,6 +626,16 @@ pallet_perception:
       # pallet turned 30 deg is still accepted; the inlier count is what
       # actually picks the front face over a side face.
       max_facing_angle: 1.05         # rad, 60 deg
+      # [choice, Athreya 2026-10-23] D88. The face is fitted only on cluster
+      # points lower than pallet_height minus this, i.e. below the top deck.
+      # Seen from above, the deck is a large patch of points and a vertical
+      # plane cut THROUGH it collects nearly as many as the real front face, so
+      # the random draw decided which one won: on pallet_2m_0deg, seed 0 lost a
+      # pocket in 4 of 30 frames with 25 mm of midpoint scatter and yaw errors
+      # up to 10 deg. Below the deck: both pockets in 300/300 frames over 10
+      # seeds on pallet_2m_0deg and pallet_s_129, scatter <= 4 mm, yaw p95
+      # <= 3 deg. The mask is then taken over the whole cluster, as before.
+      deck_margin: 0.03
 
 
 # ---------------------------------------------------------------------------
