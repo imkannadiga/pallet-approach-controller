@@ -121,8 +121,8 @@ def test_nothing_measurable_is_none_not_a_large_distance(insert):
 
 
 def test_a_stray_early_return_does_not_stop_the_insertion_short(insert):
-    """A low percentile, not the minimum: one return 0.1 m early would
-    otherwise fire the stop on every frame it appeared in."""
+    """The front edge needs a full slice, not one return: one return 0.1 m
+    early would otherwise fire the stop on every frame it appeared in."""
     points = np.vstack([face_returns(1.20), np.array([[1.10, 0.0, 0.05 - 0.025]])])
     distance, _, _ = face_distance_ahead(points, insert['lidar'])
     assert distance == pytest.approx(1.20, abs=0.01)
@@ -257,3 +257,41 @@ def test_the_stop_never_leaves_the_bumper_touching_the_pallet(insert, yaml_param
         assert plan.stop_face_x - bumper >= 0.204, (
             f'{side}: a {plan.stop_face_x - bumper:.3f} m bumper gap is inside '
             f'the LiDAR blind cone')
+
+
+def test_returns_behind_the_face_do_not_pull_the_reading_back(insert):
+    """D90, from the robot (2026-10-24): at the insertion stop most returns in
+    the corridor are the top deck and the pocket interiors BEHIND the face.
+    The old 10th percentile read 32 mm too far; the front edge reads the face."""
+    face = face_returns(0.72, columns=40)
+    rng = np.random.default_rng(0)
+    behind = np.c_[rng.uniform(0.74, 1.6, 1500), rng.uniform(-0.28, 0.28, 1500),
+                   np.full(1500, 0.14 - 0.025)]
+    distance, _, detail = face_distance_ahead(np.vstack([face, behind]), insert['lidar'])
+    assert distance == pytest.approx(0.72, abs=0.005)
+    assert 'front edge' in detail
+    old = float(np.percentile(np.vstack([face, behind])[:, 0], 10))
+    assert old > 0.74                     # what the percentile would have said
+
+
+def test_a_sparse_corridor_falls_back_and_says_so(insert):
+    sparse = face_returns(1.0, columns=6)  # 12 returns: enough to measure, no full slice
+    distance, _, detail = face_distance_ahead(sparse, insert['lidar'])
+    assert distance == pytest.approx(1.0, abs=1e-6)
+    assert '10th percentile' in detail
+
+
+def test_a_cloud_is_brought_up_to_date_with_odometry():
+    """D90: a cloud 0.25 s old is moved by the motion since, so the stop
+    compares the LiDAR and odometry at the same moment."""
+    from pallet_approach.approach import points_then_to_now
+    from pallet_approach.model import Pose2D
+    face = np.array([[0.75, 0.0, 0.1], [0.75, 0.2, 0.1]])
+    then, now = Pose2D(1.0, 2.0, 0.3), Pose2D(1.0 + 0.0125 * np.cos(0.3),
+                                               2.0 + 0.0125 * np.sin(0.3), 0.3)
+    moved = points_then_to_now(face, then, now)
+    assert moved[:, 0] == pytest.approx(face[:, 0] - 0.0125)
+    assert moved[:, 1] == pytest.approx(face[:, 1])
+    assert moved[:, 2] == pytest.approx(face[:, 2])
+    turned = points_then_to_now(face, Pose2D(0, 0, 0), Pose2D(0, 0, np.pi / 2))
+    assert turned[0, :2] == pytest.approx([0.0, -0.75])

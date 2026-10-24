@@ -706,6 +706,11 @@ approach_controller:
         # Returns closer than this are the robot's own structure, not the world.
         min_x: 0.50
         min_points: 10
+        # [choice, Athreya 2026-10-24] D90. The face is the first slice of
+        # edge_bin, from the robot, with at least edge_min_returns, not the
+        # 10th percentile of every return (see insertion.face_distance_ahead).
+        edge_bin: 0.01
+        edge_min_returns: 20
 
     # Commands cross the network to the robot PC, and the base driver has NO
     # command timeout (ros2 param dump /scout), so we never let the base coast on

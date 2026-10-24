@@ -242,3 +242,21 @@ def transform_point(point: np.ndarray, frame_in_target: Pose2D) -> np.ndarray:
 def distance_between(a: Pose2D, b: Pose2D) -> float:
     """Planar distance between two poses, metres (heading ignored)."""
     return float(math.hypot(a.x - b.x, a.y - b.y))
+
+
+def points_then_to_now(points: np.ndarray, then: Pose2D, now: Pose2D) -> np.ndarray:
+    """Points seen from the robot at pose `then` (odom), as seen from `now`.
+
+    Planar: x and y move with the robot's change of pose, z does not. Used to
+    bring a LiDAR cloud up to date with odometry before comparing the two (D90).
+    """
+    c0, s0 = math.cos(then.yaw), math.sin(then.yaw)
+    wx = then.x + c0 * points[:, 0] - s0 * points[:, 1]
+    wy = then.y + s0 * points[:, 0] + c0 * points[:, 1]
+    c1, s1 = math.cos(now.yaw), math.sin(now.yaw)
+    dx, dy = wx - now.x, wy - now.y
+    out = np.array(points, dtype=float, copy=True)
+    out[:, 0] = c1 * dx + s1 * dy
+    out[:, 1] = -s1 * dx + c1 * dy
+    return out
+

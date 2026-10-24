@@ -98,7 +98,8 @@ def executor_params(get) -> dict:
         'speed', 'stop_tolerance', 'max_disagreement', 'max_travel',
         'max_unmeasured_frames'))
     insert_params['lidar'] = group('insert.lidar', (
-        'half_width', 'min_height', 'max_height', 'min_x', 'min_points'))
+        'half_width', 'min_height', 'max_height', 'min_x', 'min_points',
+        'edge_bin', 'edge_min_returns'))
     insert_params['lidar']['floor_z'] = get('floor_z')
     insert_params['carriage_x'] = get('forks.carriage_x')
     insert_params['tine_length'] = get('forks.tine_length')

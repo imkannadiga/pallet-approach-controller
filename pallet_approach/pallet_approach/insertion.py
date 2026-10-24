@@ -123,8 +123,16 @@ def face_distance_ahead(
     finds is the pallet face or something standing in front of it. Either is a
     reason to stop, which is why no attempt is made to tell them apart.
 
-    The statistic is a low percentile of x rather than the minimum: one stray
-    return 0.1 m early would otherwise stop the insertion short every time.
+    The statistic is the FRONT EDGE of the returns (D90): the first slice of
+    `edge_bin` along x, from the robot, holding at least `edge_min_returns`,
+    and the median x within it. Not the minimum, so a stray return early does
+    not stop the insertion short; and not a percentile of all returns, which
+    at the insertion stop is pulled back by the top deck and the pocket
+    interiors -- 1500 of 2000 returns there are behind the face, and the old
+    10th percentile read 32 mm too far against a tape (2026-10-24), enough
+    with latency and odometry to fail the 50 mm agreement check twice. Too
+    sparse for any slice to qualify, it falls back to the 10th percentile and
+    says so.
     """
     if points is None or len(points) == 0:
         return None, float('nan'), 'no LiDAR data'
@@ -142,10 +150,21 @@ def face_distance_ahead(
             f'only {count} returns in the corridor ahead, need '
             f'{int(params["min_points"])}')
     selected = p[ahead]
-    distance = float(np.percentile(selected[:, 0], 10))
     lateral = float(selected[:, 1].mean())
+    x = np.sort(selected[:, 0])
+    width = float(params.get('edge_bin', 0.01))
+    need = int(params.get('edge_min_returns', 20))
+    slices = np.floor((x - x[0]) / width).astype(int)
+    counts = np.bincount(slices)
+    full = np.flatnonzero(counts >= need)
+    if len(full):
+        distance = float(np.median(x[slices == full[0]]))
+        how = 'front edge'
+    else:
+        distance = float(np.percentile(x, 10))
+        how = f'no {width * 100:.0f} cm slice with {need} returns: 10th percentile'
     return distance, lateral, (
-        f'{count} returns, face at {distance:.3f} m, '
+        f'{count} returns, face at {distance:.3f} m ({how}), '
         f'lateral {lateral * 1000:+.0f} mm')
 
 

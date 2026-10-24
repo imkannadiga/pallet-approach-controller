@@ -36,6 +36,7 @@ Five safety properties live here and must not be weakened:
 from __future__ import annotations
 
 import math
+from collections import deque
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -48,6 +49,7 @@ from tf2_ros import Buffer, TransformListener
 from pallet_approach_interfaces.msg import DriveCommand, DriveStatus, TrackedPallet
 
 from pallet_approach import closing
+from pallet_approach.approach import points_then_to_now
 from pallet_approach.controller import ZERO, RateLimiter
 from pallet_approach.drive import MODES, DriveExecutor, Request, Result, executor_params
 from pallet_approach.nodes._common import LatestRaw, logged_transition, lookup_waiting
@@ -72,6 +74,9 @@ class ControllerNode(LifecycleNode):
         self._declare()
         self._active = False
         self._pose = None
+        # ~1 s of odometry, to move a LiDAR cloud to where the robot is NOW
+        # (D90): clouds arrive ~0.25 s old.
+        self._odom_history = deque(maxlen=64)
         self._command = None
         self._command_at = 0.0
         self._tracked = None
@@ -132,7 +137,8 @@ class ControllerNode(LifecycleNode):
             ('insert.max_unmeasured_frames', 5),
             ('insert.lidar.half_width', 0.30), ('insert.lidar.min_height', 0.03),
             ('insert.lidar.max_height', 0.20), ('insert.lidar.min_x', 0.50),
-            ('insert.lidar.min_points', 10),
+            ('insert.lidar.min_points', 10), ('insert.lidar.edge_bin', 0.01),
+            ('insert.lidar.edge_min_returns', 20),
             ('pallet.sides.short.insertion_stop_face_x', 0.700),
             ('pallet.sides.short.depth', 1.195),
             ('pallet.sides.short.insertable', True),
@@ -283,6 +289,7 @@ class ControllerNode(LifecycleNode):
         them shows up as the robot curving when it was told not to.
         """
         pose = pose2d_from_odometry(msg)
+        self._odom_history.append((stamp_to_seconds(msg.header.stamp), pose))
         if self._pose is not None and self._executor is not None:
             self._executor.advance(math.hypot(pose.x - self._pose.x,
                                               pose.y - self._pose.y))
@@ -359,8 +366,26 @@ class ControllerNode(LifecycleNode):
                 self._get('frames.lidar_correction.measured_floor_roll'),
                 self._get('frames.lidar_correction.measured_floor_height'),
                 self._get('floor_z'))
-        return transform_points(unpack_cloud(cloud), matrix)
+        points = transform_points(unpack_cloud(cloud), matrix)
+        return self._to_now(points, stamp_to_seconds(cloud.header.stamp))
 
+    def _to_now(self, points, stamp: float):
+        """Move points seen at `stamp` into base_footprint as it is NOW (D90).
+
+        Clouds arrive ~0.25 s old (measured 2026-10-22); at the 0.05 m/s
+        insertion speed the robot has driven ~12 mm since, and the insertion
+        stop compared that old cloud with current odometry -- 12-14 mm of the
+        60 mm by which two real insertions failed the 50 mm agreement check.
+        The odometry pose nearest the cloud's stamp (within 50 ms) against the
+        current one gives the motion in between; without one, the cloud is
+        used as it is.
+        """
+        if self._pose is None or not self._odom_history:
+            return points
+        then_stamp, then = min(self._odom_history, key=lambda row: abs(row[0] - stamp))
+        if abs(then_stamp - stamp) > 0.05:
+            return points
+        return points_then_to_now(points, then, self._pose)
 
     # ---------------------------------------------------------------- tick
 

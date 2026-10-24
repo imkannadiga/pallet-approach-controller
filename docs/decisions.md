@@ -1281,6 +1281,23 @@ could never back up the 1.0 m minimum. In the harness, from 3.0 m with 0.55 m
 of offset: NO-GO at 272 mm, back up ~1.0 m until stable, second approach to
 75 mm, NO_GO (one retry). (Athreya, 2026-10-23)
 
+**D90. During insertion the LiDAR measures the face's front edge, on a
+cloud brought up to date with odometry.** `insert.lidar.edge_bin: 0.01`,
+`edge_min_returns: 20`: the face is the first 1 cm slice from the robot with at
+least 20 returns in the corridor (10th percentile only as a fallback, and
+said so); and each cloud is moved by the odometry change since its stamp.
+*Why:* two pickups on the robot (2026-10-24) aborted at the end of insertion,
+odometry 0.706/0.708 m against LiDAR 0.768 m, over the 50 mm agreement limit
+(D18). Tape at the stop: face at 0.7225 m. Measured live there: 1500 of 2000
+corridor returns are the top deck and the pocket interiors behind the face, so
+the 10th percentile read +32 mm (front edge: +16 mm); and clouds are ~0.25 s
+old, +12-14 mm at 0.05 m/s while driving. Expected gap now ~30 mm.
+*Left open:* the LiDAR still reads ~14 mm too far even on the front edge --
+probably its forward mounting offset, which the floor calibration (D74) cannot
+see. Left for the auto-calibration routine, which must then measure x, y and
+yaw against a known target too. Odometry was 16 mm short over the ~1.07 m
+insertion. (Athreya, 2026-10-24)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
