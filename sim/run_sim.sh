@@ -153,7 +153,8 @@ case "${1:-}" in
 
   start)
     mode=${2:?usage: start approach_only|pickup}
-    in_stack "ros2 topic pub --once /pallet_approach/start std_msgs/msg/String '{data: $mode}'"
+    docker cp "$REPO_ROOT/pallet_approach/tools/trigger.py" "$STACK:/tmp/trigger.py" >/dev/null
+    in_stack "python3 /tmp/trigger.py $mode"
     ;;
 
   run)
@@ -164,7 +165,8 @@ case "${1:-}" in
     ;;
 
   cancel)
-    in_stack "ros2 topic pub --once /pallet_approach/cancel std_msgs/msg/Empty '{}'"
+    docker cp "$REPO_ROOT/pallet_approach/tools/trigger.py" "$STACK:/tmp/trigger.py" >/dev/null
+    in_stack "python3 /tmp/trigger.py cancel"
     ;;
 
   result)

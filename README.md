@@ -310,11 +310,22 @@ The flow is sequential: Nav2 drives the robot in front of a pallet and
 finishes, then the pipeline is triggered.
 
 ```bash
-ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: approach_only}"
-ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: pickup}"
-ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty  "{}"
-ros2 topic echo /pallet_approach/result
+./docker/build_and_run.sh start approach_only    # or: start pickup
+./docker/build_and_run.sh cancel
+./docker/build_and_run.sh status
 ```
+
+These run `pallet_approach/tools/trigger.py` inside the stack's container. It
+waits until the coordinator's subscription is matched before sending, then
+reports the coordinator's reaction ("coordinator: CONFIRMING ..."). If nothing
+subscribes, it says so, which means that shell cannot reach the stack over DDS.
+
+Avoid `ros2 topic pub --once` from another machine. In Humble it sends its one
+message without waiting for the subscriber to be matched, and the start topic
+is deliberately not latched, so the message often reaches nobody and the stack
+logs nothing at all. If you do publish by hand, run `ros2 topic info -v
+/pallet_approach/start` from the same shell first: it should list the
+coordinator as a subscriber. The result of a run is on `/pallet_approach/result`.
 
 Or as an action, with live feedback (Ctrl-C cancels and the robot stops):
 

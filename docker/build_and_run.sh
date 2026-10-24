@@ -9,16 +9,19 @@
 #   ./docker/build_and_run.sh launch     # launch in the foreground (Ctrl-C ends it)
 #   ./docker/build_and_run.sh shell      # interactive shell, stack not launched
 #   ./docker/build_and_run.sh dds        # show the DDS settings it would use
+#   ./docker/build_and_run.sh start approach_only|pickup   # start a run, confirm it began
+#   ./docker/build_and_run.sh cancel     # stop a run, confirm it stopped
+#   ./docker/build_and_run.sh status     # /coordinator/status and /health, once
 #
 # ONE ENTRY POINT. `up` starts every node and then waits: nothing moves, and
 # nothing will until a run is triggered on a topic. The sequence is
 #
 #   Nav2 drives the robot in front of a pallet and FINISHES
-#   ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: pickup}"
+#   ./docker/build_and_run.sh start pickup
 #   ros2 topic echo /pallet_approach/result
 #
 # and `cancel` stops it at any point:
-#   ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty "{}"
+#   ./docker/build_and_run.sh cancel
 #
 # `up` restarts the container if it exits, so a crashed stack comes back
 # waiting rather than staying down. It does NOT resume a run: a restart leaves
@@ -226,6 +229,31 @@ case "${1:-}" in
     fi
     ;;
 
+  start|cancel)
+    # Inside the stack's own container, so it is on exactly the DDS setup the
+    # coordinator is. tools/trigger.py waits for the subscription to be matched
+    # before publishing (a bare `ros2 topic pub --once` from another machine
+    # often sends to nobody, and the coordinator then logs nothing at all) and
+    # confirms the coordinator reacted.
+    # Copied in from this checkout on every call, so it works with an image
+    # built before the tool existed, without a rebuild.
+    what=$1
+    [ "$what" = start ] && what=${2:?usage: start approach_only|pickup}
+    trigger="$REPO_ROOT/pallet_approach/tools/trigger.py"
+    [ -f "$trigger" ] || { echo "missing $trigger: update this checkout" >&2; exit 1; }
+    docker ps --format '{{.Names}}' | grep -qx "$CONTAINER" \
+      || { echo "the stack container '$CONTAINER' is not running: ./docker/build_and_run.sh up" >&2; exit 1; }
+    docker cp "$trigger" "$CONTAINER:/tmp/trigger.py" >/dev/null
+    docker exec "$CONTAINER" bash -lc \
+      "source /ros2_ws/install/setup.bash && python3 /tmp/trigger.py $what"
+    ;;
+
+  status)
+    docker exec "$CONTAINER" bash -lc \
+      'source /ros2_ws/install/setup.bash && ros2 topic echo --once /coordinator/status \
+       && ros2 topic echo --once /health'
+    ;;
+
   logs)
     docker logs -f "$CONTAINER"
     ;;
@@ -306,7 +334,7 @@ case "${1:-}" in
         JETSON_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
         echo
         echo "started $CONTAINER. Nothing moves until a run is triggered:"
-        echo "  ros2 topic pub --once /pallet_approach/start std_msgs/String \"{data: approach_only}\""
+        echo "  ./docker/build_and_run.sh start approach_only"
         echo "  ros2 topic echo /pallet_approach/result"
         echo "  ./docker/build_and_run.sh logs"
         echo
@@ -319,5 +347,5 @@ case "${1:-}" in
     ;;
 
   *)
-    sed -n '2,48p' "$0"; exit 2 ;;
+    sed -n '2,51p' "$0"; exit 2 ;;
 esac
