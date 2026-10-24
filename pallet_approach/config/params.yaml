@@ -760,16 +760,16 @@ coordinator:
     # --------------------------------------------------------------- retries
     # [choice, 2026-10-19] "Back off and run the loop again, once."
     max_retries: 1
-    # Separate from max_retries: this counts reverses taken to GET enough
-    # run-up before the first approach, which is a different thing from
-    # retrying a failed approach. Two, because the first reverse is computed
-    # from a measurement taken 3 m away and the second from one taken where the
-    # robot now stands.
-    max_backoffs: 2
-    # A retry from the standoff needs at least this much reverse even if the
-    # geometry says less, so that "retry" always means a genuinely new approach
-    # rather than a twitch.
-    min_retry_backoff: 0.50
+    # [choice, Athreya 2026-10-23] D89. There is no reverse before an
+    # approach any more; the only reverse is a retry after a retryable NO-GO.
+    # It backs up at least min_retry_backoff with perception running, then
+    # until the last retry_stable_frames confirmed pocket midpoints (in odom)
+    # lie within retry_stable_spread of their mean -- the GO/NO-GO stability
+    # limit -- and never further than the run has covered (distance driven
+    # forward + reverse.max_unverified, D42). Then it approaches again.
+    min_retry_backoff: 1.00
+    retry_stable_frames: 5
+    retry_stable_spread: 0.03
 
     # [choice] D12: refuse a goal if the stack is unhealthy when it arrives,
     # naming the failing source. A run that starts unhealthy fails later and

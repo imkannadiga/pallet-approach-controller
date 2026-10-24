@@ -1087,7 +1087,7 @@ calibration file, never in params.yaml; a run-time warning if perception's
 floor drifts from it. To be decided in detail when it is built.
 (Athreya, 2026-10-23)
 
-**D75. The run-up floor is 2.5 m from the face, not 3.0 m.** Amends D39.
+*[Since D89 the run-up floor no longer gates the start of an approach.]* **D75. The run-up floor is 2.5 m from the face, not 3.0 m.** Amends D39.
 `closing.min_run_up` 3.0 -> 2.5; the computed term is unchanged. *Why:* with
 a 3 m floor every run has to start at least 3 m from the face, and on the
 robot that is where the pockets stop being resolvable -- at 3.35 m (2026-10-23)
@@ -1114,6 +1114,17 @@ detector in front of the geometry is the planned replacement (docs/TODO.md);
 a rule for loads would be needed with or without it. Chosen over "prefer what
 is straight ahead", which keeps loads possible but still lets a nearer object
 on the centre line win. (Athreya, 2026-10-23)
+
+*[Superseded by D89, 2026-10-23: there is no reverse before an approach.]* **D77. After a reverse, wait up to 2 s for the track to re-confirm.**
+`timeouts.reconfirm: 2.0`. If the track is not confirmed when a reverse
+finishes, the coordinator returns to CONFIRMING with the robot stopped and
+classifies as soon as it re-confirms; after 2 s it aborts with the tracker's
+own reason. *Why:* on the robot (2026-10-23) a run classified the short face at
+2.40 m, reversed 0.15 m to the 2.5 m run-up and aborted the instant the reverse
+ended, "the track was lost before classifying" -- one unconfirmed moment, with
+nothing in the message to say why. The abort messages now carry the tracker's
+reason. The ordinary confirm timeout counts from the start of the run, so the
+wait has its own limit. (Athreya, 2026-10-23)
 
 **D78. Side classification is off for now: the pallet presents its short
 face.** `pallet.classify.enabled: false`; perception reports `entry_face`
@@ -1192,6 +1203,24 @@ by 10 deg instead was tried first and is a different error: at 2.5 m it swings
 the centre line ~0.4 m off the robot, which correctly ends in "reposition".
 (Athreya, 2026-10-23)
 
+*[Superseded by D89, 2026-10-23: there is no reverse before an approach.]* **D84. The run-up is sized from the tracker's fused line, with the offset
+depth noise alone could produce discounted.** `closing.offset_noise_per_m2:
+0.016`: margin = 0.016 x range^2 (0.10 m at 2.5 m, 0.05 m at 1.75 m); the run-up
+is `required_run_up(max(0, |offset| - margin))`, with the offset from the
+tracker's averaged line placed against the robot's current odometry pose.
+*Why:* the first D83 batch (seed 7) reached GO in 5 of 10. In three of the
+failures the robot was 4-11 cm off the centre line and was sent to reposition,
+asked for 3.14-3.18 m of run-up -- the run-up for ~24 cm. The pallet's direction
+comes from two pocket centres 0.365 m apart, and through the measured depth
+model one frame at 2.5 m is off by 2.0 deg rms (5.2 max): 89 mm of offset rms,
+232 max, which the rule took as truth. The robot showed the same spread
+(+-2.5 deg over 80 frames at 2.52 m). Averaging helps against flicker, not
+against the near-static warp, hence the margin. Only the SIZE of the run-up
+uses it: the closing loop steers on the live line and GO/NO-GO at the standoff
+measures the offset in full (50 mm, with its retry). Chosen over taking the
+direction from the whole face plane at range (a change to D62).
+(Athreya, 2026-10-23)
+
 **D85. The watchdog's estimate age limit is 1.0 s, not 0.5 s.** Amends D72.
 *Why:* perception reaches ~3.3 Hz on the robot, so one slow frame leaves the
 newest estimate 0.6-0.9 s old; a sim run in the D83 batch aborted on "estimate:
@@ -1230,6 +1259,27 @@ in 4-5 of 30 frames, with 19-25 mm of midpoint scatter and yaw errors up to
 pallet_2m_0deg and on pallet_s_129, worst-seed scatter 5 mm and 1 mm, yaw p95
 2.9 and 0.2 deg. Chosen over "the front-most of the well-supported planes",
 which did worse. (Athreya, 2026-10-23)
+
+**D89. Back up only after a NO-GO.** The flow is: confirm the pallet ->
+drive in (CLOSING) from wherever Nav2 left the robot -> GO/NO-GO at the
+standoff -> on a retryable NO-GO, back up and approach again, once (D50).
+There is no reverse before an approach any more: the run-up rule (D39, D75,
+D84) and its reverses are gone from the start, and with them D77's wait at the
+end of such a reverse. A robot closer than the 1.75 m standoff is a NO_GO
+"reposition with Nav2" -- it cannot be checked at the standoff from there.
+The retry backs up with perception running: at least `min_retry_backoff`
+(1.0 m), then until the last 5 confirmed pocket midpoints, in odom, lie within
+3 cm of their mean (the GO/NO-GO stability limit), and never further than the
+run has covered. *Why:* on the robot every run that had to reverse first
+stopped there (Athreya, 2026-10-23), and the reverse was sized from the
+noisiest measurement of the run, at 2.5 m (D84). Measuring at the standoff and
+backing up only for a concrete reason is also how a driver would do it.
+*Assumption to confirm:* "never further than the run has covered" is taken as
+the distance driven forward PLUS the 0.5 m D42 allows over unchecked ground;
+without the 0.5 m, a robot that started 2.5 m away (0.75 m to the standoff)
+could never back up the 1.0 m minimum. In the harness, from 3.0 m with 0.55 m
+of offset: NO-GO at 272 mm, back up ~1.0 m until stable, second approach to
+75 mm, NO_GO (one retry). (Athreya, 2026-10-23)
 
 ## Open, with numbers attached
 

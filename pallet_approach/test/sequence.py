@@ -45,6 +45,7 @@ from pallet_approach.coordinator import (  # noqa: E402
 )
 from pallet_approach.drive import DriveExecutor, Request, executor_params  # noqa: E402
 from pallet_approach.forks import ForkSimulator  # noqa: E402
+from pallet_approach.approach import pocket_center  # noqa: E402
 from pallet_approach.model import Pose2D  # noqa: E402
 from pallet_approach.tracker import Tracker  # noqa: E402
 
@@ -136,6 +137,11 @@ class Run:
 
     def visited(self, name: str) -> bool:
         return name in self.states
+
+    @property
+    def reasons(self) -> list:
+        """Every transition's reason along the way, then the final one."""
+        return [event.reason for event in self.trace] + [self.reason]
 
     def describe(self) -> str:
         lines = [f'{event.seconds:7.2f}s  {event.state:<12} {event.reason}'
@@ -247,6 +253,15 @@ class Rig:
 
     # ------------------------------------------------------------ one frame
 
+    @staticmethod
+    def _in_odom(estimate, odom):
+        """The frame's pocket midpoint in odom, as coordinator_node does (D89)."""
+        if estimate is None:
+            return None
+        point = pocket_center(estimate.pockets, fallback=estimate.position)
+        c, s = math.cos(odom.yaw), math.sin(odom.yaw)
+        return (odom.x + c * point[0] - s * point[1], odom.y + s * point[0] + c * point[1])
+
     def _frame(self, robot, odom, now, states, trace):
         estimate = S.observe(robot, self.pallet, noise=self.noise, rng=self.rng)
         cloud = (lidar_for(robot, self.pallet, rear=self.rear)
@@ -263,7 +278,8 @@ class Rig:
             confidence=self.tracker.confidence,
             side=estimate.side if track else 'unknown',
             range=geometry.range, offset=geometry.offset,
-            heading=geometry.heading, reason=self.tracker.reason), now),
+            heading=geometry.heading, reason=self.tracker.reason,
+            pallet_odom=self._in_odom(estimate, odom)), now),
             states, trace, now)
 
         self._note(self.machine.on_forks(ForkInfo(

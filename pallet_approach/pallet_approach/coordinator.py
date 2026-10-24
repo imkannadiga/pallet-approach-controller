@@ -49,11 +49,14 @@ matter are stated as tests rather than as comments:
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
+
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 
-from pallet_approach.closing import required_run_up
 from pallet_approach.model import Decision
 
 __all__ = ['State', 'Outcome', 'DriveRequest', 'TrackInfo', 'DriveInfo',
@@ -140,6 +143,7 @@ class TrackInfo:
     offset: float
     heading: float
     reason: str = ''
+    pallet_odom: tuple | None = None     # this frame's pocket midpoint in odom (D89)
 
 
 @dataclass(frozen=True)
@@ -226,6 +230,7 @@ def machine_params(get) -> dict:
         'k_cross', 'max_approach_angle', 'min_run_up', 'residual_target',
         'run_up_margin', 'run_up_tolerance'))
     closing['target_range'] = get('standoff_distance')
+    closing['range_tolerance'] = get('closing.range_tolerance')
     return {
         'confirm_timeout': get('timeouts.confirm'),
         'lost_pallet_timeout': get('timeouts.lost_pallet'),
@@ -234,7 +239,8 @@ def machine_params(get) -> dict:
         'settle_time': get('checking.settle_time'),
         'checking_frames': get('checking.frames'),
         'max_retries': get('max_retries'),
-        'max_backoffs': get('max_backoffs'),
+        'retry_stable_frames': get('retry_stable_frames'),
+        'retry_stable_spread': get('retry_stable_spread'),
         'min_retry_backoff': get('min_retry_backoff'),
         'retryable_checks': list(get('retryable_checks')),
         'entry_face': get('pallet.entry_face'),
@@ -262,7 +268,9 @@ class Coordinator:
         self.side = ''
         self.mode = PICKUP
         self.retries = 0
-        self.backoffs = 0
+        self.forward_travel = 0.0
+        self.retry_backoff = False
+        self.reversed = 0.0
         self.insertion_travel = 0.0
         self.pending_backoff = 0.0
         self.last_reason = ''
@@ -353,7 +361,9 @@ class Coordinator:
         self.history.clear()
         self.side = ''
         self.retries = 0
-        self.backoffs = 0
+        self.forward_travel = 0.0
+        self.retry_backoff = False
+        self.reversed = 0.0
         self.insertion_travel = 0.0
         self.pending_backoff = 0.0
         return self._at(State.CONFIRMING, now, stop=True, drive=None,
@@ -390,6 +400,8 @@ class Coordinator:
                 return self._stay(track.reason or 'confirming')
             return self._classify(now)
 
+        if self.state is State.BACKING_OFF and self._backed_up_enough():
+            return self._classify(now)
         return self._stay()
 
     def on_drive(self, drive: DriveInfo, now: float) -> Transition:
@@ -405,12 +417,22 @@ class Coordinator:
         if drive.abort:
             return self._abort(now, f'{drive.mode}: {drive.reason}')
 
-        if not drive.arrived:
+        if self.state is State.BACKING_OFF:
+            self.reversed = max(self.reversed, float(drive.travelled))
+            if self._backed_up_enough():
+                return self._classify(now)
+            if drive.arrived:
+                why = f' ({self.track.reason})' if self.track and self.track.reason else ''
+                return self._finish(
+                    now, Outcome.NO_GO,
+                    f'backed up {self.reversed:.2f} m, as far as the ground it has '
+                    f'covered allows, without a stable estimate{why}')
             return self._stay(drive.reason)
 
-        if self.state is State.BACKING_OFF:
-            return self._classify(now)
+        if not drive.arrived:
+            return self._stay(drive.reason)
         if self.state is State.CLOSING:
+            self.forward_travel += float(drive.travelled)
             # Clear the history: the GO/NO-GO stability rule is evaluated over
             # these frames, and the ones collected while CLOSING were taken
             # with the robot moving at up to 0.10 m/s. Five of those span
@@ -569,76 +591,72 @@ class Coordinator:
                 f'(pallet.sides.{side}.insertable is false)')
         self.side = side
 
-        needed = required_run_up(track.offset, self.params['closing'])
-        # A tolerance on the ACCEPTANCE, because the reverse stops within its
-        # own 10 mm window and odometry path length is never shorter than the
-        # displacement. Without it a reverse that finishes at 2.99 m against a
-        # 3.00 m requirement asks for another 10 mm, and the run dies on
-        # `max_backoffs` having done everything right -- which is what
-        # test_sequence.py caught.
-        tolerance = float(self.params['closing']['run_up_tolerance'])
-        if track.range >= needed - tolerance:
-            return self._at(State.CLOSING, now, stop=False,
-                            drive=DriveRequest('CLOSE'), fork=None,
-                            perception=True,
-                            reason=(f'{note}, {track.range:.2f} m away with '
-                                    f'{track.offset * 1000:+.0f} mm of offset; '
-                                    f'{needed:.2f} m of run-up needed, closing in'))
-
-        # Reverse a little further than the shortfall, so the robot ends up
-        # comfortably past the requirement rather than on its edge.
-        return self._start_backoff(now, needed - track.range + tolerance,
-                                   note, needed)
-
-    def _start_backoff(self, now: float, distance: float, note: str,
-                       needed: float) -> Transition:
-        """Reverse to make room, or refuse if it cannot be justified."""
-        self.backoffs += 1
-        if self.backoffs > int(self.params['max_backoffs']):
+        # D89: no reverse before an approach. The robot drives in from wherever
+        # Nav2 left it and is measured at the standoff, where perception is at
+        # its best; backing up happens only after a NO-GO (_retry). Closer than
+        # the standoff it cannot be measured there at all, so that is refused.
+        closing = self.params['closing']
+        standoff = float(closing['target_range'])
+        if track.range < standoff - float(closing.get('range_tolerance', 0.03)):
             return self._finish(
                 now, Outcome.NO_GO,
-                f'still only {self.track.range:.2f} m from the pallet after '
-                f'{self.backoffs - 1} reverse(s); {needed:.2f} m is needed')
-
-        allowance = float(self.params['reverse']['max_unverified'])
-        if distance > allowance:
-            # The reverse cannot be justified from here (D42). Nav2 has the
-            # costmap and could plan it; we do not, and guessing is not an
-            # option when the robot cannot see behind itself.
-            return self._finish(
-                now, Outcome.NO_GO,
-                f'{distance:.2f} m of reverse is needed to get {needed:.2f} m of '
-                f'run-up, and only {allowance:.2f} m can be justified over '
-                f'ground nothing has checked. Reposition with Nav2 and run '
-                f'again.')
-
-        self.pending_backoff = distance
-        return self._at(State.BACKING_OFF, now, stop=False,
-                        drive=DriveRequest('REVERSE', distance=distance),
-                        fork=None, perception=True,
-                        reason=(f'{note}, but only {self.track.range:.2f} m of '
-                                f'run-up against {needed:.2f} m needed; '
-                                f'reversing {distance:.2f} m'))
+                f'{note}, but only {track.range:.2f} m away, inside the '
+                f'{standoff:.2f} m standoff where the approach is checked. '
+                f'Reposition with Nav2 and run again.')
+        return self._at(State.CLOSING, now, stop=False,
+                        drive=DriveRequest('CLOSE'), fork=None,
+                        perception=True,
+                        reason=(f'{note}, {track.range:.2f} m away with '
+                                f'{track.offset * 1000:+.0f} mm of offset; closing in'))
 
     def _retry(self, now: float, reason: str) -> Transition:
-        """Back off and run the closing loop again.
+        """Back up with perception running, then approach again (D50, D89).
 
-        One retry (D50). The reverse distance is the
-        run-up the geometry asks for from where the robot now stands, which is
-        normally short -- it is at the standoff, so it needs to get back to
-        3 m.
+        At least `min_retry_backoff`, then until the estimate is stable (see
+        `_backed_up_enough`). Never further than the ground this run has
+        covered: the distance driven forward plus the reverse D42 allows over
+        unchecked ground. Reaching that without a stable estimate is a NO-GO.
         """
-        track = self.track
-        if track is None:
+        if self.track is None:
             return self._abort(now, 'nothing to retry against: no track')
-        needed = required_run_up(track.offset, self.params['closing'])
-        distance = max(needed - track.range, float(self.params['min_retry_backoff']))
-        self.backoffs = 0
-        self.pending_backoff = distance
+        minimum = float(self.params['min_retry_backoff'])
+        limit = self.forward_travel + float(self.params['reverse']['max_unverified'])
+        if limit < minimum:
+            return self._finish(
+                now, Outcome.NO_GO,
+                f'{reason}; cannot back up the {minimum:.2f} m a retry needs: the '
+                f'run covered only {self.forward_travel:.2f} m (+ '
+                f'{float(self.params["reverse"]["max_unverified"]):.2f} m allowed unchecked)')
+        self.retry_backoff = True
+        self.reversed = 0.0
+        self.history.clear()
+        self.pending_backoff = limit
         return self._at(State.BACKING_OFF, now, stop=False,
-                        drive=DriveRequest('REVERSE', distance=distance),
+                        drive=DriveRequest('REVERSE', distance=limit),
                         fork=None, perception=True,
-                        reason=f'{reason}; reversing {distance:.2f} m to try again')
+                        reason=(f'{reason}; backing up at least {minimum:.2f} m '
+                                f'(at most {limit:.2f} m) until the estimate is stable'))
+
+    def _backed_up_enough(self) -> bool:
+        """Far enough back, and the pallet holding still in odom (D89).
+
+        Stable = the last `retry_stable_frames` confirmed frames' pocket
+        midpoints, in odom, all within `retry_stable_spread` of their mean --
+        the GO/NO-GO stability limit. In odom because the robot is moving.
+        """
+        if not self.retry_backoff or self.reversed < float(self.params['min_retry_backoff']):
+            return False
+        n = int(self.params['retry_stable_frames'])
+        points = [t.pallet_odom for t in list(self.history)[-n:]
+                  if t.confirmed and t.pallet_odom is not None]
+        if len(points) < n:
+            return False
+        xy = np.asarray(points, dtype=float)
+        if np.max(np.linalg.norm(xy - xy.mean(axis=0), axis=1)) > float(
+                self.params['retry_stable_spread']):
+            return False
+        self.retry_backoff = False
+        return True
 
     def _retryable(self, decision: Decision) -> bool:
         """Which NO-GOs are worth another approach.

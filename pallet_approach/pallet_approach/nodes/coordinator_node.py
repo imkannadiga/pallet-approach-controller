@@ -56,6 +56,7 @@ published before it existed.
 
 from __future__ import annotations
 
+import math
 import functools
 import threading
 import time
@@ -268,8 +269,8 @@ class CoordinatorNode(Node):
             ('timeouts.lost_pallet', 2.5),
             ('timeouts.forks', 10.0), ('timeouts.run', 240.0),
             ('checking.settle_time', 0.5), ('checking.frames', 5),
-            ('max_retries', 1), ('max_backoffs', 2),
-            ('min_retry_backoff', 0.50),
+            ('max_retries', 1), ('min_retry_backoff', 1.00), ('retry_stable_frames', 5),
+            ('retry_stable_spread', 0.03),
             ('go_nogo.min_face_inliers', 60),
             ('go_nogo.max_yaw_error', 0.087), ('go_nogo.max_lateral_offset', 0.050),
             ('go_nogo.pocket_width_tolerance', 0.040),
@@ -282,6 +283,7 @@ class CoordinatorNode(Node):
             ('closing.k_cross', 2.5), ('closing.max_approach_angle', 0.25),
             ('closing.min_run_up', 3.0), ('closing.residual_target', 0.020),
             ('closing.run_up_margin', 0.20), ('closing.run_up_tolerance', 0.05),
+            ('closing.range_tolerance', 0.03),
             ('reverse.max_unverified', 0.50),
             ('forks.bottom_height', 0.040), ('forks.tine_thickness', 0.040),
             ('forks.lift_travel', 0.070),
@@ -457,6 +459,16 @@ class CoordinatorNode(Node):
 
     # ------------------------------------------------------------ callbacks
 
+    def _in_odom(self, estimate) -> tuple:
+        """This frame's pocket midpoint (or face centre) in odom, using the
+        newest odometry pose. Lag is ~0.3 s; at the 0.05 m/s reverse that is a
+        constant ~15 mm offset, not scatter, so the D89 stability test is not
+        affected by it."""
+        point = pocket_center(estimate.pockets, fallback=estimate.position)
+        c, s = math.cos(self._pose.yaw), math.sin(self._pose.yaw)
+        return (self._pose.x + c * point[0] - s * point[1],
+                self._pose.y + s * point[0] + c * point[1])
+
     @_serialised
     def _on_odom(self, msg: Odometry):
         self._pose = pose2d_from_odometry(msg)
@@ -556,7 +568,8 @@ class CoordinatorNode(Node):
                       range=float(geometry.range),
                       offset=float(geometry.offset),
                       heading=float(geometry.heading),
-                      reason=msg.reason),
+                      reason=msg.reason,
+                      pallet_odom=self._in_odom(estimate)),
             self._now()))
 
     @_serialised

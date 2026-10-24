@@ -65,7 +65,8 @@ def params(yaml_params):
         'settle_time': block['checking']['settle_time'],
         'checking_frames': block['checking']['frames'],
         'max_retries': block['max_retries'],
-        'max_backoffs': block['max_backoffs'],
+        'retry_stable_frames': block['retry_stable_frames'],
+        'retry_stable_spread': block['retry_stable_spread'],
         'min_retry_backoff': block['min_retry_backoff'],
         'retryable_checks': block['retryable_checks'],
         'entry_face': shared['pallet']['entry_face'],
@@ -76,9 +77,10 @@ def params(yaml_params):
 
 
 def track(confirmed=True, side='short', range_=3.5, offset=0.0, heading=0.0,
-          confidence=1.0, reason=''):
+          confidence=1.0, reason='', pallet_odom=(5.0, 0.0)):
     return TrackInfo(confirmed=confirmed, confidence=confidence, side=side,
-                     range=range_, offset=offset, heading=heading, reason=reason)
+                     range=range_, offset=offset, heading=heading, reason=reason,
+                     pallet_odom=pallet_odom)
 
 
 def arrived(mode, travelled=1.0):
@@ -122,7 +124,7 @@ def at_checking(params):
     machine = closing_in(params)
     for i in range(params['checking_frames']):
         machine.on_track(track(range_=1.75), 2.0 + 0.2 * i)
-    transition = machine.on_drive(arrived('CLOSE'), 3.0)
+    transition = machine.on_drive(arrived('CLOSE', travelled=1.75), 3.0)
     assert transition.state is State.CHECKING
     return machine
 
@@ -324,54 +326,11 @@ def test_enough_run_up_closes_in_directly(params):
     assert transition.drive.mode == 'CLOSE'
 
 
-def test_too_little_run_up_reverses_first(params):
-    """Variable standoff with a 3 m minimum, and a reverse
-    when there is not that much (D39)."""
-    machine = confirming(params)
-    transition = machine.on_track(track(range_=2.7, offset=0.0), 1.0)
-    assert transition.state is State.BACKING_OFF
-    assert transition.drive.mode == 'REVERSE'
-    # The shortfall plus `run_up_tolerance`, so the robot ends up past the
-    # requirement rather than on its edge. Without the overshoot a reverse that
-    # stops within its own 10 mm window finishes short, asks for another
-    # centimetre, and dies on max_backoffs having done everything right -- the
-    # offline harness caught that.
-    expected = 0.30 + params['closing']['run_up_tolerance']
-    assert transition.drive.distance == pytest.approx(expected, abs=0.01)
-    assert '2.70 m of run-up' in transition.reason
 
 
-def test_a_run_up_a_centimetre_short_is_accepted(params):
-    """The acceptance tolerance, from the other side. 2.99 m against a 3.00 m
-    requirement is not a reason to reverse again."""
-    machine = confirming(params)
-    needed = params['closing']['min_run_up']
-    transition = machine.on_track(track(range_=needed - 0.01), 1.0)
-    assert transition.state is State.CLOSING
 
 
-def test_a_lateral_offset_lengthens_the_required_run_up(params):
-    """The "variable" half of the variable standoff: a robot Nav2 left off the
-    centre line needs more distance to correct in, and the amount is geometry."""
-    machine = confirming(params)
-    square = machine.on_track(track(range_=3.2, offset=0.0), 1.0)
-    assert square.state is State.CLOSING
 
-    machine = confirming(params)
-    offset = machine.on_track(track(range_=3.2, offset=0.30), 1.0)
-    assert offset.state is State.BACKING_OFF, (
-        'the same distance with 300 mm of offset is not enough run-up')
-
-
-def test_a_reverse_that_cannot_be_justified_refuses(params):
-    """D42, stated as a refusal rather than a hope. The robot cannot see behind
-    itself, so the only ground it may reverse over without a costmap is ground
-    its own body was standing on -- and at the start of a run there is none."""
-    machine = confirming(params)
-    transition = machine.on_track(track(range_=1.9, offset=0.60), 1.0)
-    assert transition.outcome is Outcome.NO_GO
-    assert 'can be justified' in transition.reason
-    assert 'Reposition with Nav2' in transition.reason
 
 
 def test_a_gap_shorter_than_re_confirming_takes_is_survived_while_closing(params):
@@ -389,18 +348,6 @@ def test_a_gap_shorter_than_re_confirming_takes_is_survived_while_closing(params
 
 
 
-def test_reversing_twice_and_then_giving_up(params):
-    """A loop of reverses would otherwise walk the robot across the lab."""
-    machine = confirming(params)
-    transition = machine.on_track(track(range_=2.8), 1.0)
-    for i in range(params['max_backoffs'] + 2):
-        if transition.state is not State.BACKING_OFF:
-            break
-        machine.on_track(track(range_=2.8), 5.0 + i)
-        transition = machine.on_drive(arrived('REVERSE', travelled=0.2),
-                                      6.0 + i)
-    assert transition.outcome is Outcome.NO_GO
-    assert 'reverse(s)' in transition.reason
 
 
 # ------------------------------------------------------------- the retry
@@ -421,11 +368,12 @@ def test_only_once(params):
     for i in range(params['checking_frames']):
         machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
     machine.on_decision(no_go('lateral_offset'), 4.0)
-    machine.on_track(track(range_=3.5), 10.0)
-    machine.on_drive(arrived('REVERSE'), 11.0)
+    for i in range(params['retry_stable_frames']):
+        machine.on_track(track(range_=2.9), 5.0 + 0.2 * i)
+    assert machine.on_drive(moving('REVERSE', travelled=1.1), 7.0).state is State.CLOSING
     for i in range(params['checking_frames']):
         machine.on_track(track(range_=1.75), 12.0 + 0.2 * i)
-    machine.on_drive(arrived('CLOSE'), 14.0)
+    machine.on_drive(arrived('CLOSE', travelled=1.1), 14.0)
     transition = machine.on_decision(no_go('lateral_offset'), 15.0)
     assert transition.outcome is Outcome.NO_GO
 
@@ -588,8 +536,11 @@ def test_a_stale_drive_report_from_the_previous_move_is_ignored(params):
 # ------------------------------------------------------------- invariants
 
 def _in_backoff(params):
-    machine = confirming(params)
-    assert machine.on_track(track(range_=2.7), 1.0).state is State.BACKING_OFF
+    """D89: the only reverse is a retry after a retryable NO-GO."""
+    machine = at_checking(params)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
+    assert machine.on_decision(no_go('lateral_offset'), 4.0).state is State.BACKING_OFF
     return machine
 
 
@@ -758,3 +709,77 @@ def test_a_second_run_does_not_reconfigure_a_configured_node():
     assert transitions_to_inactive('inactive') == []
     assert transitions_to_inactive('active') == ['deactivate']
     assert transitions_to_inactive('finalized') is None
+
+
+# ------------------------------------------------- D89: back up only on NO-GO
+
+def moving(mode, travelled):
+    return DriveInfo(mode=mode, arrived=False, travelled=travelled)
+
+
+def test_no_reverse_before_an_approach(params):
+    """D89: wherever Nav2 left the robot (outside the standoff), it drives in
+    and is measured at the standoff -- even with an offset the old run-up rule
+    would have reversed for."""
+    machine = confirming(params)
+    transition = machine.on_track(track(range_=2.2, offset=0.30), 1.0)
+    assert transition.state is State.CLOSING
+
+
+def test_inside_the_standoff_is_refused(params):
+    """D89: closer than the standoff the approach cannot be checked there."""
+    machine = confirming(params)
+    transition = machine.on_track(track(range_=1.5), 1.0)
+    assert transition.outcome is Outcome.NO_GO
+    assert 'Reposition' in transition.reason
+
+
+def test_the_retry_backs_up_at_least_the_minimum_then_until_stable(params):
+    machine = _in_backoff(params)
+    for i in range(params['retry_stable_frames']):
+        machine.on_track(track(range_=2.2), 5.0 + 0.2 * i)
+    short = params['min_retry_backoff'] - 0.1
+    assert machine.on_drive(moving('REVERSE', short), 6.5).state is State.BACKING_OFF, (
+        'stable but not yet far enough')
+    assert machine.on_drive(moving('REVERSE', params['min_retry_backoff'] + 0.01),
+                            7.0).state is State.CLOSING
+
+
+def test_the_retry_keeps_backing_up_while_the_estimate_is_unsteady(params):
+    machine = _in_backoff(params)
+    for i in range(params['retry_stable_frames']):
+        wobble = (5.0 + (0.1 if i % 2 else -0.1), 0.0)       # 10 cm, beyond 3 cm
+        machine.on_track(track(range_=2.9, pallet_odom=wobble), 5.0 + 0.2 * i)
+    transition = machine.on_drive(moving('REVERSE', params['min_retry_backoff'] + 0.2), 7.0)
+    assert transition.state is State.BACKING_OFF
+
+
+def test_backing_up_to_the_limit_without_a_stable_estimate_is_a_no_go(params):
+    machine = _in_backoff(params)
+    machine.on_track(track(confirmed=False, reason='2 consecutive frames'), 5.0)
+    transition = machine.on_drive(arrived('REVERSE', travelled=1.3), 9.0)
+    assert transition.outcome is Outcome.NO_GO
+    assert 'without a stable estimate' in transition.reason
+
+
+def test_the_back_up_never_exceeds_the_ground_the_run_covered(params):
+    """Driven forward + what D42 allows unchecked; the drive asks for no more."""
+    machine = at_checking(params)          # drove 1.75 m forward
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
+    transition = machine.on_decision(no_go('yaw'), 4.0)
+    assert transition.drive.distance == pytest.approx(
+        1.75 + params['reverse']['max_unverified'])
+
+
+def test_no_room_to_back_up_the_minimum_is_a_no_go(params):
+    machine = confirming(params)
+    machine.on_track(track(range_=1.9), 1.0)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 2.0 + 0.2 * i)
+    machine.on_drive(arrived('CLOSE', travelled=0.15), 3.0)
+    for i in range(params['checking_frames']):
+        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
+    transition = machine.on_decision(no_go('lateral_offset'), 4.0)
+    assert transition.outcome is Outcome.NO_GO
+    assert 'cannot back up' in transition.reason
