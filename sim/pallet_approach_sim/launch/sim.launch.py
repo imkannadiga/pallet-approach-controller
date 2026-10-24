@@ -95,7 +95,8 @@ def _setup(context):
     with open(pallet_file, 'w') as f:
         f.write(pallet_model.sdf(static=pallet_static))
 
-    world = os.path.join(share, 'worlds', 'pallet_lab.sdf')
+    world = os.path.join(share, 'worlds', {'room': 'pallet_room.sdf',
+                                           'empty': 'pallet_lab.sdf'}[arg('world')])
     gz_cmd = ['ign', 'gazebo', '-r', '-v', '2', world]
     if arg('gui').lower() not in ('true', '1'):
         # Server only, rendering offscreen for the camera and LiDAR.
@@ -128,7 +129,9 @@ def _setup(context):
              arguments=['-world', 'pallet_lab', '-file', pallet_file, '-name', 'pallet',
                         '-x', str(px), '-y', str(py), '-Y', str(pyaw)]),
         Node(package='pallet_approach_sim', executable='depth_self_filter', output='screen',
-             parameters=[{'blades': blades, 'hfov': camera.hfov}, sim_time]),
+             parameters=[{'blades': blades, 'hfov': camera.hfov,
+                          'zed_model': arg('depth_model') == 'zed',
+                          'seed': int(arg('seed'))}, sim_time]),
         *extra,
     ]
 
@@ -154,7 +157,16 @@ def generate_launch_description():
         # tops out at 15).
         DeclareLaunchArgument('camera_rate', default_value='30.0',
                               description='Hz; perception uses 5, the dashboard 25'),
-        DeclareLaunchArgument('depth_noise', default_value='0.01',
-                              description='gaussian depth noise, metres'),
+        # D80: the ZED's measured error is a smooth warp plus filled pockets
+        # and smeared edges (zed_depth_model.py), not per-pixel noise, so
+        # Gazebo's own gaussian noise is off by default.
+        DeclareLaunchArgument('depth_model', default_value='zed',
+                              description="'zed' (measured ZED effects) or 'none'"),
+        DeclareLaunchArgument('depth_noise', default_value='0.0',
+                              description='extra gaussian depth noise, metres'),
+        DeclareLaunchArgument('seed', default_value='0',
+                              description='depth model seed; -1 for a fresh one'),
+        DeclareLaunchArgument('world', default_value='room',
+                              description="'room' (walls and distractors) or 'empty'"),
         OpaqueFunction(function=_setup),
     ])

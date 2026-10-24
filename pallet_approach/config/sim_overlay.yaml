@@ -35,6 +35,11 @@
 pallet_perception:
   ros__parameters:
     use_sim_time: true
+    # D82: the robot's perception achieves ~3.3 Hz (250-350 ms a frame on the
+    # Jetson with the whole stack running, 2026-10-23); the GPU machine would
+    # run it at the full 5 Hz. Capped here so timing failures -- a track lost
+    # for want of frames while the robot turns -- show up in the sim as well.
+    max_rate: 3.3
 approach_controller:
   ros__parameters:
     use_sim_time: true
