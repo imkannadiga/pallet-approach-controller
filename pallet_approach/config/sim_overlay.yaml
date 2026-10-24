@@ -46,6 +46,9 @@ approach_controller:
 coordinator:
   ros__parameters:
     use_sim_time: true
+    # D91: the sim's forklift really lifts the pallet, so it backs out.
+    backout:
+      enabled: true
 fork_overlay:
   ros__parameters:
     use_sim_time: true

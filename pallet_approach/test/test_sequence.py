@@ -56,13 +56,25 @@ def fresh(**kwargs):
 # ------------------------------------------------------------- the happy path
 
 def test_a_whole_virtual_pickup(params, slack):
-    """The headline: start to finish, through every real module."""
+    """The headline: start to finish, through every real module -- as the
+    robot runs it, with the back-out off (D91): it ends lifted at the pallet."""
     run = fresh().run(S.facing(3.5, offset=0.10))
+    assert run.outcome == 'INSERTED', run.describe()
+    assert run.states == ['CONFIRMING', 'CLOSING', 'CHECKING', 'LOWERING',
+                          'INSERTING', 'LIFTING', 'DONE'], run.describe()
+    assert run.loaded, 'the forks must end the run carrying the pallet'
+
+
+def test_a_whole_pickup_with_the_back_out(params, slack):
+    """The same with the back-out on, as the Gazebo sim runs it (D91)."""
+    loaded = Q.load()
+    loaded['machine'] = dict(loaded['machine'], backout_enabled=True)
+    run = Q.Rig(loaded).run(S.facing(3.5, offset=0.10))
     assert run.outcome == 'INSERTED', run.describe()
     assert run.states == ['CONFIRMING', 'CLOSING', 'CHECKING', 'LOWERING',
                           'INSERTING', 'LIFTING', 'BACKING_OUT', 'DONE'], \
         run.describe()
-    assert run.loaded, 'the forks must end the run carrying the pallet'
+    assert run.loaded
 
 
 def test_it_arrives_where_the_forks_fit(params, slack):

@@ -269,7 +269,7 @@ class CoordinatorNode(Node):
             ('timeouts.lost_pallet', 2.5),
             ('timeouts.forks', 10.0), ('timeouts.run', 240.0),
             ('checking.settle_time', 0.5), ('checking.frames', 5),
-            ('max_retries', 1), ('min_retry_backoff', 1.00), ('retry_stable_frames', 5),
+            ('max_retries', 1), ('backout.enabled', False), ('min_retry_backoff', 1.00), ('retry_stable_frames', 5),
             ('retry_stable_spread', 0.03),
             ('go_nogo.min_face_inliers', 60),
             ('go_nogo.max_yaw_error', 0.087), ('go_nogo.max_lateral_offset', 0.050),

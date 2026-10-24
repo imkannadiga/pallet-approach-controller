@@ -239,6 +239,7 @@ def machine_params(get) -> dict:
         'settle_time': get('checking.settle_time'),
         'checking_frames': get('checking.frames'),
         'max_retries': get('max_retries'),
+        'backout_enabled': get('backout.enabled'),
         'retry_stable_frames': get('retry_stable_frames'),
         'retry_stable_spread': get('retry_stable_spread'),
         'min_retry_backoff': get('min_retry_backoff'),
@@ -471,6 +472,16 @@ class Coordinator:
         if self.state is State.LIFTING:
             if not forks.loaded:
                 return self._stay(f'forks {forks.state}')
+            if not self.params.get('backout_enabled', True):
+                # D91: the forks are imaginary, so there is nothing to carry
+                # out, and the back-out is the one move the robot makes with
+                # only the LiDAR behind it. The run ends lifted, stopped where
+                # the insertion left it.
+                return self._finish(
+                    now, Outcome.INSERTED,
+                    f'virtual pickup complete: inserted '
+                    f'{self.insertion_travel:.3f} m into the {self.side} face and '
+                    f'lifted; back-out disabled, stopped at the pallet')
             return self._at(State.BACKING_OUT, now, stop=False,
                             drive=DriveRequest('BACKOUT',
                                                distance=self.insertion_travel),

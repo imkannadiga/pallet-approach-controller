@@ -765,6 +765,14 @@ coordinator:
     # --------------------------------------------------------------- retries
     # [choice, 2026-10-19] "Back off and run the loop again, once."
     max_retries: 1
+
+    # [choice, Athreya 2026-10-24] D91. Off on the robot: the forks are
+    # imaginary, so after the lift there is nothing to carry out, and the
+    # back-out is the one move the robot makes with only the LiDAR behind it.
+    # The run ends INSERTED, lifted, stopped at the pallet. On in the Gazebo
+    # sim (sim_overlay.yaml), whose forklift really lifts the pallet.
+    backout:
+      enabled: false
     # [choice, Athreya 2026-10-23] D89. There is no reverse before an
     # approach any more; the only reverse is a retry after a retryable NO-GO.
     # It backs up at least min_retry_backoff with perception running, then

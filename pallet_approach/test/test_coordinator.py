@@ -65,6 +65,8 @@ def params(yaml_params):
         'settle_time': block['checking']['settle_time'],
         'checking_frames': block['checking']['frames'],
         'max_retries': block['max_retries'],
+        # The full sequence, as in the sim; D91's robot setting has its own test.
+        'backout_enabled': True,
         'retry_stable_frames': block['retry_stable_frames'],
         'retry_stable_spread': block['retry_stable_spread'],
         'min_retry_backoff': block['min_retry_backoff'],
@@ -783,3 +785,14 @@ def test_no_room_to_back_up_the_minimum_is_a_no_go(params):
     transition = machine.on_decision(no_go('lateral_offset'), 4.0)
     assert transition.outcome is Outcome.NO_GO
     assert 'cannot back up' in transition.reason
+
+
+def test_with_the_back_out_disabled_the_run_ends_lifted_at_the_pallet(params):
+    """D91, the robot's setting: nothing is carried, so no back-out."""
+    params = dict(params, backout_enabled=False)
+    machine = inserting(params)
+    machine.on_drive(arrived('INSERT', travelled=1.05), 25.0)
+    transition = machine.on_forks(forks('LIFTED', loaded=True), 27.0)
+    assert transition.outcome is Outcome.INSERTED
+    assert transition.stop_robot and transition.drive is None
+    assert 'back-out disabled' in transition.reason

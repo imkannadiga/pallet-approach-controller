@@ -1298,6 +1298,18 @@ see. Left for the auto-calibration routine, which must then measure x, y and
 yaw against a known target too. Odometry was 16 mm short over the ~1.07 m
 insertion. (Athreya, 2026-10-24)
 
+**D91. No back-out on the robot.** `backout.enabled: false` (coordinator);
+after the lift the run ends INSERTED, lifted, stopped where the insertion left
+it. On in the Gazebo sim (`sim_overlay.yaml`), whose forklift really lifts the
+pallet. *Why:* the forks are imaginary, so there is nothing to carry out, and
+the back-out is the one move the robot makes with only the LiDAR behind it. The
+first real pickup to complete the insertion and lift (2026-10-24) was aborted
+0.16 s into the back-out by the rear check (something 1.05 m behind the bumper;
+gone a minute later, most likely a person). *Found with it:* behind the robot,
+the D74-corrected LiDAR puts the floor 46 mm low (uncorrected: 31 mm high), so
+the rear check's 3 cm floor margin is not trustworthy there until the
+auto-calibration measures all round the robot. (Athreya, 2026-10-24)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
