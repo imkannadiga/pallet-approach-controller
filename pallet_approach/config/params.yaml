@@ -555,6 +555,10 @@ pallet_perception:
     floor:
       ransac_distance: 0.02     # [choice] 2 cm, ~ the ZED noise at 2 m
       ransac_iterations: 200
+      # Hypotheses are scored on a random subset of this many points (the
+      # winner is refined on all of them). Speed only: the count just has to
+      # RANK candidate planes. 0 or null scores on every point.
+      score_points: 3000
       # a plane only counts as the floor if its normal is within this of vertical
       max_normal_tilt: 0.17     # rad, ~10 deg
       min_inlier_fraction: 0.25

@@ -46,7 +46,9 @@ from __future__ import annotations
 import numpy as np
 
 from pallet_approach.model import PalletEstimate, Plane, Pocket
-from sklearn.cluster import DBSCAN
+from scipy.sparse import coo_matrix
+from scipy.sparse.csgraph import connected_components
+from scipy.spatial import cKDTree
 
 __all__ = [
     'depth_to_points',
@@ -101,9 +103,10 @@ def depth_to_points(
 
     z = depth[::stride, ::stride].astype(np.float64)
     
-    v, u = np.indices(depth.shape)
-    v = v[::stride, ::stride]
-    u = u[::stride, ::stride]
+    # Only the strided pixels' coordinates: np.indices over the whole image
+    # built two 1280x720 arrays a frame to throw three quarters away.
+    v, u = np.meshgrid(np.arange(0, depth.shape[0], stride),
+                       np.arange(0, depth.shape[1], stride), indexing='ij')
 
     valid = np.isfinite(z) & (z >= min_range) & (z <= max_range)
     z = z[valid]
@@ -218,8 +221,21 @@ def voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
     # `inverse` says, for every point, which distinct cube it belongs to (as a
     # number 0, 1, 2, ...). Example: cubes A, B, A -> unique [A, B], inverse
     # [0, 1, 0].
-    _, inverse = np.unique(key, return_inverse=True)
-    inverse = inverse.ravel()  # shape differs between NumPy versions; make it 1D
+    cells = int(span[0] * span[1] * span[2])
+    if cells <= 8_000_000:
+        # The ROI at 2 cm is ~1.1 M cells: mark the occupied ones in a dense
+        # array and number them in key order, instead of sorting ~200 k keys.
+        # Same cubes in the same (sorted-key) order as np.unique, so the output
+        # is identical.
+        occupied = np.zeros(cells, dtype=bool)
+        occupied[key] = True
+        cubes = np.flatnonzero(occupied)
+        rank = np.empty(cells, dtype=np.int32)
+        rank[cubes] = np.arange(len(cubes), dtype=np.int32)
+        inverse = rank[key]
+    else:
+        _, inverse = np.unique(key, return_inverse=True)
+        inverse = inverse.ravel()  # shape differs between NumPy versions; make it 1D
     n_cubes = inverse.max() + 1
 
     # Average the points in each cube. `np.bincount` with weights is a summing
@@ -244,6 +260,7 @@ def fit_plane_ransac(
     distance_threshold: float,
     iterations: int = 200,
     rng: np.random.Generator | None = None,
+    score_points: int | None = None,
 ) -> tuple[np.ndarray, float, np.ndarray]:
     """Fit a plane with RANSAC and return (normal, offset, inlier_mask).
 
@@ -285,8 +302,20 @@ def fit_plane_ransac(
     best_normal = None
     best_offset = 0.0
  
-    for _ in range(iterations):
-        p1, p2, p3 = points[rng.choice(n_points, size=3, replace=False)]
+    # All the samples in one draw. rng.choice(n, 3, replace=False) shuffles all
+    # n points to pick three -- O(n) per iteration, 200 times a frame, and the
+    # largest single cost on the Jetson (74 ms of a 186 ms frame, 2026-10-23).
+    # A sample that repeats a point gives a zero cross product and is skipped
+    # below, exactly as a collinear one is.
+    samples = rng.integers(0, n_points, size=(iterations, 3))
+    # Score the hypotheses on a random subset when the cloud is large: the
+    # count only has to RANK planes, and 3000 points rank them as well as
+    # 20 000 do. The winner is still refined on every point below. ~4x faster
+    # for the floor on a real frame (2026-10-23).
+    scored = points
+    if score_points and n_points > score_points:
+        scored = points[rng.integers(0, n_points, size=score_points)]
+    for p1, p2, p3 in points[samples]:
  
         normal = np.cross(p2 - p1, p3 - p1)
         length = np.linalg.norm(normal)
@@ -295,7 +324,7 @@ def fit_plane_ransac(
         normal = normal / length 
         offset = -normal @ p1 
  
-        distances = np.abs(points @ normal + offset)
+        distances = np.abs(scored @ normal + offset)
         count = np.count_nonzero(distances < distance_threshold)
  
         if count > best_count:
@@ -377,25 +406,42 @@ def cluster_points(
     Returns:
         (N,) int array of labels; -1 is noise.
 
-    Uses scikit-learn's DBSCAN; Open3D is deliberately not a dependency on the
-    Jetson (see docker/Dockerfile.jetson).
+    DBSCAN written on SciPy's C KD-tree (SciPy comes with scikit-learn, which
+    this used before): all neighbour pairs within eps in one call, core points
+    by counting, clusters as connected components of the core points, then
+    each border point joins a cluster it touches. Same clusters as
+    scikit-learn's DBSCAN; a border point touching two clusters may be given
+    to the other one, which DBSCAN's definition leaves open. 2x faster on real
+    frames (16 k points: 32 -> 16 ms, 2026-10-23). Open3D is deliberately not a
+    dependency on the Jetson (see docker/Dockerfile.jetson).
     """
     if len(points) == 0:
         return np.empty(0, dtype=int)
  
     # eps: two points closer than this are neighbours (same island).
-    # min_samples: a point needs this many neighbours to start/grow an island.
-    #
-    # algorithm='ball_tree' is a pure speed choice and changes no result: DBSCAN
-    # needs the exact set of neighbours within eps, and every algorithm here
-    # returns exactly that set -- they differ only in how they search for it.
-    # Measured on a real frame (16k points above the floor): the default 'auto'
-    # picks a kd-tree and takes 77 ms, a ball tree takes 36 ms, with identical
-    # labels (there is a test). Ball trees win because these points lie on a few
-    # 2D surfaces inside a 3D box, which is exactly the uneven density a kd-tree
-    # splits badly.
-    return DBSCAN(eps=eps, min_samples=min_samples,
-                  algorithm='ball_tree').fit_predict(points)
+    # min_samples: a point needs this many neighbours (itself included, as in
+    # scikit-learn) to start/grow an island.
+    n = len(points)
+    pairs = cKDTree(points).query_pairs(eps, output_type='ndarray')
+    i, j = pairs[:, 0], pairs[:, 1]
+    core = np.bincount(pairs.ravel(), minlength=n) + 1 >= min_samples
+    both = core[i] & core[j]
+    graph = coo_matrix((np.ones(int(both.sum()), dtype=bool), (i[both], j[both])),
+                       shape=(n, n))
+    _, component = connected_components(graph, directed=False)
+    labels = np.full(n, -1, dtype=int)
+    if core.any():
+        # Number the clusters 0..k-1 by their core components.
+        ids = np.full(component.max() + 1, -1, dtype=int)
+        used = np.unique(component[core])
+        ids[used] = np.arange(len(used))
+        labels[core] = ids[component[core]]
+        # A non-core point within eps of a core point is a border point of
+        # that core's cluster.
+        for a, b in ((i, j), (j, i)):
+            border = core[a] & ~core[b]
+            labels[b[border]] = labels[a[border]]
+    return labels
 
 
 def select_pallet_cluster(
@@ -527,8 +573,10 @@ def fit_front_face(
     best_normal = None
     best_offset = 0.0
  
-    for _ in range(iterations):
-        p1, p2 = xy[rng.choice(n_points, size=2, replace=False)]
+    # One draw for all iterations, as in fit_plane_ransac; a repeated point is
+    # caught by the zero-length check below.
+    samples = rng.integers(0, n_points, size=(iterations, 2))
+    for p1, p2 in xy[samples]:
         direction = p2 - p1
         length = np.linalg.norm(direction)
         if length < 1e-6:                      # same spot twice: no line
@@ -988,7 +1036,8 @@ def estimate_pallet(
     # 5. Find the floor.
     normal, offset, _ = fit_plane_ransac(
         points, params['floor_distance_threshold'],
-        iterations=params['ransac_iterations'], rng=rng)
+        iterations=params['ransac_iterations'], rng=rng,
+        score_points=params.get('floor_score_points'))
     # Make the floor normal point UP (remove_floor and find_pockets rely on it).
     if normal[2] < 0:
         normal, offset = -normal, -offset
@@ -1000,7 +1049,17 @@ def estimate_pallet(
  
     # 6-8. Delete the floor, group into objects, pick the pallet.
     points = remove_floor(points, floor, params['floor_margin'])
-    labels = cluster_points(points, params['cluster_eps'], params['cluster_min_samples'])
+    # Only points that could belong to an accepted cluster are clustered. A
+    # cluster whose top is above pallet_height + max_height_above_pallet is
+    # rejected (D76), and cutting 0.10 m above that still leaves any taller
+    # object with a top above the ceiling, so it is rejected exactly as before
+    # -- while walls, panels and furniture mostly drop out of the costliest
+    # step. `points` itself stays whole: the GO/NO-GO scene below uses it.
+    ceiling = params['pallet_height'] + params['max_height_above_pallet'] + 0.10
+    low = floor.height_of(points) < ceiling
+    labels = np.full(len(points), -1, dtype=int)
+    labels[low] = cluster_points(points[low], params['cluster_eps'],
+                                 params['cluster_min_samples'])
     # Every face the pallet could be showing. Which one it IS gets decided
     # below, from the pockets; this gate only has to not throw the cluster away.
     widths = tuple(cfg['face_width'] for cfg in params.get('sides', {}).values())

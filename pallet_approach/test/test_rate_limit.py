@@ -100,3 +100,16 @@ def test_a_schedule_does_not_burst_after_a_pause():
     assert schedule.due(0.0)
     assert schedule.due(5.0)             # after a 5 s gap: one frame...
     assert not schedule.due(5.001)       # ...not a catch-up burst
+
+
+def test_the_gate_keeps_its_average_rate_from_a_coarse_input():
+    """"One interval since the last frame" rounds up to whole input periods:
+    from 10 Hz input a 3.3 Hz gate gave 2.5 Hz, exactly the watchdog's floor,
+    in the Gazebo sim (2026-10-23). The due time now advances by one interval."""
+    gate = FrameGate(max_rate=3.3)
+    passed = 0
+    for i in range(1000):
+        if gate.offer(i * 0.1):
+            gate.finished(i * 0.1 + 0.05)
+            passed += 1
+    assert passed / 100.0 == pytest.approx(3.3, abs=0.05)

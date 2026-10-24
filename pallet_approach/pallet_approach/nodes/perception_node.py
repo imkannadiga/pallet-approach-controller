@@ -106,6 +106,7 @@ class PerceptionNode(LifecycleNode):
             ('cluster.eps', 0.05), ('cluster.min_samples', 8),
             ('cluster.min_cluster_points', 100),
             ('face.min_points', 60), ('face.max_tilt_from_vertical', 0.26),
+            ('floor.score_points', 3000),
             ('face.ransac_distance', 0.015),
             ('face.max_facing_angle', 1.05),
             ('cluster.size_tolerance', 0.25),
@@ -205,6 +206,7 @@ class PerceptionNode(LifecycleNode):
             'face_distance_threshold': get('face.ransac_distance'),
             'max_tilt_from_vertical': get('face.max_tilt_from_vertical'),
             'face_min_points': get('face.min_points'),
+            'floor_score_points': get('floor.score_points'),
             'max_facing_angle': get('face.max_facing_angle'),
 
             'pallet_height': get('pallet.pallet_height'),

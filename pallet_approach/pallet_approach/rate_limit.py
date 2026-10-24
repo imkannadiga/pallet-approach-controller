@@ -66,6 +66,7 @@ class FrameGate:
     """How long the last accepted frame took. The number to watch."""
 
     window_start: float | None = None
+    next_due: float | None = None
 
     @property
     def interval(self) -> float:
@@ -87,10 +88,20 @@ class FrameGate:
         # where the comparison goes either way on the last bit and the achieved
         # rate silently halves. The tolerance is a thousandth of the interval,
         # far below any real jitter.
-        if (self.last_start is not None
-                and now - self.last_start < self.interval * 0.999):
+        if (self.next_due is not None
+                and now < self.next_due - self.interval * 0.001):
             self.dropped += 1
             return False
+        # Advance the due time by one interval from the previous DUE time, not
+        # from this frame, so the average comes out at max_rate. "At least one
+        # interval since the last frame" rounds up to a whole number of input
+        # periods: from 10 Hz input a 3.3 Hz gate gave 2.5 Hz -- exactly the
+        # watchdog's floor -- in the Gazebo sim (2026-10-23). After a pause, or
+        # when processing overran, it restarts from this frame, so no burst.
+        start = self.next_due
+        if start is None or now - start > self.interval:
+            start = now
+        self.next_due = start + self.interval
         self.last_start = now
         self.busy = True
         if self.window_start is None:
@@ -116,6 +127,7 @@ class FrameGate:
     def reset(self, now: float | None = None) -> None:
         self.processed = self.dropped = 0
         self.last_start = None
+        self.next_due = None
         self.busy = False
         self.window_start = now
 

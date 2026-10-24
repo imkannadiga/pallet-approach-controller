@@ -975,3 +975,27 @@ frames that failed). Perception runs at ~3.3 Hz (2.9-3.7), inside the
 watchdog's 2.5 Hz and 0.5 s limits but not by much. The Jetson sits at a load
 average of ~8.5 on 8 cores at idle: ZED SDK ~130 %, fork overlay ~110 % (the
 24 fps dashboard), watchdog ~50 %, tracker ~40 %.
+
+### Perception speed, 2026-10-23 (no behaviour change except D88)
+
+Laptop, one thread, `tools/profile_perception.py pallet_s_129`: **80 -> 34 ms**
+a frame. Each step was checked on 31 real frames from five bags
+(pocket positions, detections) and with a 10-seed sweep.
+
+- `depth_to_points`: index grid built only for the strided pixels.
+- `voxel_downsample`: occupied cubes numbered in a dense array instead of
+  sorting the keys (identical output).
+- `cluster_points`: DBSCAN on SciPy's C KD-tree (`query_pairs` + connected
+  components) instead of scikit-learn's, 2x faster; same clusters, a border
+  point touching two clusters may go to the other.
+- RANSAC: all samples drawn in one call (`rng.choice(..., replace=False)`
+  shuffled every point every iteration -- 74 ms of 186 on the Jetson), and the
+  floor's hypotheses scored on 3000 points (`floor.score_points`).
+- Only points below the D76 ceiling + 0.10 m are clustered; anything taller
+  still shows a top above the ceiling and is rejected as before.
+- `FrameGate` keeps its average rate (it rounded 3.3 Hz down to 2.5 Hz from a
+  10 Hz input).
+
+Changing the random draws exposed D88. Not yet measured on the Jetson (it was
+unreachable); GPU next (docs/TODO.md).
+

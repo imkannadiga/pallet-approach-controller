@@ -54,10 +54,20 @@ def test_voxel_downsample_handles_an_empty_cloud():
     assert len(P.voxel_downsample(np.empty((0, 3)), 0.02)) == 0
 
 
-def test_ball_tree_clustering_matches_the_default():
-    """`algorithm='ball_tree'` halved DBSCAN's time. DBSCAN needs the exact set
-    of neighbours within eps and every algorithm returns exactly that, so the
-    labels must be identical -- this says so rather than assuming it."""
+def test_dense_voxel_path_matches_the_naive_one():
+    """Inside a ROI-sized box the cubes are counted in a dense array instead of
+    sorted (2026-10-23); it must give exactly the same cubes."""
+    rng = np.random.default_rng(5)
+    points = rng.uniform([0.5, -1.5, -0.05], [4.0, 1.5, 0.8], size=(20000, 3))
+    fast = P.voxel_downsample(points, 0.02)
+    slow = naive_voxel_downsample(points, 0.02)
+    assert np.allclose(fast[np.lexsort(fast.T)], slow[np.lexsort(slow.T)])
+
+
+def test_clustering_matches_scikit_learn():
+    """cluster_points is DBSCAN on SciPy's KD-tree (2x faster, 2026-10-23).
+    On well-separated blobs every point is core or noise unambiguously, so the
+    partition must equal scikit-learn's exactly."""
     from sklearn.cluster import DBSCAN
     rng = np.random.default_rng(0)
     blobs = np.vstack([rng.normal(centre, 0.02, size=(200, 3))
