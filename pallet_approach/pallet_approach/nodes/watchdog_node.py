@@ -193,6 +193,12 @@ class WatchdogNode(Node):
         running = self._state not in NOT_RUNNING
         if running and not was_running:
             self._running_since = self._now()
+            # Forgotten on BOTH edges. Perception is deactivated after the
+            # coordinator leaves the run, so its last estimate can land after
+            # the forget below; measured 2026-10-23, the next run then aborted
+            # in its first 0.2 s on "estimate: 9.07 s old" instead of getting
+            # first_estimate_grace.
+            self._monitor.forget('estimate')
         if was_running and not running:
             self._running_since = None
             # The run is over. Release the stop and forget the estimates it
