@@ -27,6 +27,8 @@
 #   ./fetch_bag.sh --check                              # test everything, record nothing
 #   ./fetch_bag.sh -o pallet_2m_0deg -d 20              # depth only, 5 Hz, zstd
 #   ./fetch_bag.sh -o pallet_2m_0deg -d 20 --with-image # add the colour image
+#   ./fetch_bag.sh -o pallet_2m_0deg -d 5 --full-rate   # no throttle (no topic_tools);
+#                                                       # ~56 Hz, so keep it short
 #   ./fetch_bag.sh -o pallet_175_lidar -d 10 \
 #       --with-image --with-lidar                       # camera AND LiDAR in one bag
 #   JETSON=user@192.168.1.102 CONTAINER=<scout> \
@@ -59,6 +61,7 @@ CHECK_ONLY=0
 FETCH_ONLY=0
 LIST_REMOTE=0
 KEEP_REMOTE=0
+FULL_RATE=0
 DEBUG=0
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,6 +71,7 @@ while [ $# -gt 0 ]; do
     -o|--out)      NAME="$2"; shift 2 ;;
     -d|--duration) DURATION="$2"; shift 2 ;;
     -r|--rate)     RATE="$2"; shift 2 ;;
+    --full-rate)   FULL_RATE=1; shift ;;
     --with-image)  WITH_IMAGE=1; shift ;;
     --with-lidar)  WITH_LIDAR=1; shift ;;
     --lidar-only)  LIDAR_ONLY=1; shift ;;
@@ -273,6 +277,9 @@ if [ "$FETCH_ONLY" = "0" ]; then
   else
     [ "$WITH_IMAGE" = "0" ] && RECORD_ARGS+=(--no-image)
     [ "$WITH_LIDAR" = "1" ] && RECORD_ARGS+=(--with-lidar)
+    # No throttle: for a container without topic_tools. record_bag.sh sizes the
+    # bag at ~56 Hz and refuses if it does not fit on the Jetson.
+    [ "$FULL_RATE" = "1" ] && RECORD_ARGS+=(--full-rate)
   fi
   [ "$COMPRESS" = "1" ] && RECORD_ARGS+=(--compress)
 

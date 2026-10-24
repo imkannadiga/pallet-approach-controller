@@ -173,7 +173,7 @@ cleanup() {
     kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
   done
   # belt and braces: anything of ours that outlived its group
-  if [ "${#THROTTLE_PIDS[@]:-0}" -gt 0 ]; then sweep_strays; fi
+  if [ "${#THROTTLE_PIDS[@]}" -gt 0 ]; then sweep_strays; fi
 }
 trap cleanup EXIT
 
