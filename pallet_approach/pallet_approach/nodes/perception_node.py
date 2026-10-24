@@ -19,7 +19,7 @@ from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
-from tf2_ros import Buffer, TransformListener
+from tf2_ros import Buffer
 
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
@@ -28,6 +28,7 @@ from pallet_approach.perception import flatten_side
 from pallet_approach.rate_limit import FrameGate
 from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.nodes._common import (
+    CameraTransformListener,
     lookup_waiting,
     image_to_array,
     intrinsics_from_camera_info,
@@ -82,6 +83,7 @@ class PerceptionNode(LifecycleNode):
         # fitted floor plane, never to z = 0.
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
+        self.declare_parameter('frames.moving_links', ['zed2_left_camera_frame'])
         # Bench escape hatch for a camera whose stamps are on another clock.
         # Off by default and it must stay that way for anything that drives;
         # see the comment at the lookup.
@@ -245,7 +247,8 @@ class PerceptionNode(LifecycleNode):
     @logged_transition
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=True)
+        self._tf_listener = CameraTransformListener(
+            self._tf_buffer, self, self.get_parameter('frames.moving_links').value)
         self._publisher = self.create_lifecycle_publisher(
             PalletEstimateMsg, '~/estimate', 10)
         # Diagnostics are a few hundred bytes of text at 1 Hz, so they are safe
@@ -323,6 +326,8 @@ class PerceptionNode(LifecycleNode):
 
     @logged_transition
     def on_cleanup(self, state: State) -> TransitionCallbackReturn:
+        if self._tf_listener is not None:
+            self._tf_listener.close()
         self._tf_listener = None
         self._tf_buffer = None
         return TransitionCallbackReturn.SUCCESS

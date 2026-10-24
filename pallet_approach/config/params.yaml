@@ -197,6 +197,13 @@
       # zed2_camera_center -> zed2_left_camera_frame is republished at 58 Hz by the
       # SDK's self-calibration, so lookups must be stamped, with a short wait.
       tf_timeout: 0.15          # s
+      # [measured] the moving links in the camera chain; every other link in
+      # base_footprint <- optical is on /tf_static. Perception and the overlay
+      # decode only /tf messages carrying one of these (CameraTransformListener
+      # in nodes/_common.py): decoding all ~200/s of /tf left their tf buffer
+      # 0.15-0.4 s behind on the robot (2026-10-23) and the estimate rate fell
+      # to 1.8 Hz. A link missing here fails the lookup -- no estimate.
+      moving_links: [zed2_left_camera_frame]
 
       # [choice] false, and it must stay false for anything that drives.
       #

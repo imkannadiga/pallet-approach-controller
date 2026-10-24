@@ -716,7 +716,8 @@ def test_tf_waits_sleep_and_listeners_have_their_own_thread():
     for path in NODES.glob('*_node.py'):
         source = strip_comments(path.read_text())
         assert '_buffer.lookup_transform(' not in source, path.name
-        for call in re.findall(r'TransformListener\([^)]*\)', source):
+        # CameraTransformListener always spins its own helper node.
+        for call in re.findall(r'(?<!Camera)TransformListener\([^)]*\)', source):
             assert 'spin_thread=True' in call, (path.name, call)
 
 

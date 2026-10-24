@@ -175,3 +175,84 @@ class LatestRaw:
             from rclpy.serialization import deserialize_message
             self._decoded = deserialize_message(self._raw, self._type)
         return self._decoded
+
+
+class CameraTransformListener:
+    """A tf listener that keeps up while its node is busy with depth frames.
+
+    Measured on the robot 2026-10-23: perception processes a frame in ~155 ms
+    at 5 Hz, and the stock `TransformListener(spin_thread=True)` fell 0.15 to
+    0.4 s behind within two seconds of activation, so almost every stamped
+    lookup failed with "extrapolation into the future" and the estimate rate
+    dropped to 1.8 Hz. A separate process saw the same transforms 44 ms old.
+    Two reasons, both in the stock listener:
+
+    * its thread spins the WHOLE node, so it also runs depth callbacks and
+      sits behind a 155 ms frame; and
+    * it decodes every /tf message in Python -- ~200 a second on the robot
+      (odom, map->odom, both ZED links) -- against the interpreter lock that
+      perception's NumPy work holds.
+
+    This one spins a private helper node holding only the tf subscriptions,
+    and decodes a /tf message only if its raw bytes name one of
+    `moving_links` as a child frame. Everything on /tf_static is kept. The
+    buffer is then the same buffer, stamped lookups behave exactly as before,
+    and a needed link missing from `moving_links` makes the lookup fail --
+    no estimate, the safe direction -- rather than silently use stale data.
+
+    Call `close()` when done. Dropping the reference is not enough: the thread
+    holds one, so the stock listener was never collected and every
+    configure/cleanup cycle left one more thread spinning the node.
+    """
+
+    def __init__(self, buffer, node, moving_links):
+        from threading import Thread
+
+        import rclpy
+        from rclpy.executors import SingleThreadedExecutor
+        from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+        from rclpy.serialization import deserialize_message
+        from tf2_msgs.msg import TFMessage
+
+        self.buffer = buffer
+        # rclpy is imported here, not at the top: test_common imports this
+        # module without ROS.
+        self._decode = lambda raw: deserialize_message(raw, TFMessage)
+        # A child_frame_id in CDR is the name followed by its NUL terminator,
+        # so 'zed2_left_camera_frame' does not match '..._frame_optical'.
+        self._needles = tuple(name.encode() + b'\x00' for name in moving_links)
+        self._node = rclpy.create_node(f'{node.get_name()}_tf',
+                                       context=node.context,
+                                       start_parameter_services=False,
+                                       # It never logs, and its rosout
+                                       # publisher clashed with the parent's
+                                       # ("Publisher already registered").
+                                       enable_rosout=False)
+        self._node.create_subscription(
+            TFMessage, '/tf', self._on_tf,
+            QoSProfile(depth=100, durability=DurabilityPolicy.VOLATILE,
+                       history=HistoryPolicy.KEEP_LAST),
+            raw=True)
+        self._node.create_subscription(
+            TFMessage, '/tf_static', self._on_tf_static,
+            QoSProfile(depth=100, durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                       history=HistoryPolicy.KEEP_LAST))
+        self._executor = SingleThreadedExecutor(context=node.context)
+        self._executor.add_node(self._node)
+        self._thread = Thread(target=self._executor.spin, daemon=True)
+        self._thread.start()
+
+    def _on_tf(self, raw: bytes):
+        if not any(needle in raw for needle in self._needles):
+            return
+        for transform in self._decode(raw).transforms:
+            self.buffer.set_transform(transform, 'default_authority')
+
+    def _on_tf_static(self, msg):
+        for transform in msg.transforms:
+            self.buffer.set_transform_static(transform, 'default_authority')
+
+    def close(self):
+        self._executor.shutdown()
+        self._thread.join(timeout=2.0)
+        self._node.destroy_node()

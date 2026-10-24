@@ -42,7 +42,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
-from tf2_ros import Buffer, TransformListener
+from tf2_ros import Buffer
 
 from pallet_approach_interfaces.msg import ForkState
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
@@ -51,7 +51,8 @@ from pallet_approach import fork_overlay
 from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.dashboard import STATE_COLOR_KEYS as STATE_COLORS
 from pallet_approach.model import Plane
-from pallet_approach.nodes._common import image_to_array, intrinsics_from_camera_info, lookup_waiting
+from pallet_approach.nodes._common import (
+    CameraTransformListener, image_to_array, intrinsics_from_camera_info, lookup_waiting)
 from pallet_approach.rate_limit import Schedule
 from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matrix
 
@@ -102,7 +103,8 @@ class ForkOverlayNode(Node):
             if self.get_parameter(f'{prefix}.enabled').value else None)
 
         self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=True)
+        self._tf_listener = CameraTransformListener(
+            self._tf_buffer, self, self.get_parameter('frames.moving_links').value)
         self._publisher = self.create_publisher(Image, '~/image', SENSOR_QOS)
 
         self.create_subscription(CameraInfo,
@@ -129,6 +131,7 @@ class ForkOverlayNode(Node):
         self.declare_parameter('frames.camera_optical',
                                'zed2_left_camera_frame_optical')
         self.declare_parameter('frames.tf_timeout', 0.15)
+        self.declare_parameter('frames.moving_links', ['zed2_left_camera_frame'])
         self.declare_parameter('frames.extrinsic_correction.enabled', True)
         self.declare_parameter('frames.extrinsic_correction.measured_floor_pitch', 0.0)
         self.declare_parameter('frames.extrinsic_correction.measured_floor_roll', 0.0)

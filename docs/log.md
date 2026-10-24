@@ -955,3 +955,23 @@ fragments of each cloud; at 32 MB it arrives at 10.0 Hz with a worst gap of
 `/etc/sysctl.d/90-ros-dds.conf` on the Jetson; after a restart of the stack
 the LiDAR is back at 10.0 Hz and 90 s at idle gave no warning.
 
+
+Then the next abort: "estimate: 1.8 Hz, limit 2.5 Hz". Perception was fine;
+its tf buffer was not. Activated on its own (no run, controller inactive),
+perception's buffer fell 0.15-0.4 s behind the depth stamps within two
+seconds, while a separate process saw the same transforms 44 ms old, so
+almost every stamped lookup failed. The stock `TransformListener(spin_thread=
+True)` spins the whole node on its thread (so tf queues behind depth frames)
+and decodes all ~200 /tf messages a second in Python. `CameraTransformListener`
+(`nodes/_common.py`) spins a helper node with only the tf subscriptions and
+decodes only messages naming `frames.moving_links`. Lookups stay stamped.
+Result over 30 s: no tf failures, an estimate from every processed frame.
+It also fixes a thread leak: each configure/cleanup cycle used to leave one
+more listener thread spinning perception.
+
+What that uncovered: a frame really costs 250-350 ms on the robot with the
+whole stack running, not ~155 ms (that figure was the 150 ms tf timeout on
+frames that failed). Perception runs at ~3.3 Hz (2.9-3.7), inside the
+watchdog's 2.5 Hz and 0.5 s limits but not by much. The Jetson sits at a load
+average of ~8.5 on 8 cores at idle: ZED SDK ~130 %, fork overlay ~110 % (the
+24 fps dashboard), watchdog ~50 %, tracker ~40 %.

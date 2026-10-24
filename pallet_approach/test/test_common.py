@@ -128,3 +128,26 @@ def test_a_buffer_exactly_the_right_size_is_unaffected():
     original = rgb_grid(channels=3).astype(np.uint8)
     array = image_to_array(Image(original, 'bgr8', extra_bytes=0))
     assert np.array_equal(array, original)
+
+
+def test_the_tf_filter_matches_the_link_and_not_its_optical_child():
+    """CameraTransformListener keeps a /tf message only if its raw bytes name
+    a moving link as a child frame. A CDR string ends in NUL, which is what
+    stops 'zed2_left_camera_frame' matching '..._frame_optical' -- or any
+    other frame that merely starts with the same name."""
+    pytest.importorskip('rclpy')
+    from geometry_msgs.msg import TransformStamped
+    from rclpy.serialization import serialize_message
+    from tf2_msgs.msg import TFMessage
+
+    def raw(child):
+        t = TransformStamped()
+        t.header.frame_id = 'zed2_camera_center'
+        t.child_frame_id = child
+        return serialize_message(TFMessage(transforms=[t]))
+
+    needle = b'zed2_left_camera_frame' + b'\x00'
+    assert needle in raw('zed2_left_camera_frame')
+    assert needle not in raw('zed2_left_camera_frame_optical')
+    assert needle not in raw('zed2_right_camera_frame')
+    assert needle not in raw('base_link')
