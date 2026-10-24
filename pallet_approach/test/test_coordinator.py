@@ -374,15 +374,19 @@ def test_a_reverse_that_cannot_be_justified_refuses(params):
     assert 'Reposition with Nav2' in transition.reason
 
 
-def test_the_run_up_is_re_evaluated_after_reversing(params):
-    """Against where the robot actually ended up, not where it predicted. The
-    reverse is on odometry along the robot's heading, which is not exactly
-    along the centre line."""
+def test_a_gap_shorter_than_re_confirming_takes_is_survived_while_closing(params):
+    """D79: re-confirming takes confirm_frames frames (~1.5 s at the robot's
+    ~3.3 Hz), so the lost-pallet limit must be longer than that or one
+    rejected frame while driving ends the run -- three runs did, 2026-10-23."""
     machine = confirming(params)
-    assert machine.on_track(track(range_=2.8), 1.0).state is State.BACKING_OFF
-    machine.on_track(track(range_=3.1), 5.0)
-    transition = machine.on_drive(arrived('REVERSE', travelled=0.30), 6.0)
-    assert transition.state is State.CLOSING
+    assert machine.on_track(track(range_=3.5), 1.0).state is State.CLOSING
+    machine.on_track(track(confirmed=False, range_=3.4, reason='LiDAR disagrees'), 1.2)
+    assert machine.on_tick(1.0 + 2.0).outcome is None
+    transition = machine.on_tick(1.0 + params['lost_pallet_timeout'] + 0.1)
+    assert transition.outcome is Outcome.ABORTED
+    assert 'LiDAR disagrees' in transition.reason
+    assert params['lost_pallet_timeout'] > 2.0
+
 
 
 def test_reversing_twice_and_then_giving_up(params):

@@ -420,7 +420,12 @@
       # error of ~13 mm, and it needs only the two pocket centres perception
       # already finds.
       classify:
-        enabled: true
+        # [choice, Athreya 2026-10-23] D78: off for now -- the pallet is assumed
+        # to present its SHORT face (entry_face above). On the robot ~1 frame
+        # in several came back "ambiguous" at 2.4-2.5 m and each one reset the
+        # tracker's confirmation (D36 exempts only "unknown"). With it off,
+        # perception reports entry_face and uses that side's numbers.
+        enabled: false
         # One pass with a band inside BOTH openings (0.050-0.070 lies in
         # 0.000-0.100 and in 0.020-0.125) and gap limits spanning both, so the
         # pockets can be found before the side is known. The side's own band
@@ -707,7 +712,13 @@ coordinator:
       # still be visible, aborts. Not applied during the insertion and after:
       # the pockets leave the camera's view by design (D16), so losing the
       # track there is expected rather than a fault.
-      lost_pallet: 1.0
+      # [choice, Athreya 2026-10-23] D79: 1.0 -> 2.5 s. Re-confirming needs
+      # tracker.confirm_frames (5) consecutive frames, ~1.5 s at the ~3.3 Hz
+      # perception achieves on the robot, so at 1.0 s one rejected frame while
+      # driving could never be recovered: three runs aborted that way, during
+      # a reverse and while turning. At 0.10 m/s, 2.5 s is 0.25 m driven on
+      # the last confirmed track.
+      lost_pallet: 2.5
       # The forks take (0.150 - 0.040) / 0.05 = 2.2 s to lower and 1.4 s to
       # lift. 10 s is room for a simulator running slowly, not for one that
       # has stopped.

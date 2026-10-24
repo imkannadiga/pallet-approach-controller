@@ -1115,6 +1115,27 @@ a rule for loads would be needed with or without it. Chosen over "prefer what
 is straight ahead", which keeps loads possible but still lets a nearer object
 on the centre line win. (Athreya, 2026-10-23)
 
+**D78. Side classification is off for now: the pallet presents its short
+face.** `pallet.classify.enabled: false`; perception reports `entry_face`
+("short") and uses the short face's numbers. *Why:* at 2.4-2.5 m on the robot
+about one frame in several came back "ambiguous" (pockets not resolved in that
+frame), and the tracker's D36 rule, which exempts only "unknown", treated each
+one as the side changing and reset confirmation. Rather than redefine D36 now,
+the scenario is narrowed to the short face; D36 is unchanged. Re-enabling
+classification needs a decision on how "ambiguous" frames count in the
+tracker (docs/TODO.md). (Athreya, 2026-10-23)
+
+**D79. The lost-pallet timeout is 2.5 s, not 1.0 s.** `timeouts.lost_pallet`.
+*Why:* re-confirming a track needs `confirm_frames` (5) consecutive accepted
+frames, about 1.5 s at the ~3.3 Hz perception reaches on the robot, so with a
+1.0 s limit a single rejected frame while driving could never be recovered.
+Three runs on 2026-10-23 aborted exactly so, one during a 0.22 m reverse and
+two while turning onto the centre line. At the 0.10 m/s closing speed 2.5 s is
+0.25 m driven on the last confirmed track. Chosen over holding confirmation
+through rejected frames once confirmed. Why the frames were rejected while
+moving is not known yet; the abort now names the tracker's reason, and a
+recorder logs every frame of the next run. (Athreya, 2026-10-23)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

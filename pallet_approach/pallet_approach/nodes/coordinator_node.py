@@ -264,7 +264,8 @@ class CoordinatorNode(Node):
         self.declare_parameter('pallet.entry_face', 'short')
         self.declare_parameter('require_healthy_to_start', True)
         for name, default in (
-            ('timeouts.confirm', 10.0), ('timeouts.lost_pallet', 1.0),
+            ('timeouts.confirm', 10.0),
+            ('timeouts.lost_pallet', 2.5),
             ('timeouts.forks', 10.0), ('timeouts.run', 240.0),
             ('checking.settle_time', 0.5), ('checking.frames', 5),
             ('max_retries', 1), ('max_backoffs', 2),

@@ -501,8 +501,10 @@ class Coordinator:
         if self.state not in (State.INSERTING, State.LIFTING, State.BACKING_OUT):
             quiet = now - self.last_track_at
             if quiet > float(self.params['lost_pallet_timeout']):
+                why = (f' (tracker: {self.track.reason})'
+                       if self.track is not None and self.track.reason else '')
                 return self._abort(now, f'pallet lost: no confirmed track for '
-                                        f'{quiet:.1f} s')
+                                        f'{quiet:.1f} s{why}')
 
         if self.state in (State.LOWERING, State.LIFTING):
             waited = now - self.entered_at
@@ -535,7 +537,11 @@ class Coordinator:
         """
         track = self.track
         if track is None or not track.confirmed:
-            return self._abort(now, 'the track was lost before classifying')
+            # The tracker's own reason, so the abort says WHY: on the robot
+            # (2026-10-23) this fired right after a reverse with nothing to
+            # tell a side flip from a jump from a LiDAR disagreement.
+            why = f' ({track.reason})' if track is not None and track.reason else ''
+            return self._abort(now, f'the track was lost before classifying{why}')
 
         if track.side == 'ambiguous':
             return self._finish(
