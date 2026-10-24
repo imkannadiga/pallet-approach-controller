@@ -1,0 +1,30 @@
+# Tape-measured ground truth per bag, read by tools/evaluate_bags.py.
+#
+# Measure as docs/dataset.md, "Four tape readings per bag", at the robot, before
+# moving anything:
+#   dL, dR  bumper line to the pallet's LEFT / RIGHT front corner, metres,
+#           perpendicular to the bumper (a straightedge on the bumper face)
+#   lat     sideways offset of the face centre from the bumper centre, metres,
+#           positive = pallet to the LEFT
+#   side    short | long (which face points at the robot)
+#   measured  false when the numbers are the TARGET a bag was recorded to, not
+#           a tape reading. The evaluator reports those but flags them, and
+#           they must not be quoted as accuracy (CLAUDE.md, hard rule 6).
+#   light   free text: the lighting condition, for comparing bags
+#
+# Template for a new bag:
+#   pallet_s_205_lights_on:
+#     side: short
+#     dL: 2.051
+#     dR: 2.049
+#     lat: 0.012
+#     light: ceiling lights on, blinds open
+#     measured: true
+
+# 2026-10-15 session: recorded to target distances; tape not transcribed.
+pallet_s_129:   {side: short, dL: 1.29, dR: 1.29, lat: 0.0, measured: false}
+pallet_s_071:   {side: short, dL: 0.71, dR: 0.71, lat: 0.0, measured: false}
+pallet_l_129:   {side: long,  dL: 1.29, dR: 1.29, lat: 0.0, measured: false}
+
+# 2026-10-14: the first real bag, on the 2.0 m tape mark (face_x 2.000).
+pallet_2m_0deg: {side: short, dL: 1.5375, dR: 1.5375, lat: 0.0, measured: false}

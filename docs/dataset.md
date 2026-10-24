@@ -218,6 +218,22 @@ repeated here.
 - **Run recordings:** every driven run from lab sessions B and C, which become
   the offline test set for stages 6 and 7.
 
+## Evaluating a bag
+
+`tools/evaluate_bags.py` runs the robot's perception (same parameters, same
+extrinsic correction) on every depth frame of each bag, and compares the
+pockets with the tape readings in **`docs/bag_truth.yaml`** -- enter `dL`, `dR`
+and `lat` there for every new bag, in metres, with `measured: true`:
+
+    cd pallet_approach
+    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 ../venv/bin/python tools/evaluate_bags.py ~/bags/pallet_s_* --csv /tmp/eval.csv
+
+It reports, per bag: frames with a pallet and with both pockets, the pocket
+midpoint's error against the tape (median and 95th percentile), the yaw error,
+spacing / width / height against the measured pallet, and the frame-to-frame
+scatter (which needs no tape at all). Rows whose truth is only a target
+distance are flagged and are not accuracy numbers.
+
 ## Bags
 
 **The eight bags from 2026-10-15 carry their _target_ distances, not measured
