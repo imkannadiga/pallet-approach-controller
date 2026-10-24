@@ -295,6 +295,17 @@ case "${1:-}" in
           echo "  ./docker/build_and_run.sh logs    # or just look at it" >&2
           exit 1
         fi
+        # A 3 MB LiDAR cloud arrives as ~50 UDP fragments; with the kernel's
+        # default 212 KB receive buffer some overflow and the whole cloud is
+        # lost (measured 2026-10-22: 6.5 Hz of 10, the watchdog flagging it
+        # every ~15 s). See docs/SYSTEM.md, "Network". Warn, do not refuse:
+        # a bench Jetson without the LiDAR does not need it.
+        RMEM=$(cat /proc/sys/net/core/rmem_max 2>/dev/null || echo 0)
+        if [ "$RMEM" -lt 33554432 ]; then
+          echo "WARNING: net.core.rmem_max is $RMEM; LiDAR clouds will be dropped." >&2
+          echo "  sudo sysctl -w net.core.rmem_max=33554432 net.core.rmem_default=8388608" >&2
+          echo "  then stop and up again (sockets keep the size they opened with)." >&2
+        fi
         ;;
       *) ARGS+=(--rm -it) ;;
     esac

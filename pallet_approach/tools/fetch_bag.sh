@@ -205,7 +205,7 @@ if [ "$COMPRESS" = "1" ]; then
 fi
 PROBES=()
 [ "$LIDAR_ONLY" = "0" ] && PROBES+=(/zed2/zed_node/depth/depth_registered)
-{ [ "$LIDAR_ONLY" = "1" ] || [ "$WITH_LIDAR" = "1" ]; } && PROBES+=(/ouster/points)
+{ [ "$LIDAR_ONLY" = "1" ] || [ "$WITH_LIDAR" = "1" ]; } && PROBES+=(/pallet_approach/lidar)
 for PROBE in "${PROBES[@]}"; do
   if in_box "ros2 topic list 2>/dev/null | grep -q $PROBE"; then
     echo "  $PROBE visible from this container: ok"
@@ -225,10 +225,10 @@ done
 if [ "$WITH_LIDAR" = "1" ] && [ "$LIDAR_ONLY" = "0" ]; then
   cat <<'MSG'
 
-  NOTE: --with-lidar subscribes to /ouster/points across the network, from the
+  NOTE: --with-lidar subscribes to /pallet_approach/lidar across the network, from the
   robot PC into the Jetson. Unmeasured: watch for the Ouster's rate dropping.
   After this bag, confirm it is still ~10 Hz:
-      ros2 topic hz /ouster/points
+      ros2 topic hz /pallet_approach/lidar
   If it has dropped, record two bags instead (camera on the Jetson, LiDAR with
   --lidar-only on the robot PC) and align them offline by timestamp -- the
   clocks are chrony-synced.

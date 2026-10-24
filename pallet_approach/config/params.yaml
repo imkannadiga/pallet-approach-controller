@@ -274,7 +274,12 @@
       left_image: /zed2/zed_node/rgb/color/rect/image
       left_camera_info: /zed2/zed_node/rgb/color/rect/camera_info
       odom: /odom
-      lidar: /ouster/points                   # BEST_EFFORT, see the note above
+      # The robot PC's cloud. Only lidar_relay subscribes to it; everything
+      # else reads the Jetson-local copy below, so the network carries each
+      # ~3 MB cloud once instead of once per subscribing process (2026-10-22:
+      # 520 Mbit/s at idle with two subscribers, odometry stalling behind it).
+      lidar_source: /ouster/points            # BEST_EFFORT, see the note above
+      lidar: /pallet_approach/lidar
 
       # Velocity commands, all geometry_msgs/Twist and NOT stamped.
       #

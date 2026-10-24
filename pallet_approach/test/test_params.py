@@ -33,6 +33,7 @@ NODE_NAMES = {
     'tracker_node.py': 'pallet_tracker',
     'forks_node.py': 'virtual_forks',
     'dashboard_node.py': 'dashboard',
+    'lidar_relay_node.py': 'lidar_relay',
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")
@@ -180,7 +181,8 @@ def test_every_declared_parameter_is_in_the_yaml(node_name, declared, params_fil
 def test_the_nodes_declare_something_at_all(declared):
     """Guards the regexes: if they stop matching, every test above passes vacuously."""
     for node_name, names in declared.items():
-        assert len(names) > 3, f'only found {names} for {node_name}; the regex broke'
+        minimum = 2 if node_name == 'lidar_relay' else 4   # the relay has two
+        assert len(names) >= minimum, f'only found {names} for {node_name}; the regex broke'
 
 
 def test_speed_limits_are_the_lab_limits(params_file):

@@ -135,6 +135,14 @@ def generate_launch_description():
             arguments=arguments, condition=IfCondition(mux),
         ),
 
+        # The only subscriber to the robot PC's LiDAR on this machine; the
+        # watchdog, tracker and controller read its local copy, so the network
+        # carries each ~3 MB cloud once (see lidar_relay_node.py).
+        Node(
+            package='pallet_approach', executable='lidar_relay', name='lidar_relay',
+            output='screen', parameters=[params, overlay_params], arguments=arguments,
+        ),
+
         # Independent of the coordinator on purpose: it watches the sensors
         # itself and drives the mux's highest-priority input, so a coordinator
         # that has wedged still leaves a stationary robot.

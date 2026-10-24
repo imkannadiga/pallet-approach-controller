@@ -937,3 +937,21 @@ in 68 s. And none of the last five stages has run on the robot — the harness
 does not touch discovery, QoS, lifecycle, tf or the clock, which is where every
 real failure has come from. Lab session B is next, and it should be expected to
 find things.
+
+## Day 9 — 2026-10-22 — stale sensors on the robot were the network
+
+After D72 and D73 the robot still reported "unhealthy while idle": odometry
+up to 0.7 s old, now and then camera_info. The sensors were fine; the link was
+full. The Jetson's port received 520 Mbit/s at idle, because each process
+subscribing to `/ouster/points` gets its own copy of a 3 MB cloud. A
+`lidar_relay` node now brings the cloud across once (257 Mbit/s) and the
+other nodes read its local copy. That fixed odometry outright. The LiDAR still
+dropped to 6.5 Hz, from a 212 KB kernel UDP buffer that overflowed on the
+fragments of each cloud; at 32 MB it arrives at 10.0 Hz with a worst gap of
+0.12 s, and 90 s at idle produced no warning. Numbers in `docs/SYSTEM.md`,
+"Network". The buffer setting is not yet persistent on the Jetson.
+
+2026-10-23: a reboot reset it and the run aborted on "lidar: 5.0 Hz". Now in
+`/etc/sysctl.d/90-ros-dds.conf` on the Jetson; after a restart of the stack
+the LiDAR is back at 10.0 Hz and 90 s at idle gave no warning.
+

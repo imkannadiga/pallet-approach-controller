@@ -469,6 +469,54 @@ previously known:
    surviving beams are the ones that cross the face above 0.100 m. Range and
    face plane survive to 0.67 m; the gap pattern does not.
 
+## Network: one LiDAR copy, and a big enough UDP buffer — measured 2026-10-22
+
+The robot PC sends a separate network copy of each message to every
+subscribing **process** (FastDDS unicast). An OS0-64 cloud is ~3.2 MB at
+10 Hz, about 257 Mbit/s a copy. With the watchdog and the tracker each
+subscribed (the controller too, during a run) the Jetson's 1 Gbit/s link
+received **520 Mbit/s at idle**, and everything else from the robot PC queued
+behind the clouds:
+
+| | before | one copy | one copy + 32 MB buffer |
+|---|---|---|---|
+| eno1 receive | 520 Mbit/s | 257 Mbit/s | 257 Mbit/s |
+| odom, worst gap / age | 1.02 s / 0.70 s | 0.042 s / 0.025 s | 0.036 s / 0.024 s |
+| LiDAR rate, worst gap | 7.1 Hz | 6.5 Hz, 0.80 s | 10.0 Hz, 0.12 s |
+| LiDAR age, p50 | 0.37 s | 0.25 s | 0.25 s |
+| watchdog warnings in 90 s | ~6 | 6 | 0 |
+
+Two fixes, both needed:
+
+1. **`lidar_relay`** is the only process on the Jetson that subscribes to
+   `/ouster/points`. It republishes each message, still serialized, on
+   `/pallet_approach/lidar` (shared memory, never the network), and the
+   watchdog, tracker and controller read that. **Anything else on the Jetson
+   that wants the cloud should read the relay's topic too**, or it brings back
+   a second network copy.
+2. **The kernel's UDP receive buffer.** A cloud arrives as ~50 fragments; at
+   the default `net.core.rmem_max` of 212 KB some overflow (72 drops in 10 s,
+   counted in `/proc/net/snmp`), and one lost fragment loses the whole
+   best-effort cloud. Raised to 32 MB:
+
+   ```bash
+   sudo sysctl -w net.core.rmem_max=33554432 net.core.rmem_default=8388608
+   ```
+
+   A `sysctl -w` does not survive a reboot (found 2026-10-23: the robot was
+   rebooted and the LiDAR dropped to 3.9 Hz again). **Persisted on the Jetson
+   in `/etc/sysctl.d/90-ros-dds.conf`** with the same two values. Sockets keep
+   the size they were opened with, so after changing it by hand the stack
+   must be restarted (`stop`, then `up`). `up` warns if it is still small;
+   after a reboot Docker restarts the container itself and `up` never runs,
+   which is why the file in `/etc/sysctl.d/` is the real fix. On a fresh
+   Jetson:
+
+   ```bash
+   printf 'net.core.rmem_max=33554432\nnet.core.rmem_default=8388608\n' \
+     | sudo tee /etc/sysctl.d/90-ros-dds.conf && sudo sysctl --system
+   ```
+
 ## Python environment inside the ZED container
 
 | module | state |
