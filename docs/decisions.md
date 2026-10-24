@@ -1100,6 +1100,21 @@ run-up from the measured offset (2.32 m of face distance for 5 cm of offset,
 cannot reach is refused with "reposition" rather than attempted. Start runs
 about 2.5 m from the short face. (Athreya, 2026-10-23)
 
+**D76. A cluster taller than an empty pallet is not a pallet.** Perception's
+cluster gate gains an upper bound: the top may be at most
+`cluster.max_height_above_pallet` (0.04 m) above `pallet_height` (0.145 m).
+Replaces "taller is fine (it may carry a load)". *Why:* on the robot
+(2026-10-23) a partition panel standing edge-on, 1 m to the right, passed
+every check -- taller than a pallet, 0.76 m long against the 0.795 m face --
+and was nearer than the pallet, so it was chosen on every frame. Its top was
+0.82 m, the pallet's 0.14 m. The run then saw no pockets ("side ambiguous"),
+and the LiDAR cross-check agreed with the panel because it is a real surface.
+*Consequence:* loaded pallets are rejected; the lab uses empty ones. A learned
+detector in front of the geometry is the planned replacement (docs/TODO.md);
+a rule for loads would be needed with or without it. Chosen over "prefer what
+is straight ahead", which keeps loads possible but still lets a nearer object
+on the centre line win. (Athreya, 2026-10-23)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

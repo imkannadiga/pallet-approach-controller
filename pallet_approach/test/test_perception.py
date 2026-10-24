@@ -211,6 +211,30 @@ def test_select_pallet_cluster_rejects_a_small_box():
     assert chosen is None
 
 
+def test_a_tall_panel_nearer_than_the_pallet_is_not_chosen(square_pallet):
+    """D76, from the robot (2026-10-23): a partition panel standing edge-on,
+    0.8 m long and 0.8 m tall, nearer than the pallet. It has a pallet-length
+    side and is taller than a pallet, which the old rule accepted -- and being
+    nearer, it won. With the height ceiling the pallet is chosen."""
+    points, truth = square_pallet
+    pallet = points[points[:, 2] > truth['floor_z'] + 0.03]
+    rng = np.random.default_rng(0)
+    near = 0.5 * float(np.linalg.norm(pallet[:, :2].mean(axis=0)))
+    panel = rng.uniform([near, -1.2, truth['floor_z'] + 0.03],
+                        [near + 0.04, -0.4, truth['floor_z'] + 0.80], size=(1500, 3))
+    cloud = np.vstack([pallet, panel])
+    labels = np.r_[np.zeros(len(pallet), int), np.ones(len(panel), int)]
+    floor = Plane(np.array([0.0, 0.0, 1.0]), -truth['floor_z'])
+    kwargs = dict(pallet_width=S.PALLET_WIDTH, pallet_height=S.PALLET_HEIGHT,
+                  floor=floor, widths=(S.PALLET_WIDTH,))
+
+    without = perception.select_pallet_cluster(cloud, labels, **kwargs)
+    assert len(without) == len(panel)            # the bug: nearest tall thing wins
+    chosen = perception.select_pallet_cluster(
+        cloud, labels, **kwargs, max_height=S.PALLET_HEIGHT + 0.04)
+    assert len(chosen) == len(pallet)
+
+
 # -------------------------------------------------------- fit_front_face
 
 @pytest.mark.parametrize('yaw_deg', [0, 15, -20])

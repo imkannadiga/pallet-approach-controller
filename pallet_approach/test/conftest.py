@@ -40,6 +40,8 @@ def params():
         'cluster_min_samples': 8,
         'min_cluster_points': 100,
         'size_tolerance': 0.25,
+        'max_height_above_pallet': 0.04,
+        'max_candidates': 3,
 
         # the real pallet, tape-measured, not the EPAL nominal
         'pallet_width': 0.795,

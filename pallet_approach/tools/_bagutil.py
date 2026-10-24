@@ -181,6 +181,8 @@ def load_params(package_root: pathlib.Path) -> dict:
         'cluster_min_samples': block['cluster']['min_samples'],
         'min_cluster_points': block['cluster']['min_cluster_points'],
         'size_tolerance': block['cluster']['size_tolerance'],
+        'max_height_above_pallet': block['cluster']['max_height_above_pallet'],
+        'max_candidates': block['cluster']['max_candidates'],
         'pallet_height': shared['pallet']['pallet_height'],
         'face_distance_threshold': block['face']['ransac_distance'],
         'max_tilt_from_vertical': block['face']['max_tilt_from_vertical'],

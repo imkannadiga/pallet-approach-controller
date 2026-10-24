@@ -407,6 +407,7 @@ def select_pallet_cluster(
     floor: Plane | None = None,
     min_points: int = 50,
     widths: tuple[float, ...] = (),
+    max_height: float | None = None,
 ) -> np.ndarray | None:
     """Pick the cluster that could be a pallet, or None.
 
@@ -414,8 +415,9 @@ def select_pallet_cluster(
     and table legs. Judge each cluster on geometry only -- no learned model, as
     the whole project insists:
 
-    * its height above the floor should be close to `pallet_height` (0.144 m),
-      or taller if it carries a load;
+    * its height above the floor should be close to `pallet_height` (0.145 m):
+      no lower than `size_tolerance` allows, and no higher than `max_height`
+      when one is given (D76: empty pallets only, for now);
     * its footprint should be close to `pallet_width` x pallet length;
     * it should be the nearest such cluster to the robot;
     * it needs enough points to fit a face to.
@@ -437,12 +439,19 @@ def select_pallet_cluster(
         if len(cluster) < min_points:
             continue
  
-        # Check 2: tall enough. At least ~pallet height; taller is fine (load).
+        # Check 2: the height of a pallet. At least ~pallet height, and -- D76
+        # -- not much more. Without the upper bound "taller is fine (it may
+        # carry a load)" let anything tall with one pallet-length side
+        # through: measured 2026-10-23, a partition panel standing edge-on
+        # (top 0.82 m, 0.76 m long) was nearer than the pallet (top 0.14 m)
+        # and won every frame. Loaded pallets need their own rule.
         if floor is not None:
             height = floor.height_of(cluster).max()
         else:
             height = cluster[:, 2].max() - cluster[:, 2].min()
         if height < pallet_height * (1 - size_tolerance):
+            continue
+        if max_height is not None and height > max_height:
             continue
  
         # Check 3: the right width. The pallet may be turned, so measuring the
@@ -998,7 +1007,8 @@ def estimate_pallet(
     pallet = select_pallet_cluster(
         points, labels, params['pallet_width'], params['pallet_height'],
         size_tolerance=params['size_tolerance'], floor=floor,
-        min_points=params['min_cluster_points'], widths=widths)
+        min_points=params['min_cluster_points'], widths=widths,
+        max_height=params['pallet_height'] + params['max_height_above_pallet'])
     if pallet is None:
         return None
  

@@ -82,7 +82,8 @@ def run(depth, intrinsics, to_ground, params):
     s['pallet'] = P.select_pallet_cluster(
         s['standing'], s['labels'], params['pallet_width'], params['pallet_height'],
         size_tolerance=params['size_tolerance'], floor=s['floor'],
-        min_points=params['min_cluster_points'])
+        min_points=params['min_cluster_points'],
+        max_height=params['pallet_height'] + params['max_height_above_pallet'])
     if s['pallet'] is None:
         s['stopped'] = 'no cluster looked like a pallet'
         return s
