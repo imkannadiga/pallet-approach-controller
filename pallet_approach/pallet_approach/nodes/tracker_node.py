@@ -44,6 +44,7 @@ from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 from pallet_approach_interfaces.msg import TrackedPallet
 
 from pallet_approach.model import Pose2D
+from pallet_approach.calibration import correct_lidar_transform
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     estimate_from_msg,
@@ -91,6 +92,10 @@ class TrackerNode(Node):
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
         self.declare_parameter('floor_z', -0.025)
+        self.declare_parameter('frames.lidar_correction.enabled', True)
+        self.declare_parameter('frames.lidar_correction.measured_floor_pitch', 0.0)
+        self.declare_parameter('frames.lidar_correction.measured_floor_roll', 0.0)
+        self.declare_parameter('frames.lidar_correction.measured_floor_height', -0.025)
         self.declare_parameter('pallet.pallet_height', 0.145)
         for name, default in (
             ('window', 10), ('min_window_frames', 5), ('confirm_frames', 5),
@@ -198,7 +203,15 @@ class TrackerNode(Node):
                 f'tf {ground} <- {cloud.header.frame_id}: {error}',
                 throttle_duration_sec=5.0)
             return None
-        return transform_points(unpack_cloud(cloud), transform_to_matrix(transform))
+        matrix = transform_to_matrix(transform)
+        if self.get_parameter('frames.lidar_correction.enabled').value:
+            matrix = correct_lidar_transform(
+                matrix,
+                self.get_parameter('frames.lidar_correction.measured_floor_pitch').value,
+                self.get_parameter('frames.lidar_correction.measured_floor_roll').value,
+                self.get_parameter('frames.lidar_correction.measured_floor_height').value,
+                self.get_parameter('floor_z').value)
+        return transform_points(unpack_cloud(cloud), matrix)
 
     def _on_estimate(self, msg: PalletEstimateMsg):
         estimate = estimate_from_msg(msg)

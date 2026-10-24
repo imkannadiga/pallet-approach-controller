@@ -1061,6 +1061,32 @@ controller keeps publishing, so the watchdog still stops the robot with its
 reason. Each is now checked on its own (`test_arbitration.py`).
 (Athreya, 2026-10-22)
 
+**D74. The LiDAR's mounting is corrected from a floor measurement, as a
+stopgap; an auto-calibration routine replaces it once perception works on the
+robot.** `frames.lidar_correction`: the floor as the LiDAR sees it, pitch
+−0.582°, roll −0.117°, height +0.0253 m after levelling, moved to `floor_z`
+(−0.025 m). Applied to every cloud where the tracker and the controller
+transform it into `base_footprint` (`calibration.correct_lidar_transform`).
+*Why:* the cross-check never confirmed a pallet on the robot. Its nearest
+surface sat +0.50 to +0.54 m in front of the camera's face on every frame,
+which is the 90th percentile of floor returns spread over its 0.60 m
+look-ahead. Uncorrected, the LiDAR's floor reads 3-4 cm above the camera's at
+1-2 m, above the 3 cm margins that keep the floor out of both the cross-check
+and the insertion stop (that one would have stopped every insertion early).
+Measured parked, 20 clouds, clear floor 0.9-3 m ahead, sd 0.035° and 1 mm.
+Corrects SYSTEM.md's 2026-10-14 note that the LiDAR's orientation was true.
+Off in the sim, whose LiDAR is where the URDF puts it.
+*Later, decided with it:* an on-demand calibration routine that turns the
+robot in place to four headings and fits the floor with both sensors at each,
+for height, pitch and roll only (a floor cannot show x, y or yaw). Several
+headings average out uneven floor and let it refuse a spot where they
+disagree; it does not cancel a plain slope, and does not need to, because the
+robot stands on the slope it looks at. Defaults proposed: refuse above 0.2° /
+5 mm between headings or 2° / 8 cm of correction; results in a separate
+calibration file, never in params.yaml; a run-time warning if perception's
+floor drifts from it. To be decided in detail when it is built.
+(Athreya, 2026-10-23)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

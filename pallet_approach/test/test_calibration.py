@@ -14,6 +14,7 @@ import synthetic as S
 from pallet_approach.model import Plane
 from pallet_approach.calibration import (
     apparent_floor_normal,
+    correct_lidar_transform,
     correct_transform,
     correction_matrix,
     levelling_rotation,
@@ -183,3 +184,53 @@ def test_plane_height_of_handles_single_points_and_arrays():
     many = plane.height_of(np.array([[2.0, 0.0, 0.047], [2.0, 0.0, 0.119]]))
     assert np.allclose(many, [0.072, 0.144], atol=1e-12)
     assert math.isclose(plane.height_on_axis, -0.025, abs_tol=1e-12)
+
+
+def _rotation(pitch: float, roll: float) -> np.ndarray:
+    cp, sp, cr, sr = math.cos(pitch), math.sin(pitch), math.cos(roll), math.sin(roll)
+    ry = np.array([[cp, 0.0, sp], [0.0, 1.0, 0.0], [-sp, 0.0, cp]])
+    rx = np.array([[1.0, 0.0, 0.0], [0.0, cr, -sr], [0.0, sr, cr]])
+    return ry @ rx
+
+
+def _floor_fit(points: np.ndarray):
+    """(pitch, roll, height at the origin) of a plane, in calibration.py's
+    conventions -- what the measurement on the robot reports."""
+    centroid = points.mean(axis=0)
+    normal = np.linalg.svd(points - centroid)[2][-1]
+    normal = normal if normal[2] > 0 else -normal
+    return (math.atan2(-normal[0], normal[2]), math.atan2(normal[1], normal[2]),
+            float(normal @ centroid / normal[2]))
+
+
+@pytest.mark.parametrize('pitch_deg, roll_deg, height_error', [
+    (0.6, 0.1, 0.050),      # roughly the robot's LiDAR, 2026-10-23
+    (-1.5, 0.8, -0.030),
+])
+def test_the_lidar_correction_puts_the_floor_back(pitch_deg, roll_deg, height_error):
+    """A LiDAR whose URDF mount is tilted and too high: measured the way it is
+    measured on the robot (fit, level, fit again), the correction puts its
+    floor flat at floor_z -- which is what the 3 cm margins assume (D74)."""
+    floor_z = -0.025
+    true = np.eye(4)
+    true[:3, 3] = [0.17, 0.0, 0.63]
+    reported = true.copy()                            # what tf says
+    reported[:3, :3] = _rotation(math.radians(pitch_deg), math.radians(roll_deg))
+    reported[2, 3] += height_error
+
+    rng = np.random.default_rng(0)
+    floor = np.c_[rng.uniform(0.9, 3.0, 2000), rng.uniform(-1.5, 1.5, 2000),
+                  np.full(2000, floor_z)]
+    in_lidar = (floor - true[:3, 3]) @ true[:3, :3]   # true^-1 applied to points
+
+    def to_ground(matrix):
+        return in_lidar @ matrix[:3, :3].T + matrix[:3, 3]
+
+    pitch, roll, raw_height = _floor_fit(to_ground(reported))
+    assert abs(raw_height - floor_z) > 0.02          # the error is really there
+    levelled = correct_transform(reported, correction_matrix(pitch, roll))
+    _, _, height = _floor_fit(to_ground(levelled))
+
+    fixed = to_ground(correct_lidar_transform(reported, pitch, roll, height, floor_z))
+    assert np.abs(fixed[:, 2] - floor_z).max() < 1e-3
+

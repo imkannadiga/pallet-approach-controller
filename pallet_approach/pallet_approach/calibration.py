@@ -2,9 +2,15 @@
 
 The URDF says the ZED's optical frame is level with `base_footprint`. Measured
 2026-10-14 against the floor plane, it is not: it is pitched down 0.698° and
-rolled -0.516°, 0.868° in total. The LiDAR on the same `bottom_box_link` comes
-out level, so the sensor box is fine and the camera on it is not. See
-docs/SYSTEM.md for the measurement and `tools/floor_plane_check.py` to repeat it.
+rolled -0.516°, 0.868° in total. See docs/SYSTEM.md for the measurement and
+`tools/floor_plane_check.py` to repeat it.
+
+The LiDAR is out too (measured 2026-10-23; an earlier note called it level):
+its floor came out 50 mm high after levelling and pitched -0.58°, which put
+floor returns 3-4 cm above the camera's floor -- above the 3 cm margins of
+both the LiDAR cross-check and the insertion stop. `correct_lidar_transform`
+corrects it, by the same method plus a height shift. A stopgap until the
+auto-calibration routine measures both sensors (decisions.md, D74).
 
 Left uncorrected that is 22 mm of vertical error at the standoff and 30 mm at
 2 m, against a 30 mm pocket-height tolerance -- so it has to be corrected before
@@ -106,3 +112,21 @@ def apparent_floor_normal(assumed: np.ndarray, true: np.ndarray) -> np.ndarray:
     """
     camera_frame_normal = np.asarray(true, dtype=float)[:3, :3].T @ np.array([0.0, 0.0, 1.0])
     return np.asarray(assumed, dtype=float)[:3, :3] @ camera_frame_normal
+
+
+def correct_lidar_transform(ground_from_lidar: np.ndarray,
+                            measured_pitch: float, measured_roll: float,
+                            measured_floor_height: float,
+                            floor_z: float) -> np.ndarray:
+    """Level a 4x4 ``ground <- lidar`` transform, then put its floor at `floor_z`.
+
+    Parameterised by the measurement, like the camera's: the floor's pitch and
+    roll as the LiDAR sees it, and its height at the ground origin AFTER
+    levelling (levelling first, because rotating changes that height by a few
+    mm). Unlike the camera, the LiDAR's height is wrong as well, so the
+    translation is shifted vertically by ``floor_z - measured_floor_height``.
+    """
+    out = correct_transform(ground_from_lidar, correction_matrix(measured_pitch, measured_roll))
+    out[2, 3] += float(floor_z) - float(measured_floor_height)
+    return out
+

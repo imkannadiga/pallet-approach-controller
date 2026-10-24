@@ -317,8 +317,12 @@ The mean is the number to trust.
 
 The LiDAR puts the floor at +0.0130 m where the camera puts it at −0.0246 m —
 a 38 mm disagreement, consistent to 0.5 mm across both poses, so it is a
-systematic error in the URDF's LiDAR mounting chain, not noise. Its
-*orientation* is true. We do not depend on the LiDAR, but it is worth reporting
+systematic error in the URDF's LiDAR mounting chain, not noise. ~~Its
+*orientation* is true.~~ **Corrected 2026-10-23 (D74):** a floor fit over 20
+clouds gives pitch −0.582°, roll −0.117° and, after levelling, a floor height
+of +0.0253 m, so it is tilted as well. That broke the LiDAR cross-check (floor
+returns cleared its 3 cm margin) and is now corrected in
+`frames.lidar_correction`. We do not depend on the LiDAR, but it is worth reporting
 to whoever maintains the robot description, and it is a reminder that the
 URDF's accessory mounts are nominal rather than measured — as `base_footprint`
 being 25 mm out already showed.

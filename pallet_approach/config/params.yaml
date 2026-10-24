@@ -250,6 +250,19 @@
         measured_floor_pitch: 0.012182      # +0.698 deg
         measured_floor_roll: -0.009005      # -0.516 deg
 
+      # The same for the LiDAR, plus its height (D74, measured 2026-10-23 on
+      # 20 clouds, parked, clear floor 0.9-3 m ahead; sd 0.035 deg / 1 mm).
+      # Uncorrected, its floor sat 3-4 cm above the camera's at 1-2 m, so floor
+      # returns passed the 3 cm margins: the cross-check saw a "surface" 0.5 m
+      # in front of every pallet face and never confirmed one. The height is
+      # the floor's AFTER levelling; the correction moves it to floor_z.
+      # STOPGAP until the auto-calibration routine (D74) measures it.
+      lidar_correction:
+        enabled: true
+        measured_floor_pitch: -0.010158     # -0.582 deg
+        measured_floor_roll: -0.002034      # -0.117 deg
+        measured_floor_height: 0.0253       # m, levelled; floor_z is -0.025
+
     # BGR, by what the robot is DOING rather than one colour per state: looking
     # (grey), driving towards the pallet (amber), committed with the forks going
     # in (bright green), carrying (green), stopped because something was wrong
