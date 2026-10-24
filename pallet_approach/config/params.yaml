@@ -142,7 +142,12 @@
       # travelled -- which is robust to noise over a long baseline and would
       # catch a divergence in half the frames. That is a decision, not a tweak.
       divergence_frames: 8
-      min_divergence_growth: 0.010
+      # [choice, Athreya 2026-10-23] D86: 0.010 -> 0.040. With the ZED's
+      # measured depth warp (D80) the measured offset wanders 13-19 mm over 8
+      # frames on its own at 2-2.5 m, and two sim runs in 10 aborted as
+      # "diverging" while converging. 40 mm is clearly above that and far below
+      # the ~0.25 m errors the run-up rules exist for.
+      min_divergence_growth: 0.040
 
     # ------------------------------------------------------------- reverse
     # Backing off to make room for the run-up, and backing out after the lift.
@@ -947,7 +952,18 @@ watchdog:
       # image: same publisher, same callback, same rate, a few dozen bytes
       # instead of 3.7 MB. Nothing in this node ever subscribes to an image.
       camera_info: 0.30         # ~37 Hz nominal
-      estimate: 0.50            # perception's own 5 Hz target (D24)
+      # [choice, Athreya 2026-10-23] D85: 0.50 -> 1.00. Perception reaches
+      # ~3.3 Hz on the robot, so one slow frame leaves the newest estimate
+      # 0.6-0.9 s old and a 0.50 limit aborted a sim run on exactly that.
+      # Three frame periods; 10 cm at the closing speed.
+      estimate: 1.00
+      # [measured 2026-10-22, D72] Raised from D9's 0.20 / 0.50 after
+      # measuring the robot for 30 s at idle (clocks synced to 0.5 ms, so this
+      # is real lateness, not skew). LiDAR: every cloud arrives ~0.37 s old
+      # (p99 0.42 s), so 0.50 left under 0.1 s of margin; 0.80 allows about
+      # three missed scans more. Odom: normally 4 ms old, but the stream stalls
+      # for up to ~1 s now and then; 0.50 covers ordinary jitter and still
+      # stops the robot on a real stall (open: find the stall's cause).
       odom: 0.50                # 50 Hz nominal
       lidar: 0.80               # 10 Hz nominal, ~0.37 s built-in latency
       # The tf chain's camera link is republished at 58 Hz by the ZED SDK's

@@ -123,7 +123,7 @@ class ControllerNode(LifecycleNode):
             ('closing.resume_range', 0.10), ('closing.min_run_up', 3.0),
             ('closing.residual_target', 0.020), ('closing.run_up_margin', 0.20),
             ('closing.divergence_frames', 5),
-            ('closing.min_divergence_growth', 0.010),
+            ('closing.min_divergence_growth', 0.040),
             ('reverse.speed', 0.05), ('reverse.max_unverified', 0.50),
             ('reverse.side_margin', 0.10), ('reverse.min_height', 0.03),
             ('reverse.max_height', 1.00), ('reverse.clearance_margin', 0.15),

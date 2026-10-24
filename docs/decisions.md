@@ -1192,6 +1192,19 @@ by 10 deg instead was tried first and is a different error: at 2.5 m it swings
 the centre line ~0.4 m off the robot, which correctly ends in "reposition".
 (Athreya, 2026-10-23)
 
+**D85. The watchdog's estimate age limit is 1.0 s, not 0.5 s.** Amends D72.
+*Why:* perception reaches ~3.3 Hz on the robot, so one slow frame leaves the
+newest estimate 0.6-0.9 s old; a sim run in the D83 batch aborted on "estimate:
+0.90 s old, limit 0.50 s". Three frame periods; 10 cm at the closing speed.
+(Athreya, 2026-10-23)
+
+**D86. "Diverging" needs 40 mm of growth over the 8 frames, not 10 mm.**
+`closing.min_divergence_growth: 0.040`. *Why:* with the ZED's measured depth
+warp (D80) the measured offset wanders 13-19 mm over 8 frames on its own at
+2-2.5 m; two runs of the third D83 batch aborted as diverging while
+converging. 40 mm is clearly above that and far below the ~0.25 m errors the
+run-up rules exist for. (Athreya, 2026-10-23)
+
 **D87. Perception prefers the nearest candidate that shows two pockets.**
 Every cluster that passes the size and height gates is a candidate, nearest
 first; the face fit and pocket search run on up to `cluster.max_candidates`

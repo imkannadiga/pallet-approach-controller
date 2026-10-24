@@ -144,7 +144,7 @@ class WatchdogNode(Node):
         for name, default in (
             ('publish_rate', 2.0), ('command_rate', 20.0), ('window', 2.0),
             ('max_age.camera_info', 0.30), ('min_rate.camera_info', 10.0),
-            ('max_age.estimate', 0.50), ('min_rate.estimate', 2.5),
+            ('max_age.estimate', 1.00), ('min_rate.estimate', 2.5),
             ('max_age.odom', 0.20), ('min_rate.odom', 20.0),
             ('max_age.lidar', 0.50), ('min_rate.lidar', 5.0),
             ('max_age.tf', 0.30), ('first_estimate_grace', 2.0),
