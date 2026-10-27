@@ -114,7 +114,13 @@ EST_MB=$(awk -v d="$DURATION" -v r="$EFF_RATE" -v df="$DEPTH_FRAME_MB" -v if_="$
 [ "$WITH_LIDAR" = "1" ] && EST_MB=$(awk -v e="$EST_MB" -v d="$DURATION" \
   -v lf="$LIDAR_FRAME_MB" -v lr="$LIDAR_RATE" 'BEGIN{printf "%.0f", e + d*lr*lf}')
 
-FREE_MB=$(df -Pm "$OUT_DIR" 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
+# df on a directory that does not exist yet fails, which left FREE_MB at 0 and
+# silently switched the "would leave under 1 GB free" refusal off for the first
+# bag of a session. Ask about the nearest directory that does exist.
+CHECK_DIR="$OUT_DIR"
+while [ ! -d "$CHECK_DIR" ] && [ "$CHECK_DIR" != "/" ]; do CHECK_DIR=$(dirname "$CHECK_DIR"); done
+FREE_MB=$(df -Pm "$CHECK_DIR" 2>/dev/null | awk 'NR==2{print $4}') || true
+FREE_MB=${FREE_MB:-0}
 
 if [ "$LIST_ONLY" = "1" ]; then
   echo "would record, for ${DURATION}s at ${EFF_RATE} Hz:"
@@ -184,13 +190,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Captured first, then searched. `ros2 pkg executables ... | grep -q throttle`
+# under `set -o pipefail` reports FAILURE when grep exits at its match and the
+# writer, still printing, gets SIGPIPE (status 141): an installed topic_tools
+# then reads as "not installed", although the same probe without pipefail, in
+# fetch_bag.sh, passed.
+TOPIC_TOOLS_EXES=$(ros2 pkg executables topic_tools 2>/dev/null || true)
+
 if [ "$LIDAR_ONLY" = "1" ]; then
   echo "LiDAR only: no camera topics, no throttling (the Ouster runs at ~10 Hz)"
 elif [ "$FULL_RATE" = "1" ]; then
   echo "WARNING: recording at full rate. Watch the disk."
   TOPICS+=("$DEPTH")
   [ "$WITH_IMAGE" = "1" ] && TOPICS+=("$IMAGE")
-elif ros2 pkg executables topic_tools 2>/dev/null | grep -q throttle; then
+elif grep -q throttle <<<"$TOPIC_TOOLS_EXES"; then
   # A throttle left over from a previous run publishes to the same output topic,
   # so the recorded rate would be a multiple of RATE and the bag unusable for
   # anything rate-sensitive. Clear them out first and say so.
