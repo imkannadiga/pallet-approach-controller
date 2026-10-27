@@ -102,7 +102,7 @@ class ControllerNode(LifecycleNode):
     def _declare(self):
         self.declare_parameter('topics.cmd_vel_pallet', '/cmd_vel_pallet')
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('topics.lidar', '/ouster/points')
+        self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
         self.declare_parameter('floor_z', -0.025)

@@ -58,7 +58,11 @@ DEFAULT_TOPICS = [
     '/tf',
     '/tf_static',
     '/odom',
-    '/ouster/points',
+    # The relay's local copy. On the Jetson never subscribe to the raw
+    # /ouster/points: it is a second network copy and throttles the Ouster
+    # (lidar_relay_node.py). On the robot PC, where the driver is local, ask
+    # for it with --topics /ouster/points.
+    '/pallet_approach/lidar',
 ]
 
 

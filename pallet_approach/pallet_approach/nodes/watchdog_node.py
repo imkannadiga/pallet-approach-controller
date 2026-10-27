@@ -135,7 +135,7 @@ class WatchdogNode(Node):
         self.declare_parameter('topics.depth_camera_info',
                                '/zed2/zed_node/depth/camera_info')
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('topics.lidar', '/ouster/points')
+        self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
         self.declare_parameter('topics.cmd_vel_safety', '/cmd_vel_safety')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.camera_optical',

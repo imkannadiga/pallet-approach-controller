@@ -63,7 +63,13 @@ DEPTH_INFO=/zed2/zed_node/depth/camera_info
 IMAGE=/zed2/zed_node/rgb/color/rect/image
 IMAGE_INFO=/zed2/zed_node/rgb/color/rect/camera_info
 EXTRA=(/tf /tf_static /odom /joint_states /scout_status)
-LIDAR=/ouster/points
+# The Jetson's local copy, from lidar_relay. NEVER record the raw /ouster/points
+# from a machine other than the robot PC: a second network subscriber to a
+# 3 MB / 10 Hz cloud throttled the Ouster to 2.6-4.6 Hz (docs/dataset.md) and
+# queued everything else from the robot PC behind it (lidar_relay_node.py).
+# --lidar-only is for the robot PC itself, where the raw topic is local, and
+# switches to it. The stack must be up for the relay to exist.
+LIDAR=/pallet_approach/lidar
 WITH_LIDAR=0
 
 while [ $# -gt 0 ]; do
@@ -74,7 +80,8 @@ while [ $# -gt 0 ]; do
     --full-rate)    FULL_RATE=1; shift ;;
     --with-lidar)   WITH_LIDAR=1; shift ;;
     --no-image)     WITH_IMAGE=0; shift ;;
-    --lidar-only)   LIDAR_ONLY=1; WITH_LIDAR=1; WITH_IMAGE=0; shift ;;
+    --lidar-only)   LIDAR_ONLY=1; WITH_LIDAR=1; WITH_IMAGE=0; LIDAR=/ouster/points; shift ;;
+    --lidar-topic)  LIDAR="$2"; shift 2 ;;
     --compress)     COMPRESS=1; shift ;;
     --mcap)         STORAGE="mcap"; shift ;;
     --dir)          OUT_DIR="$2"; shift 2 ;;
@@ -271,7 +278,7 @@ for name, n, span in c.execute(
     flag = ''
     if 'throttled' in name and hz > 1.5 * float(__import__('os').environ.get('RATE', '10')):
         flag = '   <-- HIGHER THAN ASKED FOR: stray throttle node?'
-    if name == '/ouster/points' and hz < 7:
+    if name in ('/ouster/points', '/pallet_approach/lidar') and hz < 7:
         flag = '   <-- the Ouster is being throttled; see docs/SYSTEM.md'
     print(f'  {name:<58} {n:>5} msgs  {hz:>6.2f} Hz{flag}')
 PY

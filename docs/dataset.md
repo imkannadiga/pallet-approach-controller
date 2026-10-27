@@ -97,8 +97,9 @@ C=<zed container>                       # ./pallet_approach/tools/fetch_bag.sh -
 - **Push the robot by hand.** Nothing here involves driving — the controller is
   not built yet, and at 24 cm of bumper tape you do not want it to be.
 - **After the first bag**, confirm the LiDAR did not throttle:
-  `ros2 topic hz /ouster/points` should still read ~10 Hz. If it dropped, see
-  the note `fetch_bag.sh` prints about recording two bags instead.
+  `ros2 topic hz /pallet_approach/lidar` should still read ~10 Hz. The recording
+  uses the relay's local copy on the Jetson, never the raw `/ouster/points`:
+  a second network subscriber to the raw cloud is what throttled it before.
 
 ## Park the robot once; move the pallet
 
@@ -273,7 +274,8 @@ achieved rates are printed at the end. The depth frames themselves are fine;
 the bags are just larger than intended.
 
 **2. The Ouster drops from 9.4 Hz on the first bag to 2.6–4.6 Hz on the rest.**
-This is the risk flagged before the session: `/ouster/points` is RELIABLE and
+This is the risk flagged before the session (and the reason recording now uses
+the relay's `/pallet_approach/lidar`, not the raw topic): `/ouster/points` is RELIABLE and
 crosses the network from the robot PC into the Jetson's container, so a
 subscriber that cannot keep up slows the publisher — made much worse by the
 stray throttle nodes eating the Jetson's CPU. **For these bags it costs

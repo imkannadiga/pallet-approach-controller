@@ -17,7 +17,7 @@ number below in the same wrong direction.
     python3 pallet_approach/tools/lidar_coverage.py ~/bags/floor_lidar_pose1 \
                                                     ~/bags/floor_lidar_pose2
 
-Needs: /ouster/points and /tf_static, recorded on bare floor.
+Needs: /pallet_approach/lidar (or /ouster/points) and /tf_static, recorded on bare floor.
 """
 
 from __future__ import annotations
@@ -38,7 +38,9 @@ try:
 except ImportError:                                           # pragma: no cover
     sys.exit('pip install rosbags numpy pyyaml  (in a venv)')
 
-CLOUD_TOPIC = '/ouster/points'
+# A bag from the Jetson carries the relay's copy; one from the robot PC, the raw
+# topic. Same messages, same stamps. The relay is preferred when both exist.
+CLOUD_TOPICS = ('/pallet_approach/lidar', '/ouster/points')
 
 # [measured] docs/SYSTEM.md: the floor in base_footprint, from the camera at two
 # headings. base_footprint itself is 25 mm above the floor, so this is not 0.
@@ -70,11 +72,13 @@ def read_grid(bag: pathlib.Path, store: str) -> tuple[dict, np.ndarray, str]:
             for tr in reader.deserialize(raw, conn.msgtype).transforms:
                 tree.add(tr.header.frame_id, tr.child_frame_id,
                          quat_matrix(tr.transform.translation, tr.transform.rotation))
-        for conn in [c for c in conns if c.topic == CLOUD_TOPIC]:
+        names = {c.topic for c in conns}
+        cloud_topic = next((t for t in CLOUD_TOPICS if t in names), None)
+        for conn in [c for c in conns if c.topic == cloud_topic]:
             for _, _, raw in reader.messages(connections=[conn]):
                 msg = reader.deserialize(raw, conn.msgtype)
                 if msg.height < 2:
-                    sys.exit(f'{bag.name}: {CLOUD_TOPIC} is not organised '
+                    sys.exit(f'{bag.name}: {cloud_topic} is not organised '
                              f'(height {msg.height}); per-beam angles need the grid')
                 offsets = {f.name: (f.offset, DATATYPES[f.datatype])
                            for f in msg.fields}
@@ -92,7 +96,7 @@ def read_grid(bag: pathlib.Path, store: str) -> tuple[dict, np.ndarray, str]:
                 break
             break
     if grid is None:
-        sys.exit(f'{bag.name}: no {CLOUD_TOPIC}')
+        sys.exit(f'{bag.name}: none of {", ".join(CLOUD_TOPICS)}')
     return grid, tree.lookup(GROUND, frame), frame
 
 
@@ -191,7 +195,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('bags', nargs='+', type=pathlib.Path,
-                    help='bare-floor bags with /ouster/points and /tf_static')
+                    help='bare-floor bags with the LiDAR cloud and /tf_static')
     ap.add_argument('--store', default='ROS2_HUMBLE')
     ap.add_argument('--package-root', type=pathlib.Path,
                     default=pathlib.Path(__file__).resolve().parents[1],
