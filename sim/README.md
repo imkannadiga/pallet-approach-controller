@@ -51,7 +51,7 @@ static warp whose spread grows as 0.74 mm x exp(1.46 z) (10 mm at 1.75 m,
 ~25 mm at 2.5 m; an extrapolation past 2.4 m), pockets filled with a surface
 0.2-0.35 m behind the face, and face-to-pocket edges smeared over a few cm with
 in-between depths. Depth is published at up to 10 Hz, and perception is capped
-at the robot's ~3.3 Hz (`sim_overlay.yaml`).
+at params.yaml's `max_rate` (5 Hz; the 3.3 Hz cap of D82 was removed by D92).
 
 ## What is the same as the robot
 

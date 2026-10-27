@@ -125,7 +125,10 @@ def world() -> str:
         model('low_crate', [box('crate', (0.60, 0.40, 0.15), (3.6, 1.15, 0.075), WOOD)]),
         chair('chair', 2.0, 1.4),
         model('bin', [cylinder('bin', 0.18, 0.45, (1.6, -1.3, 0.225), DARK)]),
-        model('cabinet', [box('cabinet', (0.5, 1.0, 0.9), (4.7, 0.3, 0.45), GREY)]),
+        # Behind the pallet for any start up to face_x 3.5 m (its back is then
+        # at 4.70 m). At x 4.7 it overlapped a 3.5 m pallet by 25 cm, and the
+        # merged cluster was rejected as too tall (2026-10-26).
+        model('cabinet', [box('cabinet', (0.5, 1.0, 0.9), (5.3, 0.3, 0.45), GREY)]),
         table('table', 5.0, -2.0),
         shelf('shelf', 7.1, 0.5),
         model('whiteboard', [box('board', (0.05, 1.5, 1.0), (6.0, 2.4, 1.3), WHITE),

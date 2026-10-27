@@ -1189,7 +1189,7 @@ out: it is a 1200 x 1000 pallet with 0.36 m pockets 0.45 m apart over a 25 mm
 bottom deck, which perception would rightly reject. The target stays the
 measured pallet. (Athreya, 2026-10-23)
 
-**D82. The sim's perception is capped at 3.3 Hz**, the rate it reaches on the
+*[Cap removed by D92, 2026-10-26.]* **D82. The sim's perception is capped at 3.3 Hz**, the rate it reaches on the
 robot (`sim_overlay.yaml`), so timing failures appear in the sim too. Sensor
 mounting errors are NOT injected for now: they wait for the auto-calibration
 routine (D74), which they would test. (Athreya, 2026-10-23)
@@ -1309,6 +1309,13 @@ gone a minute later, most likely a person). *Found with it:* behind the robot,
 the D74-corrected LiDAR puts the floor 46 mm low (uncorrected: 31 mm high), so
 the rear check's 3 cm floor margin is not trustworthy there until the
 auto-calibration measures all round the robot. (Athreya, 2026-10-24)
+
+**D92. The sim's perception is no longer capped at 3.3 Hz.** Amends D82: the
+sim runs perception at params.yaml's `max_rate` (5 Hz). *Why:* the cap copied
+the robot's rate from before the 2026-10-23 speed work (80 -> 34 ms a frame on
+the laptop), and runs in the sim kept aborting on the watchdog's estimate
+rate and age at the cap's margin. The Jetson's rate after that work has not
+been measured yet. (Athreya, 2026-10-26)
 
 ## Open, with numbers attached
 

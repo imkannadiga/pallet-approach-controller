@@ -18,7 +18,7 @@ It is also where Gazebo's exact depth is made to look like the ZED's
 (`zed_model`, D80; see zed_depth_model.py): a smooth range-dependent warp,
 filled pockets and smeared edges, as measured on the robot's bags. That costs
 ~50 ms a frame, so frames are published at up to `max_rate` (10 Hz) -- more
-than perception's ~3.3 Hz, which is all it uses.
+than perception's 5 Hz, which is all it uses.
 """
 
 import array
