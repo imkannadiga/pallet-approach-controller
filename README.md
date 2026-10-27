@@ -67,8 +67,8 @@ off a log.
 | Check | Eight safety rules on a stationary robot: GO or NO-GO, always with a reason |
 | Pick up | Forks down to the opening's centre, straight in with a LiDAR distance stop, lift, back out, hand back to Nav2 |
 
-Two run modes: `approach_only` stops at the GO/NO-GO decision; `pickup` runs the
-whole sequence.
+One run mode, `pickup`: the whole sequence. (An approach-only mode was removed
+in D95; a dry run uses the wheels-disconnected launch instead.)
 
 The real pallet was tape-measured, and the measurements replace the EPAL
 nominals everywhere: 1195 × 795 × 145 mm, with two 230 × 100 mm pockets on the
@@ -186,7 +186,6 @@ stateDiagram-v2
     CLOSING --> CHECKING
     CHECKING --> BACKING_OFF: retryable NO-GO (once)
     CHECKING --> NO_GO
-    CHECKING --> GO: approach_only
     CHECKING --> LOWERING: GO
     LOWERING --> INSERTING
     INSERTING --> LIFTING
@@ -280,7 +279,7 @@ tf and the clock.
 ```bash
 ./sim/run_sim.sh build
 ./sim/run_sim.sh up face_x:=3.5 face_y:=0.25 face_yaw:=0.1
-./sim/run_sim.sh run approach_only
+./sim/run_sim.sh run pickup
 # dashboard: http://localhost:8889/dashboard
 ./sim/run_sim.sh stop
 ```
@@ -310,7 +309,7 @@ The flow is sequential: Nav2 drives the robot in front of a pallet and
 finishes, then the pipeline is triggered.
 
 ```bash
-./docker/build_and_run.sh start approach_only    # or: start pickup
+./docker/build_and_run.sh start pickup
 ./docker/build_and_run.sh cancel
 ./docker/build_and_run.sh status
 ```

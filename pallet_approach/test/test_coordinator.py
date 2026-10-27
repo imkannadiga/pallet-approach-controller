@@ -18,7 +18,6 @@ import pytest
 import yaml
 
 from pallet_approach.coordinator import (
-    APPROACH_ONLY,
     DRIVING_STATES,
     MODES,
     PICKUP,
@@ -143,40 +142,6 @@ def inserting(params):
 
 # ------------------------------------------------------------------ modes
 
-def test_approach_only_stops_at_the_decision(params):
-    """What the first driving session runs: ROADMAP says session B is
-    "approach and GO/NO-GO only. Insertion is NOT enabled." A goal mode rather
-    than a configuration flag, so the same stack can do a dry approach and then
-    a full pickup without a restart."""
-    machine = confirming(params, APPROACH_ONLY)
-    machine.on_track(track(), 1.0)
-    for i in range(params['checking_frames']):
-        machine.on_track(track(range_=1.75), 2.0 + 0.2 * i)
-    machine.on_drive(arrived('CLOSE'), 3.0)
-    for i in range(params['checking_frames']):
-        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
-    transition = machine.on_decision(GO, 4.0)
-    assert transition.outcome is Outcome.GO
-    assert transition.state is State.DONE
-    assert transition.stop_robot and transition.drive is None
-    assert transition.fork is None, 'nothing may be lowered'
-    assert 'nothing was inserted' in transition.reason
-
-
-def test_approach_only_still_reports_a_no_go(params):
-    """The dry approach has to be able to fail, or it proves nothing about the
-    rules it exists to exercise."""
-    machine = confirming(params, APPROACH_ONLY)
-    machine.on_track(track(), 1.0)
-    for i in range(params['checking_frames']):
-        machine.on_track(track(range_=1.75), 2.0 + 0.2 * i)
-    machine.on_drive(arrived('CLOSE'), 3.0)
-    for i in range(params['checking_frames']):
-        machine.on_track(track(range_=1.75), 3.1 + 0.2 * i)
-    transition = machine.on_decision(no_go('pocket_count'), 4.0)
-    assert transition.outcome is Outcome.NO_GO
-
-
 def test_pickup_is_the_default_mode(params):
     machine = Coordinator(params)
     machine.trigger(0.0)
@@ -194,7 +159,16 @@ def test_an_unknown_mode_is_refused_rather_than_defaulted(params):
 
 
 def test_the_modes_are_the_ones_the_action_documents(params):
-    assert MODES == (PICKUP, APPROACH_ONLY)
+    assert MODES == (PICKUP,)
+
+
+def test_approach_only_is_refused_now_that_it_is_removed(params):
+    """D95: the mode was removed. A leftover client sending it must be refused,
+    not quietly run as a pickup."""
+    machine = Coordinator(params)
+    transition = machine.trigger(0.0, 'approach_only')
+    assert not transition.changed
+    assert machine.state is State.IDLE
 
 
 # ----------------------------------------------------------- the happy path

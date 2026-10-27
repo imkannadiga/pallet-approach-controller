@@ -4,9 +4,9 @@
 #   ./sim/run_sim.sh build                 # both images (the stack's is the robot's own Dockerfile)
 #   ./sim/run_sim.sh up [launch args]      # Gazebo, then the stack, both detached
 #   ./sim/run_sim.sh up face_x:=2.5 face_y:=0.3 face_yaw:=0.2
-#   ./sim/run_sim.sh start approach_only   # trigger a run, as Nav2's caller would
+#   ./sim/run_sim.sh start pickup         # trigger a run, as Nav2's caller would
 #   ./sim/run_sim.sh start pickup
-#   ./sim/run_sim.sh run approach_only    # start and follow it to the result
+#   ./sim/run_sim.sh run pickup           # start and follow it to the result
 #   ./sim/run_sim.sh cancel
 #   ./sim/run_sim.sh result                # wait for and print /pallet_approach/result
 #   ./sim/run_sim.sh status                # /coordinator/status and /health, once
@@ -139,7 +139,7 @@ case "${1:-}" in
     echo "started $GAZEBO and $STACK on domain $DOMAIN (localhost only)."
     echo "  give Gazebo ~20 s to spawn the robot, then:"
     echo "  ./sim/run_sim.sh status"
-    echo "  ./sim/run_sim.sh start approach_only"
+    echo "  ./sim/run_sim.sh start pickup"
     echo "  http://localhost:8889/dashboard"
     if [ "$GUI" = true ] && [ "${SIM_OPEN_BROWSER:-true}" = true ]; then
       # The dashboard next to the Gazebo window: once MediaMTX is serving.
@@ -152,14 +152,14 @@ case "${1:-}" in
     ;;
 
   start)
-    mode=${2:?usage: start approach_only|pickup}
+    mode=${2:?usage: start pickup}
     docker cp "$REPO_ROOT/pallet_approach/tools/trigger.py" "$STACK:/tmp/trigger.py" >/dev/null
     in_stack "python3 /tmp/trigger.py $mode"
     ;;
 
   run)
     # Start a run and follow it to its result, one line per state change.
-    mode=${2:?usage: run approach_only|pickup [timeout_s]}
+    mode=${2:?usage: run pickup [timeout_s]}
     docker cp "$REPO_ROOT/sim/tools/follow_run.py" "$STACK:/tmp/follow_run.py" >/dev/null
     in_stack "python3 -u /tmp/follow_run.py $mode ${3:-1800}"
     ;;

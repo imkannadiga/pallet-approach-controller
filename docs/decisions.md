@@ -798,7 +798,7 @@ the first driving session" to "when convenient". Stated here rather than left
 implied, because an inert safety mechanism that looks active is worse than an
 absent one.
 
-**D56. `approach_only` is a goal mode, not a configuration flag.** `mode:
+*[Mode removed by D95, 2026-10-27.]* **D56. `approach_only` is a goal mode, not a configuration flag.** `mode:
 approach_only` runs the whole approach and stops at the GO/NO-GO decision with
 outcome `GO`, inserting nothing. `pickup` runs the whole sequence. An unknown
 mode is **refused**, not defaulted. *Why a mode:* ROADMAP's lab session B is
@@ -1344,6 +1344,19 @@ the frame rule caught it earlier. A first version counted growth only within
 the last window and never caught it at all (drifted 0.69 m, NO_GO at the
 standoff); fixed before use, with test_a_sign_flipped_gain_is_caught as the
 guard. (Athreya, 2026-10-26)
+
+**D95. `pickup` is the only mode; `approach_only` is removed.** Supersedes the
+mode part of D56. *Why:* the approach-only mode existed for the first driving
+session, when insertion was not yet enabled. The robot now runs the full pickup
+from the start, and the dry rehearsal is the wheels-disconnected launch
+(`cmd_vel:=/cmd_vel_dry`), not a shorter sequence. *What changed:* `MODES` is
+`(PICKUP,)`; `Outcome.GO` is removed, since no path produces it; `trigger()`
+refuses `approach_only` as an unknown mode; the action's `mode` field stays, so
+the interface keeps its shape, and accepts only `pickup` (an empty string also
+means pickup). *Open:* the D83 sim acceptance (GO in 9 of 10 runs) was written
+for approach-only and needs a criterion for pickup runs (INSERTED?), and the lab
+session plan that relied on approach-only needs its first-session steps
+rewritten. (Athreya, 2026-10-27)
 
 ## Open, with numbers attached
 

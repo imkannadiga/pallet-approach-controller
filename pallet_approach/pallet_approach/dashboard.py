@@ -93,10 +93,8 @@ TRACKER_STATUS_COLORS = {
     'REJECTED': RED,
 }
 
-# Outcome -> colour, mirroring go_nogo's own bias: GO/INSERTED read as success,
-# everything else (including the reserved GO-without-insertion label used by
-# approach_only... no, GO itself IS the success label there) reads as a stop.
-GOOD_OUTCOMES = ('INSERTED', 'GO')
+# Outcome -> colour. INSERTED reads as success; everything else reads as a stop.
+GOOD_OUTCOMES = ('INSERTED',)
 BAD_OUTCOMES = ('NO_GO', 'NO_PALLET', 'ABORTED')
 
 

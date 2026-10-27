@@ -31,7 +31,6 @@ behaviour tree that has just finished a navigation goal and has nothing to wait
 for:
 
     ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: pickup}"
-    ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: approach_only}"
     ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty "{}"
 
 A topic trigger is fire-and-forget, which means two things have to exist

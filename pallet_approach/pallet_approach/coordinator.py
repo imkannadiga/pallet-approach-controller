@@ -17,7 +17,6 @@ transitions, drive commands, action feedback and velocity commands.
     CLOSING       servo onto the pocket centre line, stop at the standoff
      v
     CHECKING      stopped; the GO/NO-GO rules            -> NO_GO (or one retry)
-     |  GO, and mode is approach_only -> DONE, outcome GO
      v  GO
     LOWERING      forks to pocket height
      v
@@ -61,22 +60,17 @@ from pallet_approach.model import Decision
 
 __all__ = ['State', 'Outcome', 'DriveRequest', 'TrackInfo', 'DriveInfo',
            'ForkInfo', 'Transition', 'Coordinator', 'DRIVING_STATES',
-           'TERMINAL_STATES', 'MODES', 'PICKUP', 'APPROACH_ONLY']
+           'TERMINAL_STATES', 'MODES', 'PICKUP']
 
 PICKUP = 'pickup'
-"""The whole thing: approach, check, lower, insert, lift, back out."""
+"""The whole thing: approach, check, lower, insert, lift, back out.
 
-APPROACH_ONLY = 'approach_only'
-"""Stop at the GO/NO-GO decision and report it. Nothing is inserted.
-
-This is what lab session B runs (ROADMAP: "first driving: approach and GO/NO-GO
-only. Insertion is **not** enabled."). It is a goal mode rather than a
-configuration flag because it is a property of one run, not of the robot --
-the same stack, triggered twice, should be able to do a dry approach and then a
-full pickup without a restart.
+It is the only mode. An approach-only mode existed for the first driving
+session and was removed on 2026-10-27 (D95); a dry run now uses the
+wheels-disconnected launch (`cmd_vel:=/cmd_vel_dry`), not a shorter sequence.
 """
 
-MODES = (PICKUP, APPROACH_ONLY)
+MODES = (PICKUP,)
 
 
 class State(Enum):
@@ -109,9 +103,6 @@ TERMINAL_STATES = (State.DONE, State.ABORTED)
 class Outcome(Enum):
     INSERTED = 'INSERTED'
     """The whole sequence completed: forks in, lifted, backed out."""
-
-    GO = 'GO'
-    """The rules passed and the run was asked to stop there (APPROACH_ONLY)."""
 
     NO_GO = 'NO_GO'
     NO_PALLET = 'NO_PALLET'
@@ -345,9 +336,8 @@ class Coordinator:
     def trigger(self, now: float, mode: str = PICKUP) -> Transition:
         """A goal arrived. Only legal from IDLE or a terminal state.
 
-        `mode` is PICKUP or APPROACH_ONLY; an unknown mode is refused here
-        rather than defaulting, because the difference between the two is
-        whether the robot drives into the pallet.
+        `mode` must be PICKUP. An unknown mode is refused here rather than
+        defaulted to.
         """
         if self.state not in (State.IDLE, *TERMINAL_STATES):
             return self._stay('a run is already in progress')
@@ -494,11 +484,6 @@ class Coordinator:
         if self.state is not State.CHECKING:
             return self._stay()
         if decision.go:
-            if self.mode == APPROACH_ONLY:
-                return self._finish(
-                    now, Outcome.GO,
-                    f'GO: {decision.reason}. Stopping at the decision, as '
-                    f'asked -- nothing was inserted.')
             return self._at(State.LOWERING, now, stop=True, drive=None,
                             fork='LOWER', perception=True,
                             reason=f'GO: {decision.reason}')

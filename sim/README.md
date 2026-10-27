@@ -9,7 +9,7 @@ lifecycle, tf, the clock, the launch file, the container and the dashboard.
 ./sim/run_sim.sh build          # once; see "Prerequisites"
 ./sim/run_sim.sh up             # Gazebo + the stack, detached
 ./sim/run_sim.sh status         # /coordinator/status and /health
-./sim/run_sim.sh start approach_only
+./sim/run_sim.sh start pickup
 ./sim/run_sim.sh result
 ./sim/run_sim.sh start pickup
 ./sim/run_sim.sh cancel
