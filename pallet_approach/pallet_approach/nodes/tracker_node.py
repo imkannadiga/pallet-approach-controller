@@ -99,7 +99,8 @@ class TrackerNode(Node):
         self.declare_parameter('pallet.pallet_height', 0.145)
         for name, default in (
             ('window', 10), ('min_window_frames', 5), ('confirm_frames', 5),
-            ('min_confidence', 0.6), ('max_jump', 0.15), ('max_turn', 0.20),
+            ('min_confidence', 0.6), ('max_jump', 0.15), ('max_jump_per_m2', 0.016),
+            ('max_turn', 0.20),
             ('require_same_side', True), ('odom_match_tolerance', 0.05),
             ('fusion_memory', 0.95), ('fusion_min_range', 0.5),
             ('lidar.search_ahead', 0.60), ('lidar.search_behind', 1.00),
@@ -124,6 +125,7 @@ class TrackerNode(Node):
             'confirm_frames': get('confirm_frames'),
             'min_confidence': get('min_confidence'),
             'max_jump': get('max_jump'),
+            'max_jump_per_m2': get('max_jump_per_m2'),
             'max_turn': get('max_turn'),
             'require_same_side': get('require_same_side'),
             'fusion_memory': get('fusion_memory'),

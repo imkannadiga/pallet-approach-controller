@@ -17,7 +17,7 @@ from pallet_approach.tracker import Tracker, cross_check_face
 
 PARAMS = {
     'window': 10, 'min_window_frames': 5, 'confirm_frames': 5,
-    'min_confidence': 0.6, 'max_jump': 0.15, 'max_turn': 0.20,
+    'min_confidence': 0.6, 'max_jump': 0.15, 'max_jump_per_m2': 0.016, 'max_turn': 0.20,
     'require_same_side': True,
     'floor_z': -0.025, 'pallet_height': 0.145,
     'search_ahead': 0.60, 'search_behind': 1.00, 'half_width': 0.70,
@@ -383,3 +383,12 @@ def test_the_memory_bounds_how_far_back_the_average_reaches():
     for i in range(3, 13):
         tracker.update(estimate(lateral=0.0), Pose2D(0.0, 0.0, 0.0), 0.2 * i)
     assert abs(tracker.track.center[1]) < 0.001
+
+
+def test_the_jump_gate_grows_with_range_like_stereo_depth_error():
+    """D93: 0.15 + 0.016 * range^2. Far away a re-measured pallet may move
+    further and still be the same pallet; at the standoff it may not."""
+    from pallet_approach.tracker import jump_limit
+    assert jump_limit(0.0, PARAMS) == pytest.approx(0.15)
+    assert jump_limit(1.75, PARAMS) == pytest.approx(0.199, abs=1e-3)
+    assert jump_limit(3.5, PARAMS) == pytest.approx(0.346, abs=1e-3)

@@ -1047,6 +1047,13 @@ pallet_tracker:
     # 0.15 m is the same gate the coordinator used for its outlier rejection
     # and is about ten times the ~13 mm spacing error measured on real bags.
     max_jump: 0.15            # m
+    # [choice, Athreya 2026-10-26] D93. The gate grows with range like a
+    # stereo camera's depth error, which goes with range^2: limit = max_jump +
+    # this x range^2 -- 0.20 m at the 1.75 m standoff, 0.25 m at 2.5 m, 0.35 m
+    # at 3.5 m. With the fixed 0.15 m, a turn at 3.5 m in the sim (worst-case
+    # depth error kept) moved the estimate 18-24 cm and every frame after it
+    # was rejected as a different object.
+    max_jump_per_m2: 0.016    # m / m^2
     max_turn: 0.20            # rad, ~11 deg
     # A pallet does not turn over between two frames 200 ms apart, so a side
     # that changes means one of the two classifications is wrong -- and which

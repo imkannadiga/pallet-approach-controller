@@ -1317,6 +1317,18 @@ the laptop), and runs in the sim kept aborting on the watchdog's estimate
 rate and age at the cap's margin. The Jetson's rate after that work has not
 been measured yet. (Athreya, 2026-10-26)
 
+**D93. The tracker's jump gate grows with range like stereo depth error.**
+`tracker.max_jump_per_m2: 0.016`: an estimate may sit up to 0.15 m + 0.016 m/m^2
+x range^2 from the track (0.20 m at the 1.75 m standoff, 0.25 m at 2.5 m, 0.35 m
+at 3.5 m). *Why:* a stereo camera's depth error grows with range^2 (depth comes
+from image disparity). In the sim from 3.5 m with the worst-case depth model
+kept (D80), the estimate moved 18-24 cm in odom as the robot turned and every
+frame after was rejected as "a different object", aborting runs although the
+pallet and both pockets were found in every frame -- also at 30 Hz. Not the
+ROI crop: the pallet stayed within 14 deg of straight ahead, inside the crop's
++-23 deg at 3.5 m. Chosen over re-anchoring the track (a crate could take it
+over) and over limiting turns at range. (Athreya, 2026-10-26)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

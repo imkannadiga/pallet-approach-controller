@@ -165,6 +165,22 @@ def cross_check_face(
                 f'from the camera plane, limit {limit * 1000:.0f} mm'))
 
 
+def jump_limit(range_: float, params: dict) -> float:
+    """How far a new estimate may sit from the track and still be the same
+    pallet, at this range (D93).
+
+    A stereo camera's depth error grows with the square of the distance:
+    depth comes from the shift between the two images, and far away a fraction
+    of a pixel of shift is many centimetres. So the gate does too:
+    `max_jump + max_jump_per_m2 * range^2`. A fixed 0.15 m rejected every
+    frame after a turn at 3.5 m in the sim with the measured depth error
+    (estimates moved 18-24 cm), and the run was lost although the pallet was
+    found in every frame.
+    """
+    return (float(params['max_jump'])
+            + float(params.get('max_jump_per_m2', 0.0)) * range_ ** 2)
+
+
 def _face_axis(normal: np.ndarray) -> np.ndarray:
     """Horizontal unit vector along the face, perpendicular to its normal."""
     axis = np.array([-normal[1], normal[0], 0.0])
@@ -291,11 +307,12 @@ class Tracker:
         if self.track is not None:
             jump = float(np.linalg.norm(in_odom[:2] - self.track.center[:2]))
             turn = abs(wrap_angle(yaw_in_odom - self.track.yaw))
-            if jump > float(self.params['max_jump']):
+            limit = jump_limit(float(np.hypot(center[0], center[1])), self.params)
+            if jump > limit:
                 self.offered.append(False)
                 self.consecutive = 0
                 self.reason = (f'{jump * 100:.0f} cm from the track, limit '
-                               f'{float(self.params["max_jump"]) * 100:.0f} cm')
+                               f'{limit * 100:.0f} cm')
                 return self.track
             if turn > float(self.params['max_turn']):
                 self.offered.append(False)
