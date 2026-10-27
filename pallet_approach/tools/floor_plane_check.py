@@ -221,8 +221,18 @@ def describe(normal, offset) -> dict:
 # ----------------------------------------------------------------------- main
 
 def analyse(path: pathlib.Path, typestore, rmin: float, rmax: float,
-            correction=None):
+            correction=None, donor=None):
     tree, clouds, yaw = read_bag(path, typestore)
+    if donor is not None:
+        # A bag can arrive with part of /tf_static missing (the recorder joined
+        # the latched topic before it had discovered every publisher). The
+        # missing edges are fixed to the robot, so a sibling bag has them.
+        borrowed = [c for c in donor.parent if c not in tree.parent]
+        for child in borrowed:
+            tree.add(donor.parent[child], child, donor.edge[child])
+        if borrowed:
+            print(f'  {path.name}: borrowed static transforms for {", ".join(borrowed)} '
+                  f'-- an ASSUMPTION that nothing was moved')
     results = []
     for frame, pts in clouds.items():
         try:
@@ -256,6 +266,8 @@ def main() -> int:
     ap.add_argument('--rmin', type=float, default=1.0, help='metres from the robot')
     ap.add_argument('--rmax', type=float, default=4.0)
     ap.add_argument('--typestore', default='ROS2_HUMBLE')
+    ap.add_argument('--borrow-tf-from', type=pathlib.Path,
+                    help='fill in static transforms a bag is missing from this bag')
     ap.add_argument('--correct', action='store_true',
                     help="apply the camera extrinsic correction from "
                          "config/params.yaml, to check the residual tilt")
@@ -287,9 +299,10 @@ def main() -> int:
           f'{"height":>8} {"rms":>7} {"yaw":>8}  points')
     print('-' * 100)
 
+    donor = read_bag(args.borrow_tf_from, typestore)[0] if args.borrow_tf_from else None
     rows = []
     for bag in args.bags:
-        for r in analyse(bag, typestore, args.rmin, args.rmax, correction):
+        for r in analyse(bag, typestore, args.rmin, args.rmax, correction, donor):
             r['bag'] = bag.name
             rows.append(r)
             print(f'{bag.name:26} {r["kind"]:7} {r["pitch_deg"]:+8.3f} '
@@ -303,6 +316,10 @@ def main() -> int:
 
     decompose(rows)
     return 0
+
+
+RMS_LIMIT = {'camera': 0.004, 'lidar': 0.020}
+"""Metres. Floor fits above these are not floors; see `decompose`."""
 
 
 def decompose(rows) -> None:
@@ -323,11 +340,24 @@ def decompose(rows) -> None:
     """
     for kind in ('camera', 'lidar'):
         group = [r for r in rows if r['kind'] == kind and not math.isnan(r['yaw'])]
+        # A floor fit with a large residual is not a floor: at a heading where
+        # the sensor faces a wall or furniture a metre away, the 1-4 m window
+        # holds that instead (a camera fit of pitch -10 deg, height +0.38 m,
+        # rms 70 mm came from exactly that). Good fits sit at 1-2 mm (camera) and
+        # about 10 mm (LiDAR, whose beams are sparse); these limits are
+        # heuristic, and what is dropped is printed.
+        limit = RMS_LIMIT[kind]
+        dropped = [r for r in group if r['rms'] > limit]
+        for r in dropped:
+            print(f'\n{kind}: dropping {r["bag"]} -- floor fit rms {r["rms"] * 1000:.1f} mm '
+                  f'(limit {limit * 1000:.0f} mm): the window held something other than the floor')
+        group = [r for r in group if r['rms'] <= limit]
         if len(group) < 2:
             continue
         yaws = [r['yaw'] for r in group]
-        separation = max(abs(math.degrees(a - b)) for a in yaws for b in yaws)
-        separation = min(separation, 360 - separation) if separation > 180 else separation
+        # The angle BETWEEN two headings, each pair wrapped to 0-180, then the widest.
+        separation = max(min(abs(math.degrees(a - b)) % 360, 360 - abs(math.degrees(a - b)) % 360)
+                         for a in yaws for b in yaws)
         if separation < 30:
             print(f'\n{kind}: headings only {separation:.0f} deg apart -- too close '
                   f'to separate a mounting error from a floor slope')
@@ -357,9 +387,14 @@ def decompose(rows) -> None:
               f'roll {-math.degrees(math.atan(mount[1])):+.3f}')
         print(f'   floor slope, world-fixed     {size(world):6.3f} deg')
         if len(group) > 2:
+            # Judged against what is being separated: the residual has to be
+            # small next to the floor slope, or the split is not trustworthy.
             worst = float(np.max(np.abs(np.degrees(np.arctan(residual)))))
-            print(f'   fit residual                 worst {worst:.3f} deg over {len(group)} headings '
-                  f'({"consistent" if worst < 0.05 else "NOT consistent: the floor or the heading differs between bags"})')
+            slope = size(world)
+            verdict = ('consistent' if worst < 0.5 * slope else
+                       'NOT consistent: the floor or the heading differs between bags')
+            print(f'   fit residual                 worst {worst:.3f} deg against a {slope:.3f} deg '
+                  f'slope ({verdict})')
         heights = [r['height'] for r in group]
         print(f'   floor height                 {np.mean(heights):+.4f} m   '
               f'spread {1000 * (max(heights) - min(heights)):.1f} mm')

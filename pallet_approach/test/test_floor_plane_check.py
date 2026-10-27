@@ -21,7 +21,8 @@ def rows_for(mount, world, yaws_deg, noise=0.0, seed=0):
         c, s = math.cos(yaw), math.sin(yaw)
         g = np.array(mount) + np.array([[c, s], [-s, c]]) @ np.array(world)
         g = g + rng.normal(0, noise, 2)
-        out.append({'kind': 'lidar', 'yaw': yaw, 'height': 0.004,
+        out.append({'kind': 'lidar', 'yaw': yaw, 'height': 0.004, 'rms': 0.010,
+                    'bag': f'b{len(out)}',
                     'pitch_deg': math.degrees(math.atan(g[0])),
                     'roll_deg': -math.degrees(math.atan(g[1]))})
     return out
@@ -54,3 +55,21 @@ def test_a_floor_that_changes_between_bags_is_flagged(capsys):
 def test_headings_too_close_together_are_refused(capsys):
     F.decompose(rows_for(MOUNT, WORLD, [0, 10]))
     assert 'too close' in capsys.readouterr().out
+
+
+def test_a_fit_that_is_not_a_floor_is_dropped_not_used(capsys):
+    rows = rows_for(MOUNT, WORLD, [0, 90, 176, -90])
+    rows[1]['rms'] = 0.07                # a wall in the window
+    rows[1]['pitch_deg'] = -10.0         # and the nonsense tilt that comes with it
+    F.decompose(rows)
+    out = capsys.readouterr().out
+    assert 'dropping b1' in out
+    assert 'pitch +0.090' in out and 'roll -0.130' in out     # unharmed by it
+
+
+def test_the_widest_separation_is_measured_between_pairs_across_the_branch_cut(capsys):
+    # headings 0, -176, +89, -94 degrees. The widest pair is +89 and -94: 183
+    # degrees apart, i.e. 177 once wrapped. Wrapping only the largest RAW
+    # difference gave 95 here (265 wrapped), which is what this guards against.
+    F.decompose(rows_for(MOUNT, WORLD, [0, -176, 89, -94]))
+    assert 'up to 177 deg apart' in capsys.readouterr().out
