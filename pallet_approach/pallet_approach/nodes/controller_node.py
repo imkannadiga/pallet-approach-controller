@@ -127,7 +127,7 @@ class ControllerNode(LifecycleNode):
             ('closing.range_tolerance', 0.03), ('closing.arrival_yaw', 0.035),
             ('closing.resume_range', 0.10), ('closing.min_run_up', 3.0),
             ('closing.residual_target', 0.020), ('closing.run_up_margin', 0.20),
-            ('closing.divergence_frames', 5),
+            ('closing.divergence_frames', 8), ('closing.divergence_window', 1.6),
             ('closing.min_divergence_growth', 0.040),
             ('reverse.speed', 0.05), ('reverse.max_unverified', 0.50),
             ('reverse.side_margin', 0.10), ('reverse.min_height', 0.03),
@@ -450,7 +450,7 @@ class ControllerNode(LifecycleNode):
         new_frame = self._frames_seen != self._frames_stepped
         self._frames_stepped = self._frames_seen
         result = self._executor.step(geometry=geometry, lidar_points=points,
-                                     new_frame=new_frame)
+                                     new_frame=new_frame, now=self._now())
         if result.arrived and not result.abort:
             self.get_logger().info(f'{self._executor.mode} complete: '
                                    f'{result.reason}',

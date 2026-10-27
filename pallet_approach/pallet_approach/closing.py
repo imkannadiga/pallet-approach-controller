@@ -460,21 +460,43 @@ class DivergenceDetector:
     at the 0.10 m/s closing speed is 160 mm of extra travel before a real
     divergence is caught. Worth it against a one-in-four chance of aborting a
     good run.
+
+    **Since D94 it judges a time window, not a frame count, when `window` is
+    set**: frames are averaged over steps of `window / frames` seconds, and
+    each step's mean counts as one frame of the rule above. At 5 Hz with a
+    1.6 s window that is the old eight-frame rule; at 30 Hz it still means
+    1.6 s rather than a quarter of a second. And the threshold grows with range like
+    stereo depth error (`min_growth * (range / reference_range)^2`, never
+    below `min_growth`): a re-measured pallet line at 3.5 m moves 9-13 cm in
+    the sim while the robot turns, which is noise there and divergence at the
+    standoff.
     """
 
-    def __init__(self, frames: int, min_growth: float, min_offset: float = 0.0):
+    def __init__(self, frames: int, min_growth: float, min_offset: float = 0.0,
+                 window: float | None = None, reference_range: float | None = None):
         self.frames = int(frames)
         self.min_growth = float(min_growth)
         self.min_offset = float(min_offset)
+        self.window = None if window is None else float(window)
+        self.reference_range = reference_range
         self.reset()
 
     def reset(self) -> None:
         self._last: float | None = None
         self._start: float | None = None
         self.consecutive = 0
+        self._history: list[tuple[float, float]] = []
 
-    def update(self, offset: float) -> tuple[bool, str]:
+    def growth_needed(self, range_: float | None) -> float:
+        if not self.reference_range or range_ is None or not math.isfinite(range_):
+            return self.min_growth
+        return self.min_growth * max(1.0, (float(range_) / float(self.reference_range)) ** 2)
+
+    def update(self, offset: float, now: float | None = None,
+               range_: float | None = None) -> tuple[bool, str]:
         """Offer one frame's lateral offset. Returns (diverging, detail)."""
+        if self.window is not None and now is not None:
+            return self._update_window(abs(float(offset)), float(now), range_)
         magnitude = abs(float(offset))
         if magnitude < self.min_offset:
             # Already where it needs to be. Growth down here is noise, and the
@@ -496,6 +518,40 @@ class DivergenceDetector:
                           f'{growth * 1000:.0f} mm in total, now '
                           f'{magnitude * 1000:.0f} mm')
         return False, (f'{self.consecutive} growing frame(s), '
+                       f'{growth * 1000:.0f} mm')
+
+    def _update_window(self, magnitude: float, now: float, range_) -> tuple[bool, str]:
+        """The frame rule on fixed-duration steps: each step's mean |offset| is
+        one "frame". Growth is counted from the START of the rising streak, as
+        in the frame rule -- a steady drift-off keeps adding up however long it
+        lasts. (A first version measured only the last window, and a
+        sign-flipped controller drifted 0.69 m off the line uncaught.)"""
+        if magnitude < self.min_offset:
+            self.reset()
+            return False, ''
+        width = self.window / self.frames
+        if not self._history:
+            self._bin_start, self._history = now, [magnitude]
+            return False, ''
+        if now < self._bin_start + width:
+            self._history.append(magnitude)
+            return False, ''
+        mean = sum(self._history) / len(self._history)
+        gap = now - (self._bin_start + width) >= width   # a whole step with no frames
+        self._bin_start, self._history = now, [magnitude]
+        if gap or self._last is None or mean <= self._last:
+            self._last = self._start = mean
+            self.consecutive = 0
+            return False, ''
+        self.consecutive += 1
+        self._last = mean
+        growth = mean - self._start
+        needed = self.growth_needed(range_)
+        if self.consecutive >= self.frames and growth >= needed:
+            return True, (f'lateral offset grew for {self.consecutive * width:.1f} s, '
+                          f'{growth * 1000:.0f} mm in total (limit {needed * 1000:.0f} mm '
+                          f'at this range), now {magnitude * 1000:.0f} mm')
+        return False, (f'growing for {self.consecutive * width:.1f} s, '
                        f'{growth * 1000:.0f} mm')
 
 

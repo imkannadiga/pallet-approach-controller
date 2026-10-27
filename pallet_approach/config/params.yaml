@@ -142,6 +142,12 @@
       # travelled -- which is robust to noise over a long baseline and would
       # catch a divergence in half the frames. That is a decision, not a tweak.
       divergence_frames: 8
+      # [choice, Athreya 2026-10-26] D94. The 8 steps span this many seconds
+      # (8 frames at 5 Hz), whatever the frame rate: at 30 Hz eight frames were
+      # a quarter of a second. And min_divergence_growth below applies at the
+      # standoff; further out it grows with (range / standoff)^2 like stereo
+      # depth error -- 80 mm at 2.5 m, 160 mm at 3.5 m.
+      divergence_window: 1.6            # s
       # [choice, Athreya 2026-10-23] D86: 0.010 -> 0.040. With the ZED's
       # measured depth warp (D80) the measured offset wanders 13-19 mm over 8
       # frames on its own at 2-2.5 m, and two sim runs in 10 aborted as

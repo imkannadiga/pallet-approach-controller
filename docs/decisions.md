@@ -1329,6 +1329,22 @@ ROI crop: the pallet stayed within 14 deg of straight ahead, inside the crop's
 +-23 deg at 3.5 m. Chosen over re-anchoring the track (a crate could take it
 over) and over limiting turns at range. (Athreya, 2026-10-26)
 
+**D94. The divergence check runs on time, and its growth threshold scales
+with range like stereo depth error.** `closing.divergence_window: 1.6` s: frames
+are averaged over 8 steps of 0.2 s and each step counts as one frame of the
+existing rule (8 rising steps, growth counted from the streak's start).
+`min_divergence_growth` (40 mm) applies at the standoff and is multiplied by
+(range / 1.75 m)^2 beyond it: 82 mm at 2.5 m, 160 mm at 3.5 m. *Why:* with
+D93 the tracker kept the pallet through a turn at 3.5 m, and the controller
+then aborted 2 of 3 sim runs as "diverging" on 88-128 mm of growth -- the
+re-measured line moving with the depth error, not the robot. And 8 frames at
+30 Hz is a quarter of a second, not 1.6 s. *Cost, measured:* a controller with a
+flipped gain from 3.5 m is caught at 244 mm of offset (2.6 s of drift), where
+the frame rule caught it earlier. A first version counted growth only within
+the last window and never caught it at all (drifted 0.69 m, NO_GO at the
+standoff); fixed before use, with test_a_sign_flipped_gain_is_caught as the
+guard. (Athreya, 2026-10-26)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

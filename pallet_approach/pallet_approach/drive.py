@@ -82,7 +82,7 @@ def executor_params(get) -> dict:
         'max_turn_in_place', 'closing_speed', 'taper_range',
         'range_tolerance', 'arrival_yaw', 'resume_range', 'min_run_up',
         'residual_target', 'run_up_margin',
-        'divergence_frames', 'min_divergence_growth'))
+        'divergence_frames', 'min_divergence_growth', 'divergence_window'))
     closing_params['target_range'] = get('standoff_distance')
     closing_params['carriage_x'] = get('forks.carriage_x')
     closing_params['tine_length'] = get('forks.tine_length')
@@ -136,10 +136,10 @@ class DriveExecutor:
         self._divergence = self._new_detector()
 
     def _new_detector(self):
+        c = self.params['closing']
         return closing.DivergenceDetector(
-            self.params['closing']['divergence_frames'],
-            self.params['closing']['min_divergence_growth'],
-            self.params['closing']['residual_target'])
+            c['divergence_frames'], c['min_divergence_growth'], c['residual_target'],
+            window=c.get('divergence_window'), reference_range=c.get('target_range'))
 
     def start(self, request: Request) -> None:
         """Begin a new move. Called when the requested mode changes.
@@ -171,6 +171,7 @@ class DriveExecutor:
         geometry: closing.Geometry | None = None,
         lidar_points: np.ndarray | None = None,
         new_frame: bool = True,
+        now: float | None = None,
     ) -> Result:
         """Decide this frame's command.
 
@@ -186,7 +187,7 @@ class DriveExecutor:
         if self.done or self.abort:
             return Result(ZERO, self.done, self.abort, self.reason)
         if self.mode == 'CLOSE':
-            return self._close(geometry, new_frame)
+            return self._close(geometry, new_frame, now)
         if self.mode in ('REVERSE', 'BACKOUT'):
             return self._straight(lidar_points)
         if self.mode == 'INSERT':
@@ -197,13 +198,13 @@ class DriveExecutor:
 
     # ------------------------------------------------------------- the modes
 
-    def _close(self, geometry, new_frame: bool = True) -> Result:
+    def _close(self, geometry, new_frame: bool = True, now: float | None = None) -> Result:
         if geometry is None:
             self.reason = 'no confirmed pallet estimate'
             return Result(ZERO, False, False, self.reason,
                           phase=self.phase.value)
 
-        diverging, detail = (self._divergence.update(geometry.offset)
+        diverging, detail = (self._divergence.update(geometry.offset, now, geometry.range)
                              if new_frame else (False, ''))
         if diverging:
             self.abort = True
