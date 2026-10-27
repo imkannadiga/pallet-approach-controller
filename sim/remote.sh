@@ -2,9 +2,10 @@
 # Run the sim on the GPU machine and watch it from this laptop.
 #
 #   ./sim/remote.sh up [launch args]    # sync, build if needed, start
-#   ./sim/remote.sh run approach_only   # start a run and follow it here
+#   ./sim/remote.sh run pickup         # start a run and follow it here
 #   ./sim/remote.sh watch               # tunnel; then open http://localhost:8889/dashboard
 #   ./sim/remote.sh stop
+#   ./sim/remote.sh bags SPEC [seconds]  # record a set of bags there, copy them to ~/bags/sim
 #   ./sim/remote.sh <anything else>     # passed to run_sim.sh over there
 #
 # `watch` blocks while the tunnel is open; Ctrl-C closes it. Run it in a second
@@ -30,7 +31,7 @@ JUMP=()
 SSH=(ssh -A "${JUMP[@]}" "$REMOTE_HOST")
 
 sync() {
-  rsync -az --delete --exclude .git --exclude __pycache__ --exclude venv \
+  rsync -az --delete --exclude .git --exclude __pycache__ --exclude venv --exclude sim/bags \
     -e "ssh ${JUMP[*]}" "$REPO_ROOT/" "$REMOTE_HOST:$REMOTE_DIR/"
 }
 
@@ -43,6 +44,19 @@ case "${1:-}" in
     "${SSH[@]}" "cd $REMOTE_DIR && ./sim/run_sim.sh stop >/dev/null && ./sim/run_sim.sh build >/tmp/sim_build.log 2>&1 \
       || { tail -20 /tmp/sim_build.log; exit 1; }; ./sim/run_sim.sh up $*"
     echo "then: ./sim/remote.sh watch   (in another terminal)"
+    ;;
+  bags)
+    # SPEC is a file under sim/tools (see bag_set_baseline.txt). Each bag is a
+    # fresh sim, so a set of 20 takes the better part of half an hour.
+    shift
+    sync
+    commit=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+    git -C "$REPO_ROOT" diff --quiet 2>/dev/null || commit="$commit+uncommitted"
+    "${SSH[@]}" "cd $REMOTE_DIR && ./sim/run_sim.sh stop >/dev/null 2>&1; ./sim/run_sim.sh build >/tmp/sim_build.log 2>&1 \
+      || { tail -20 /tmp/sim_build.log; exit 1; }; REPO_COMMIT='$commit' ./sim/tools/record_bags.sh $*"
+    mkdir -p "$HOME/bags/sim"
+    rsync -az -e "ssh ${JUMP[*]}" "$REMOTE_HOST:$REMOTE_DIR/sim/bags/" "$HOME/bags/sim/"
+    echo "bags are in $HOME/bags/sim"
     ;;
   watch)
     for port in 8889 8189; do

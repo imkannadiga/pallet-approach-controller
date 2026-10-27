@@ -1,0 +1,2 @@
+# One bag, to check the whole recording path before the full set.
+sim_smoke          2.25    0.0      0.0      0.0   0.0   0.0   1

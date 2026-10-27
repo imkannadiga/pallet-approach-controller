@@ -8,6 +8,7 @@
 #   ./sim/run_sim.sh start pickup
 #   ./sim/run_sim.sh run pickup           # start and follow it to the result
 #   ./sim/run_sim.sh cancel
+#   ./sim/run_sim.sh record NAME [seconds]  # bag the topics the offline tools read -> sim/bags/NAME
 #   ./sim/run_sim.sh result                # wait for and print /pallet_approach/result
 #   ./sim/run_sim.sh status                # /coordinator/status and /health, once
 #   ./sim/run_sim.sh logs [gazebo|stack]
@@ -162,6 +163,29 @@ case "${1:-}" in
     mode=${2:?usage: run pickup [timeout_s]}
     docker cp "$REPO_ROOT/sim/tools/follow_run.py" "$STACK:/tmp/follow_run.py" >/dev/null
     in_stack "python3 -u /tmp/follow_run.py $mode ${3:-1800}"
+    ;;
+
+  record)
+    # What tools/evaluate_bags.py, track_prototype.py and lidar_face.py read:
+    # the depth image and its camera_info, the LiDAR, odometry and tf. No RGB
+    # image -- at 30 Hz it is most of a bag and nothing here uses it. On sim
+    # time, so the stamps line up with tf. The bag is made inside the stack
+    # container and copied out, because the container has no host mount.
+    name=${2:?usage: record NAME [seconds]}
+    seconds=${3:-8}
+    out="$REPO_ROOT/sim/bags"
+    mkdir -p "$out"
+    in_stack "rm -rf /tmp/bag_$name; timeout -s INT $seconds ros2 bag record --use-sim-time \
+      --compression-mode file --compression-format zstd -o /tmp/bag_$name \
+      /zed2/zed_node/depth/depth_registered /zed2/zed_node/depth/camera_info \
+      /zed2/zed_node/rgb/color/rect/camera_info /ouster/points /odom /tf /tf_static \
+      >/dev/null 2>&1 || true"
+    # A few seconds for the recorder to finish writing its compressed file:
+    # one bag in a set of 21 (2026-10-27) arrived truncated.
+    sleep 3
+    rm -rf "$out/$name"
+    docker cp "$STACK:/tmp/bag_$name" "$out/$name" >/dev/null
+    echo "recorded $out/$name"
     ;;
 
   cancel)

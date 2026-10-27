@@ -93,7 +93,10 @@ def _setup(context):
     with open(robot_file, 'w') as f:
         f.write(robot_description)
     with open(pallet_file, 'w') as f:
-        f.write(pallet_model.sdf(static=pallet_static))
+        f.write(pallet_model.sdf(
+            static=pallet_static, block_protrusion=float(arg('block_protrusion')),
+            load_height=float(arg('load_height')),
+            load_overhang=float(arg('load_overhang'))))
 
     world = os.path.join(share, 'worlds', {'room': 'pallet_room.sdf',
                                            'empty': 'pallet_lab.sdf'}[arg('world')])
@@ -107,7 +110,9 @@ def _setup(context):
         LogInfo(msg=(
             f'[truth] {face} face centre at ({face_x:.3f}, {face_y:.3f}) m, yaw {face_yaw:+.3f} rad '
             f'({math.degrees(face_yaw):+.1f} deg); pallet model at ({px:.3f}, {py:.3f}), '
-            f'yaw {pyaw:+.3f}. Robot at the origin. Files in {work}')),
+            f'yaw {pyaw:+.3f}; block protrusion {float(arg("block_protrusion")):.3f} m, '
+            f'load {float(arg("load_height")):.2f} m tall, overhang {float(arg("load_overhang")):.3f} m. '
+            f'Robot at the origin. Files in {work}')),
         ExecuteProcess(cmd=gz_cmd, output='screen'),
         Node(package='ros_gz_bridge', executable='parameter_bridge', name='sim_bridge',
              output='screen',
@@ -166,6 +171,13 @@ def generate_launch_description():
                               description='extra gaussian depth noise, metres'),
         DeclareLaunchArgument('seed', default_value='0',
                               description='depth model seed; -1 for a fresh one'),
+        DeclareLaunchArgument('block_protrusion', default_value='0.0',
+                              description='metres the outer blocks stand proud of the deck '
+                                          'at the short ends (the real pallet: ~0.02)'),
+        DeclareLaunchArgument('load_height', default_value='0.0',
+                              description='metres of load on the deck; 0 = none'),
+        DeclareLaunchArgument('load_overhang', default_value='0.0',
+                              description='metres the load overhangs the pallet on every side'),
         DeclareLaunchArgument('world', default_value='room',
                               description="'room' (walls and distractors) or 'empty'"),
         OpaqueFunction(function=_setup),

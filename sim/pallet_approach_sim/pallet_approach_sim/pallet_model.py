@@ -62,8 +62,15 @@ class Box:
         return tuple(0.5 * (a + b) for a, b in (self.x, self.y, self.z))
 
 
-def boxes() -> list[Box]:
-    """Every piece of timber, in the model frame."""
+def boxes(block_protrusion: float = 0.0) -> list[Box]:
+    """Every piece of timber, in the model frame.
+
+    `block_protrusion` pushes the OUTER blocks out past the deck at both short
+    ends, by that many metres. Default 0: the model is flush, which is what the
+    unit tests are tuned on. The real pallet is not flush: on the 2026-10-24
+    bags the block fronts sit 13-25 mm nearer the robot than the deck boards
+    above them, seen by both the camera and the LiDAR (tools/lidar_face.py).
+    """
     half_l, half_w = LENGTH / 2, WIDTH / 2
     parts = [Box('deck', (-half_l, half_l), (-half_w, half_w), (STRINGER_TOP, HEIGHT))]
     for i, xs in enumerate(BLOCK_COLUMNS_X):
@@ -71,8 +78,25 @@ def boxes() -> list[Box]:
     for j, ys in enumerate(BLOCK_ROWS_Y):
         parts.append(Box(f'bottom_{j}', (-half_l, half_l), ys, (0.0, BOTTOM_BOARD_TOP)))
         for i, xs in enumerate(BLOCK_COLUMNS_X):
+            if i == 0:
+                xs = (xs[0] - block_protrusion, xs[1])
+            elif i == len(BLOCK_COLUMNS_X) - 1:
+                xs = (xs[0], xs[1] + block_protrusion)
             parts.append(Box(f'block_{i}_{j}', xs, ys, (BOTTOM_BOARD_TOP, BLOCK_TOP)))
     return parts
+
+
+def load_box(height: float, overhang: float = 0.0) -> Box | None:
+    """A load on the deck: one box, as wide and long as the pallet plus
+    `overhang` on every side, from the deck top up to `height` above it.
+
+    None when there is no load. Flat-faced and uniform on purpose: it tests
+    what a load does to the pallet's own geometry, not what cargo looks like.
+    """
+    if height <= 0.0:
+        return None
+    half_l, half_w = LENGTH / 2 + overhang, WIDTH / 2 + overhang
+    return Box('load', (-half_l, half_l), (-half_w, half_w), (HEIGHT, HEIGHT + height))
 
 
 def face_profile(face: str, height: float) -> list[tuple[float, float]]:
@@ -110,18 +134,28 @@ MASS = 20.0
 """kg. A wooden EUR pallet is 20-25 kg; this one was never weighed."""
 
 
-def sdf(name: str = 'pallet', color=(0.62, 0.47, 0.30), static: bool = True) -> str:
+def sdf(name: str = 'pallet', color=(0.62, 0.47, 0.30), static: bool = True,
+        block_protrusion: float = 0.0, load_height: float = 0.0,
+        load_overhang: float = 0.0) -> str:
     """An SDF model of the pallet.
 
     Static for the SCOUT, whose forks are virtual and must never touch it.
     Dynamic for the forklift (physical lift, Athreya 2026-10-22), with its mass
     at the footprint's centre, half way up.
+
+    `block_protrusion` and the `load_*` arguments are for evaluation scenes;
+    all default to the plain pallet. A load adds a collision and a visual to
+    the same link and does not change the mass.
     """
     r, g, b = color
     material = (f'<material><ambient>{r} {g} {b} 1</ambient>'
                 f'<diffuse>{r} {g} {b} 1</diffuse></material>')
     links = []
-    for box in boxes():
+    parts = boxes(block_protrusion)
+    load = load_box(load_height, load_overhang)
+    if load is not None:
+        parts.append(load)
+    for box in parts:
         cx, cy, cz = box.center
         sx, sy, sz = box.size
         geometry = f'<geometry><box><size>{sx:.4f} {sy:.4f} {sz:.4f}</size></box></geometry>'

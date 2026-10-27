@@ -1,0 +1,25 @@
+# The baseline set for track_prototype / evaluate_sim_bags.
+# name  face_x face_y face_yaw  block_protrusion load_height load_overhang  seed
+# r*: range sweep, square and centred. s7_*: the ten D96 starting poses (seed 7).
+# load_*: a uniform load on the deck. prot_*: blocks 20 mm proud of the deck, as on the real pallet.
+sim_r175           1.75    0.0      0.0      0.0   0.0   0.0   1
+sim_r225           2.25    0.0      0.0      0.0   0.0   0.0   1
+sim_r275           2.75    0.0      0.0      0.0   0.0   0.0   1
+sim_r325           3.25    0.0      0.0      0.0   0.0   0.0   1
+sim_s7_01          2.4879  0.2709   0.0626   0.0   0.0   0.0   1
+sim_s7_02          2.4998  -0.0343  -0.0066  0.0   0.0   0.0   1
+sim_s7_03          2.4848  0.2791   0.131    0.0   0.0   0.0   1
+sim_s7_04          2.4631  0.4405   0.135    0.0   0.0   0.0   1
+sim_s7_05          2.4901  0.2234   0.0784   0.0   0.0   0.0   1
+sim_s7_06          2.4588  0.4538   0.1654   0.0   0.0   0.0   1
+sim_s7_07          2.4989  0.0805   0.0451   0.0   0.0   0.0   1
+sim_s7_08          2.4865  -0.2709  -0.0779  0.0   0.0   0.0   1
+sim_s7_09          2.4877  -0.2536  -0.1238  0.0   0.0   0.0   1
+sim_s7_10          2.4938  0.2208   0.1416   0.0   0.0   0.0   1
+sim_load_flush50   2.25    0.0      0.0      0.0   0.5   0.0   1
+sim_load_over50    2.25    0.0      0.0      0.0   0.5   0.08  1
+sim_load_low04     2.25    0.0      0.0      0.0   0.04  0.0   1
+sim_load_tall80    2.25    0.0      0.0      0.0   0.8   0.0   1
+sim_prot_r225      2.25    0.0      0.0      0.02  0.0   0.0   1
+sim_prot_r275      2.75    0.0      0.0      0.02  0.0   0.0   1
+sim_prot_load50    2.25    0.0      0.0      0.02  0.5   0.0   1
