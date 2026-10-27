@@ -29,11 +29,11 @@ Place the pallet with launch arguments (robot at the origin, looking along +x):
 ```
 
 The acceptance batch (D83): ten runs from random starts where Nav2 might leave
-the robot -- 2.5 m from the face, up to +-0.15 m off the centre line and
-+-10 deg turned -- each on a fresh sim; GO in at least 9 of 10 passes:
+the robot -- 2.5 m from the origin, up to +-0.15 m off the centre line and
++-10 deg turned -- each on a fresh sim; INSERTED in at least 9 of 10 passes (D96):
 
 ```bash
-./sim/tools/batch_runs.sh approach_only 10 --random 7    # same seed, same ten runs
+./sim/tools/batch_runs.sh 7 10    # the shared starts (D96): 9 of 10 INSERTED to pass
 ```
 
 ## The room and the depth model (D80-D82)
@@ -141,7 +141,7 @@ Each of these was measured, and each fix is commented where it lives.
 sim/
   run_sim.sh                       the entry point
   tools/build_room.py              writes worlds/pallet_room.sdf
-  tools/batch_runs.sh              N fresh runs, --random for the D83 batch
+  tools/batch_runs.sh SEED [N]     N pickups from the shared starts (D96), 9 of 10 to pass
   Dockerfile.gazebo                FROM the sim-env image, plus pallet_approach_sim
   fastdds_sim.xml                  32 MB shm segments, UDP on loopback
   pallet_approach_sim/

@@ -1194,7 +1194,7 @@ robot (`sim_overlay.yaml`), so timing failures appear in the sim too. Sensor
 mounting errors are NOT injected for now: they wait for the auto-calibration
 routine (D74), which they would test. (Athreya, 2026-10-23)
 
-**D83. Sim acceptance: GO in at least 9 of 10 `approach_only` runs from random
+*[Mode removed by D95, 2026-10-27. Criterion now 9 of 10 INSERTED, from shared starts: D96.]* **D83. Sim acceptance: GO in at least 9 of 10 `approach_only` runs from random
 starts** -- where Nav2 might leave the robot: 2.5 m from the face along the
 pallet's centre line, up to +-0.15 m off it and turned up to +-10 deg from it --
 in the room, with the ZED depth model and the 3.3 Hz cap
@@ -1357,6 +1357,20 @@ means pickup). *Open:* the D83 sim acceptance (GO in 9 of 10 runs) was written
 for approach-only and needs a criterion for pickup runs (INSERTED?), and the lab
 session plan that relied on approach-only needs its first-session steps
 rewritten. (Athreya, 2026-10-27)
+
+**D96. Acceptance: 9 of 10 pickups, from the same starting positions in the sim
+and on the robot.** A run is accepted when it ends INSERTED. The ten starts come
+from one seed, through `pallet_approach/tools/start_positions.py`, which gives
+both the sim's pose arguments and the tape readings for the real pallet. Seed 7
+gives the same ten poses the sim batches used before, so earlier sim runs still
+describe the same starts. The batch needs a seed and passes at 9 of 10
+(`need = ceil(0.9 n)`). *Why:* one criterion for both lets the sim and the robot
+be compared run for run. The seed fixes the starts, not the depth noise: the sim
+has its own seeded noise, and the real world has none to share. *Procedure on
+the robot:* run `start_positions.py --seed 7`, set the pallet to each row's
+`dL`, `dR` and `lat` with tape, then trigger the run. *Interpretation:* "accepted"
+is read as INSERTED, the pickup's success outcome, since approach-only is gone
+(D95). (Athreya, 2026-10-27)
 
 ## Open, with numbers attached
 

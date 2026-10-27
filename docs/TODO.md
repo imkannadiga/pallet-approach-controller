@@ -96,5 +96,6 @@ decided until it reaches `decisions.md`.
   watchdog fix, D72-D78).
 - **Re-run the Gazebo sim** on the GPU machine after the 2026-10-22/23
   changes (relay, tf listener, LiDAR correction off in sim, run-up 2.5 m,
-  height ceiling) and confirm GO in at least 9 of 10 `approach_only` runs.
+  height ceiling) and confirm 9 of 10 accepted (INSERTED) pickups from the
+  shared starting positions, seed 7 (D96).
 - **Evaluation bags**: a set of positions for the dataset (`dataset.md`).
