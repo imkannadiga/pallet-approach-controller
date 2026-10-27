@@ -98,17 +98,33 @@ def fit(xs, ys):
 
 class ClockAudit(Node):
 
-    def __init__(self, topics, per_frame):
+    def __init__(self, topics, per_frame, wait=10.0):
         super().__init__('clock_audit')
         self.samples = defaultdict(list)           # key -> [(wall, stamp)]
         self.per_frame = per_frame
         self.start = time.time()
-        available = dict(self.get_topic_names_and_types())
+        # Discovery is per node: a node starts with an empty view of the graph,
+        # and the one that asks must be the one that has been waiting. The first
+        # version made a probe node, slept, destroyed it, and asked a NEW node
+        # at once -- so on a network where discovery takes longer than an
+        # instant (the Jetson is multi-homed) every topic read "not advertised",
+        # while `ros2 topic hz` on the same topics worked. Poll, spinning, until
+        # everything asked for is visible or `wait` seconds have passed.
+        deadline = time.time() + wait
+        while True:
+            available = dict(self.get_topic_names_and_types())
+            if topics is None:                     # --all: settle, then take what is there
+                if time.time() > self.start + min(wait, 3.0):
+                    topics = sorted(available)
+                    break
+            elif all(available.get(t) for t in topics) or time.time() > deadline:
+                break
+            rclpy.spin_once(self, timeout_sec=0.2)
         self.subs = []
         for topic in topics:
             types = available.get(topic)
             if not types:
-                print(f'  {topic}: not advertised, skipping')
+                print(f'  {topic}: not advertised after {wait:g} s, skipping')
                 continue
             try:
                 msg_type = get_message(types[0])
@@ -203,19 +219,15 @@ def main() -> int:
                     help='every advertised topic, not just the usual suspects')
     ap.add_argument('--per-frame', action='store_true',
                     help='split /tf by parent->child, to see which broadcaster is which')
+    ap.add_argument('--wait', type=float, default=10.0,
+                    help='seconds to wait for the topics to be discovered')
     args = ap.parse_args()
 
     rclpy.init()
-    probe = Node('clock_audit_probe')
-    time.sleep(1.0)                                # let discovery settle
-    if args.all:
-        topics = sorted(t for t, _ in probe.get_topic_names_and_types())
-    else:
-        topics = args.topics or DEFAULT_TOPICS
-    probe.destroy_node()
+    topics = None if args.all else (args.topics or DEFAULT_TOPICS)
 
-    print('subscribing:')
-    node = ClockAudit(topics, args.per_frame)
+    print(f'waiting up to {args.wait:g} s for discovery, then subscribing:')
+    node = ClockAudit(topics, args.per_frame, args.wait)
     if not node.subs:
         print('\nnothing to listen to')
         return 1
