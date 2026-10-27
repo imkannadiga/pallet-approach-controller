@@ -233,6 +233,12 @@ def analyse(path: pathlib.Path, typestore, rmin: float, rmax: float,
         if borrowed:
             print(f'  {path.name}: borrowed static transforms for {", ".join(borrowed)} '
                   f'-- an ASSUMPTION that nothing was moved')
+    # Whatever is still missing comes from the exported reference (rigid mounting).
+    from _bagutil import fill_static
+    filled = fill_static(tree)
+    if filled:
+        print(f'  {path.name}: filled in {len(filled)} static transform(s) from '
+              f'config/static_tf.yaml ({", ".join(filled[:3])}...)')
     results = []
     for frame, pts in clouds.items():
         try:

@@ -30,6 +30,10 @@ except ImportError:                                           # pragma: no cover
 GROUND = 'base_footprint'
 CAMERA = 'zed2_left_camera_frame_optical'
 
+STATIC_TF = pathlib.Path(__file__).resolve().parent.parent / 'config' / 'static_tf.yaml'
+"""The real robot's static transforms, exported once from a good bag
+(tools/export_static_tf.py). They are rigid mounting, so a bag need not carry them."""
+
 
 def typestore(name: str = 'ROS2_HUMBLE'):
     return get_typestore(getattr(Stores, name))
@@ -75,6 +79,45 @@ class Tree:
             if frame not in known:
                 raise KeyError(f'{frame} is not in this bag\'s tf tree')
         return np.linalg.inv(self._to_root(target)) @ self._to_root(source)
+
+
+def static_reference(path: pathlib.Path | None = None) -> list:
+    """[(parent, child, 4x4)] from the static-transform reference file, or []."""
+    import yaml
+    path = STATIC_TF if path is None else path
+    if not path.exists():
+        return []
+    doc = yaml.safe_load(path.read_text())
+    out = []
+    for e in doc.get('edges', []):
+        m = np.eye(4)
+        x, y, z, w = e['rotation']
+        m[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+        m[:3, 3] = e['translation']
+        out.append((e['parent'], e['child'], m))
+    return out
+
+
+def fill_static(tree, reference: list | None = None) -> list[str]:
+    """Add the static edges a bag is missing from the reference; return their children.
+
+    Only edges the bag LACKS are added -- what a bag does carry is never
+    overridden, so a bag that has its own static tree is untouched. Static
+    transforms do not change from bag to bag, and a recorder sometimes joins the
+    latched /tf_static topic before it has discovered every publisher.
+
+    This is the REAL robot's tree. A sim bag carries its own and so gets nothing
+    added; a sim bag that somehow lacked one would wrongly get this one.
+    """
+    reference = static_reference() if reference is None else reference
+    borrowed = []
+    for parent, child, matrix in reference:
+        if child not in tree.parent:
+            tree.add(parent, child, matrix)
+            borrowed.append(child)
+    return borrowed
 
 
 def read(path: pathlib.Path, store='ROS2_HUMBLE', max_frames: int = 5) -> dict:
@@ -149,6 +192,8 @@ def read(path: pathlib.Path, store='ROS2_HUMBLE', max_frames: int = 5) -> dict:
                 out['clouds'].setdefault(msg.header.frame_id, []).append(
                     unpack_cloud(msg))
                 break
+    # Static transforms are rigid mounting; fill in any this bag arrived without.
+    out['borrowed'] = fill_static(out['tree'])
     out['clouds'] = {f: np.concatenate(v) for f, v in out['clouds'].items() if v}
     if yaws:
         out['odom_yaw'] = float(np.median(yaws))

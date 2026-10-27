@@ -94,9 +94,16 @@ def main() -> int:
             say('FAIL', 'no LiDAR cloud (neither /pallet_approach/lidar nor /ouster/points)')
         else:
             rate = counts[lidar_topic] / duration
-            level = 'ok' if rate >= 7 else 'FAIL'
-            say(level, f'LiDAR {rate:.1f} Hz on {lidar_topic}'
-                + ('' if rate >= 7 else ' -- THROTTLED; check the relay and the network'))
+            n_clouds = counts[lidar_topic]
+            # A moving bag needs the full rate. A static one only needs enough
+            # clouds to average: 40 clouds at 6.8 Hz is fine for a flat board.
+            if rate >= 7:
+                level, note = 'ok', ''
+            elif not args.moving and n_clouds >= 20:
+                level, note = 'WARN', f' -- below 7 Hz but {n_clouds} clouds is enough for a static bag'
+            else:
+                level, note = 'FAIL', ' -- THROTTLED; check the relay and the network'
+            say(level, f'LiDAR {rate:.1f} Hz on {lidar_topic}{note}')
             if lidar_topic == '/ouster/points':
                 say('WARN', 'raw /ouster/points: fine only if this was recorded ON the robot PC; '
                             'from the Jetson it is a second network copy')
@@ -109,11 +116,17 @@ def main() -> int:
         data = None
     if data is not None:
         frame = data['depth_frame'] or bag.CAMERA
+        borrowed = data.get('borrowed', [])
+        if borrowed:
+            say('ok', f'static tf: {len(borrowed)} edge(s) not in this bag, filled in from '
+                      f'config/static_tf.yaml ({", ".join(borrowed[:4])}{"..." if len(borrowed) > 4 else ""}); '
+                      f'fine unless the hardware was changed since it was exported')
         try:
             data['tree'].lookup(bag.GROUND, frame)
             say('ok', f'tf: {bag.GROUND} reachable from {frame}')
         except KeyError as error:
-            say('FAIL', f'tf: {error} (static transforms missing from the bag)')
+            say('FAIL', f'tf: {error} (the dynamic transforms are missing, or config/static_tf.yaml '
+                        f'is absent or incomplete)')
         if data['intrinsics'] is None and 'depth' in needs:
             say('FAIL', 'no depth camera_info')
         if data['depth']:

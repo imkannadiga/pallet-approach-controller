@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from _bagutil import GROUND, Tree, quat_matrix, typestore  # noqa: E402
+from _bagutil import GROUND, Tree, fill_static, quat_matrix, typestore  # noqa: E402
 from pallet_approach.pointcloud import DATATYPES  # noqa: E402
 
 try:
@@ -97,6 +97,7 @@ def read_grid(bag: pathlib.Path, store: str) -> tuple[dict, np.ndarray, str]:
             break
     if grid is None:
         sys.exit(f'{bag.name}: none of {", ".join(CLOUD_TOPICS)}')
+    fill_static(tree)          # rigid mounting the bag may have arrived without
     return grid, tree.lookup(GROUND, frame), frame
 
 
