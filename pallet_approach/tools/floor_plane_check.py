@@ -313,16 +313,22 @@ def decompose(rows) -> None:
     so rotating with the robot's heading. Two bags at different headings give
     two equations and separate them. The headings come from `/odom`, so the turn
     needs no measuring -- it only has to be large.
+
+    With more than two headings this is a least-squares fit over ALL of them,
+    and the residual is the self-check: if one constant mounting tilt and one
+    constant slope explain every heading, the residual is small. A large one
+    means the floor's slope changed between where the robot stood for the
+    different bags (the robot moved while turning), or the odometry's heading is
+    off. Exactly two bags is the old exact solve, unchanged.
     """
     for kind in ('camera', 'lidar'):
         group = [r for r in rows if r['kind'] == kind and not math.isnan(r['yaw'])]
         if len(group) < 2:
             continue
-        # use the two most widely separated headings
-        group.sort(key=lambda r: r['yaw'])
-        a, b = group[0], group[-1]
-        separation = abs(math.degrees(a['yaw'] - b['yaw']))
-        if min(separation, 360 - separation) < 30:
+        yaws = [r['yaw'] for r in group]
+        separation = max(abs(math.degrees(a - b)) for a in yaws for b in yaws)
+        separation = min(separation, 360 - separation) if separation > 180 else separation
+        if separation < 30:
             print(f'\n{kind}: headings only {separation:.0f} deg apart -- too close '
                   f'to separate a mounting error from a floor slope')
             continue
@@ -335,18 +341,25 @@ def decompose(rows) -> None:
             c, s_ = math.cos(angle), math.sin(angle)
             return np.array([[c, s_], [-s_, c]])
 
-        matrix = rot(a['yaw']) - rot(b['yaw'])
-        world = np.linalg.solve(matrix, gradient(a) - gradient(b))
-        mount = gradient(a) - rot(a['yaw']) @ world
+        # gradient_i = mount + R(yaw_i) @ world, linear in (mount, world).
+        design = np.vstack([np.hstack([np.eye(2), rot(r['yaw'])]) for r in group])
+        target = np.concatenate([gradient(r) for r in group])
+        solution, *_ = np.linalg.lstsq(design, target, rcond=None)
+        mount, world = solution[:2], solution[2:]
+        residual = design @ solution - target
 
         def size(g):
             return math.degrees(math.atan(float(np.linalg.norm(g))))
 
-        print(f'\n{kind.upper()}  ({separation:.0f} deg between headings)')
+        print(f'\n{kind.upper()}  ({len(group)} headings, up to {separation:.0f} deg apart)')
         print(f'   mounting tilt, robot-fixed   {size(mount):6.3f} deg   '
               f'pitch {math.degrees(math.atan(mount[0])):+.3f}  '
               f'roll {-math.degrees(math.atan(mount[1])):+.3f}')
         print(f'   floor slope, world-fixed     {size(world):6.3f} deg')
+        if len(group) > 2:
+            worst = float(np.max(np.abs(np.degrees(np.arctan(residual)))))
+            print(f'   fit residual                 worst {worst:.3f} deg over {len(group)} headings '
+                  f'({"consistent" if worst < 0.05 else "NOT consistent: the floor or the heading differs between bags"})')
         heights = [r['height'] for r in group]
         print(f'   floor height                 {np.mean(heights):+.4f} m   '
               f'spread {1000 * (max(heights) - min(heights)):.1f} mm')
