@@ -999,3 +999,52 @@ a frame. Each step was checked on 31 real frames from five bags
 Changing the random draws exposed D88. Not yet measured on the Jetson (it was
 unreachable); GPU next (docs/TODO.md).
 
+
+## 2026-10-27 — removing approach_only, shared starts, and a first look at a template tracker
+
+**Decisions made** (decisions.md): D95 `pickup` is the only mode; D96 acceptance is
+9 of 10 INSERTED from the same ten starts in sim and on the robot
+(`tools/start_positions.py --seed 7`).
+
+**A strip-and-template tracker, prototyped, not wired in** (`tools/track_prototype.py`).
+It unprojects only the strip of depth rows where the pocket band should be,
+fits the face line, and slides a block/pocket template along it. Everything
+below is against the current pipeline or the sim's exact truth; none of it is
+tape.
+
+*Real bags* (`pallet_s_pos2_cond1`, ~2.2 m, 46 frames; `pallet_s_pos1_cond1`, ~2.9 m, 20 frames):
+- At 2.2 m the profile along the face is a clean comb and the tracker takes
+  ~2 ms a frame against ~26 ms for the current pipeline (laptop). That is the
+  per-frame cost given a prior; it excludes the floor fit, the tf lookup,
+  message decoding and first acquisition.
+- At 2.9 m the current pipeline finds the face every frame and never two
+  pockets (0 of 20); the tracker's profile is not a comb (the centre block is
+  washed out by depth smearing) and its quality numbers overlap those of
+  windows with no pallet. No evidence it finds pockets where the current
+  pipeline cannot.
+- The two methods differ by 21 mm in range on the 2.2 m bag. `tools/lidar_face.py`
+  shows why: **the pallet's front is not one plane.** The block fronts (heights
+  0.02-0.095 m) sit about 25 mm nearer the robot than the deck boards
+  (0.105-0.140 m) by the camera, and 13 mm by the LiDAR. The current pipeline's
+  pocket depth mixes the two; the tracker's band sees the blocks. CLAUDE.md
+  item 4 says the blocks are flush with the boards; these two bags say they are
+  not. Which surface the robot's body will meet first is the block face.
+- The LiDAR reads 26-39 mm FARTHER than the camera on both real bags. In the
+  sim the same tool reads 4-9 mm nearer than truth, so the real gap is not the
+  tool; it is a real mounting or range bias, bigger than D90's 14 mm. Needs tape.
+
+*Sim bags* (`~/bags/sim`, 21 bags, recorded by `sim/remote.sh bags`; the sim's
+depth is a model fitted to real bags at 1.2-2.4 m and extrapolates beyond):
+- Ten D96 start poses and a 1.75-3.25 m range sweep: both methods find two
+  pockets in every frame and land within a few mm of truth (range |error| median
+  2.0 mm current vs 2.7 mm tracker over the ten starts; lateral 0.45 vs 0.9 mm;
+  yaw 0.5 vs 0.65 deg). **No accuracy difference** beyond what the sim's smooth
+  depth warp sets for both. The sim does NOT reproduce the real 2.9 m failure.
+- Blocks 20 mm proud (as on the real pallet): the current pipeline's range is
+  +13 mm against the block face; the tracker's is 0.0 mm.
+- Loads rendered in Gazebo: flush 0.5 m, flush 0.8 m, flush 0.5 m on a proud-block
+  pallet: the current pipeline finds no pallet (0 of 8, 12, 12 frames); the
+  tracker is unchanged to the mm (it never looks above the band). A 4 cm load
+  and an 8 cm all-round overhang still pass the current pipeline.
+- The tracker needs a prior. Acquiring a loaded pallet in the first place is
+  not solved by it.

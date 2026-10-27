@@ -155,15 +155,32 @@ def read(path: pathlib.Path, store='ROS2_HUMBLE', max_frames: int = 5) -> dict:
     return out
 
 
-def load_params(package_root: pathlib.Path) -> dict:
+def _merge(base: dict, over: dict) -> dict:
+    """`over` on top of `base`, key by key, as ROS applies an overlay file."""
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def load_params(package_root: pathlib.Path, overlay: str | None = None) -> dict:
     """The flat parameter dict `perception.estimate_pallet` expects.
 
     Mirrors `nodes/perception_node.py::_params()`, so the offline tools run the
     pipeline with exactly the parameters the robot would use. If the two drift
     apart, `test_params.py` catches it.
+
+    `overlay` names a second file in `config/` applied on top, as the launch
+    file does: 'sim_overlay.yaml' for bags recorded in the Gazebo sim, whose
+    camera is mounted exactly as the URDF says and so must not get the real
+    robot's tilt correction.
     """
     import yaml
     raw = yaml.safe_load((package_root / 'config' / 'params.yaml').read_text())
+    if overlay:
+        _merge(raw, yaml.safe_load((package_root / 'config' / overlay).read_text()))
     shared = raw['/**']['ros__parameters']
     block = raw['pallet_perception']['ros__parameters']
     return {
