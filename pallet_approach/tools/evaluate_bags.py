@@ -51,10 +51,9 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(PACKAGE))
 import _bagutil as bag  # noqa: E402
 from pallet_approach import perception as P  # noqa: E402
-from pallet_approach.calibration import correct_transform, correction_matrix  # noqa: E402
+from pallet_approach.approach import wrap_angle as wrap  # noqa: E402
 
-# base_footprint x of the front bumper (docs/dataset.md, D23).
-BUMPER_X = 0.4625
+
 
 
 def truth_for(entry: dict, sides: dict) -> dict:
@@ -68,7 +67,7 @@ def truth_for(entry: dict, sides: dict) -> dict:
     width, spacing = float(side['face_width']), float(side['pocket_spacing'])
     d_left, d_right = float(entry['dL']), float(entry['dR'])
     theta = math.asin(max(-1.0, min(1.0, (d_left - d_right) / width)))
-    center = np.array([(d_left + d_right) / 2.0 + BUMPER_X, float(entry.get('lat', 0.0))])
+    center = np.array([(d_left + d_right) / 2.0 + bag.BUMPER_X, float(entry.get('lat', 0.0))])
     left = np.array([math.sin(theta), math.cos(theta)])     # along the face, to the left
     normal = np.array([-math.cos(theta), math.sin(theta)])  # towards the robot
     return {
@@ -82,20 +81,12 @@ def truth_for(entry: dict, sides: dict) -> dict:
     }
 
 
-def wrap(angle: float) -> float:
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
-
-
 def evaluate(path: pathlib.Path, params: dict, truth: dict | None,
              max_frames: int) -> dict:
     data = bag.read(path, max_frames=max_frames)
     if not data['depth'] or data['intrinsics'] is None:
         return {'bag': path.name, 'frames': 0, 'error': 'no depth or camera_info'}
-    to_ground = data['tree'].lookup(bag.GROUND, data['depth_frame'] or bag.CAMERA)
-    c = params['extrinsic_correction']
-    if c.get('enabled'):
-        to_ground = correct_transform(to_ground, correction_matrix(
-            c['measured_floor_pitch'], c['measured_floor_roll']))
+    to_ground = bag.camera_to_ground(data, params['extrinsic_correction'])
 
     rows, seconds = [], []
     for depth in data['depth']:
@@ -159,7 +150,6 @@ def report(results: list[dict], nominal: dict) -> list[dict]:
         if r['pairs']:
             if 'mid_err' in r:
                 dx, dy = r['mid_err'][:, 0], r['mid_err'][:, 1]
-                yaw = r['yaw_err'] / 1000.0          # mm() scales by 1000
                 line += (f' {mm(dx):>5s}/{mm(dx, "p95"):<5s} {mm(dy):>5s}/{mm(dy, "p95"):<5s}'
                          f' {np.median(r["yaw_err"]):+5.1f}/{np.percentile(np.abs(r["yaw_err"]), 95):<4.1f}')
                 row.update(mid_dx_median_mm=mm(dx), mid_dx_p95_mm=mm(dx, 'p95'),

@@ -31,7 +31,6 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import _bagutil as bag  # noqa: E402
 from pallet_approach import perception as P  # noqa: E402
-from pallet_approach.calibration import correct_transform, correction_matrix  # noqa: E402
 
 STAGES = ('depth_to_points', 'transform_points', 'crop_to_roi', 'voxel_downsample',
           'fit_plane_ransac', 'remove_floor', 'cluster_points',
@@ -52,11 +51,7 @@ for name in STAGES:
 params = bag.load_params(HERE.parent)
 data = bag.read(args.bag, max_frames=1)
 depth = data['depth'][0]
-to_ground = data['tree'].lookup(bag.GROUND, data['depth_frame'] or bag.CAMERA)
-c = params['extrinsic_correction']
-if c.get('enabled'):
-    to_ground = correct_transform(to_ground, correction_matrix(
-        c['measured_floor_pitch'], c['measured_floor_roll']))
+to_ground = bag.camera_to_ground(data, params['extrinsic_correction'])
 
 P.estimate_pallet(depth, data['intrinsics'], to_ground, params)   # warm-up
 spent.clear()

@@ -30,7 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from _bagutil import GROUND, Tree, fill_static, quat_matrix, typestore  # noqa: E402
+from _bagutil import BUMPER_X, GROUND, Tree, fill_static, quat_matrix, typestore  # noqa: E402
 from pallet_approach.pointcloud import DATATYPES  # noqa: E402
 
 try:
@@ -46,10 +46,6 @@ CLOUD_TOPICS = ('/pallet_approach/lidar', '/ouster/points')
 # headings. base_footprint itself is 25 mm above the floor, so this is not 0.
 FLOOR_Z = -0.0246
 
-# [measured] from the deployed URDF's base_link collision box, 0.925 x 0.38 x
-# 0.21 centred on base_link: the front face is half the length ahead of
-# base_footprint. This is the part of the robot that must not touch the pallet.
-BUMPER_X = 0.4625
 
 # Straight ahead, where the pallet is. Wide enough to hold ~57 of the 1024
 # azimuth columns, narrow enough that the floor under it is flat.

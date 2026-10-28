@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
-"""Fit the floor plane in a bag and report it in `base_footprint`.
-
-A calibration check, not part of the runtime pipeline. Give it camera bags and
-LiDAR bags from the same session and it answers three questions:
-
-1. Is the floor level in `base_footprint`? It should be, if the camera extrinsic
-   and `base_footprint` are both right.
-2. Do the camera and the LiDAR agree? They descend from the same `bottom_box_link`,
-   so a disagreement is one sensor mis-mounted relative to the other, which is
-   the number to calibrate out.
-3. Is any common tilt fixed to the robot or to the world? Given two bags taken
-   at different robot headings, a robot-fixed tilt is a mounting error and a
-   world-fixed tilt is a sloped floor. The headings come from `/odom`, so the
-   turn does not have to be measured by hand.
+"""Fit the floor plane in camera and LiDAR bags and report it in `base_footprint`.
 
     python3 floor_plane_check.py ~/bags/floor_cam_pose1 ~/bags/floor_lidar_pose1 ...
 
-Works on depth images (`sensor_msgs/Image`, 32FC1) and point clouds
-(`sensor_msgs/PointCloud2`). Needs no ROS: reads the bag with `rosbags`.
+Answers: is the floor level (extrinsic and base_footprint right)? Do camera
+and LiDAR agree? Is a common tilt robot-fixed (mounting) or world-fixed
+(sloped floor)? The last needs bags at different headings, taken from /odom.
+Reads depth images and point clouds with `rosbags`; no ROS.
 """
 
 from __future__ import annotations
@@ -36,54 +25,11 @@ except ImportError:
     sys.exit('pip install rosbags numpy pyyaml  (in a venv)')
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _bagutil import GROUND, Tree, fill_static, quat_matrix  # noqa: E402
 from pallet_approach.calibration import correct_transform, correction_matrix  # noqa: E402
-
-GROUND = 'base_footprint'
 DTYPES = {1: np.int8, 2: np.uint8, 3: np.int16, 4: np.uint16,
           5: np.int32, 6: np.uint32, 7: np.float32, 8: np.float64}
-
-
-# ------------------------------------------------------------------ transforms
-
-def quat_matrix(t, q) -> np.ndarray:
-    x, y, z, w = q.x, q.y, q.z, q.w
-    m = np.eye(4)
-    m[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                 [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                 [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
-    m[:3, 3] = [t.x, t.y, t.z]
-    return m
-
-
-class Tree:
-    """Static tf tree, with the up-then-down lookup tf2 does.
-
-    `base_footprint` is a *child* of `base_link`, not an ancestor of the sensors,
-    so walking parent links from a camera frame never reaches it. A lookup has to
-    climb to the common ancestor and descend the other branch.
-    """
-
-    def __init__(self):
-        self.parent: dict[str, str] = {}
-        self.edge: dict[str, np.ndarray] = {}
-
-    def add(self, parent: str, child: str, matrix: np.ndarray) -> None:
-        self.parent[child] = parent
-        self.edge[child] = matrix
-
-    def _to_root(self, frame: str) -> np.ndarray:
-        m, node = np.eye(4), frame
-        while node in self.parent:
-            m = self.edge[node] @ m
-            node = self.parent[node]
-        return m
-
-    def lookup(self, target: str, source: str) -> np.ndarray:
-        """target <- source."""
-        known = set(self.parent) | set(self.parent.values())
-        if target not in known or source not in known:
-            raise KeyError(f'{target} or {source} not in the tf tree')
-        return np.linalg.inv(self._to_root(target)) @ self._to_root(source)
 
 
 # ---------------------------------------------------------------- bag reading
@@ -234,7 +180,6 @@ def analyse(path: pathlib.Path, typestore, rmin: float, rmax: float,
             print(f'  {path.name}: borrowed static transforms for {", ".join(borrowed)} '
                   f'-- an ASSUMPTION that nothing was moved')
     # Whatever is still missing comes from the exported reference (rigid mounting).
-    from _bagutil import fill_static
     filled = fill_static(tree)
     if filled:
         print(f'  {path.name}: filled in {len(filled)} static transform(s) from '

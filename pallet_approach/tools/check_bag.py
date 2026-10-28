@@ -17,7 +17,6 @@ docs/bag_truth.yaml. Exit status 1 if anything FAILs.
 from __future__ import annotations
 
 import argparse
-import math
 import pathlib
 import sys
 

@@ -1,29 +1,12 @@
-"""The current pipeline and the strip-and-template tracker, on sim bags, against truth.
+"""The camera pipeline on sim bags, scored against the exact truth in truth.yaml.
 
     python3 tools/evaluate_sim_bags.py ~/bags/sim/sim_* [--step 4]
 
-A sim bag has exact ground truth: the pallet was placed at the launch arguments
-recorded in `truth.yaml`. So this is the one place the two methods can be scored
-on ACCURACY and not only on agreement with each other. What it does not say
-anything about is real depth: the sim's depth is a fitted model (sim/README.md),
-and beyond about 2.4 m it extrapolates.
-
-Per bag it reports, for each method, the errors of the pocket midpoint against
-the truth in the pallet's own axes:
-
-    range    how much FARTHER than the true plane the estimate is (negative =
-             nearer). Scored against the DECK face, and against the BLOCK face
-             when the bag has blocks standing proud of the deck.
-    lateral  along the face, positive to the robot's left.
-    yaw      the face normal's direction, degrees.
-
-The tracker runs two ways, so what it does on its own is separate from what it
-inherits:
-
-    prior = the current pipeline's first estimate  (only if that found pockets)
-    prior = the truth moved by 5 cm along the normal, 5 cm sideways, 2 degrees
-            (what a tracker with a good prior would hold; independent of the
-            current pipeline entirely, including its floor fit)
+The sim is the one place with exact ground truth (the launch arguments,
+recorded beside each bag). Its depth is a fitted model (D80, D105), so this
+says nothing about real depth. Errors of the pocket midpoint, in the pallet's
+own axes: range (+ = farther than the true face; against the block face when
+the blocks stand proud, else the deck), lateral (+ = robot's left), yaw (deg).
 """
 
 from __future__ import annotations
@@ -41,16 +24,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import _bagutil as bag  # noqa: E402
-import track_prototype as T  # noqa: E402
 from pallet_approach import perception as P  # noqa: E402
-from pallet_approach.model import Plane  # noqa: E402
-
-SIM_FLOOR = Plane(np.array([0.0, 0.0, 1.0]), 0.0248)
-"""The sim's floor in base_footprint: z = -0.0248 (wheel geometry, sim/README.md)."""
-
-
-def wrap(angle: float) -> float:
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+from pallet_approach.approach import wrap_angle as wrap  # noqa: E402
 
 
 class Truth:
@@ -94,52 +69,22 @@ def evaluate(path: pathlib.Path, params: dict, step: int) -> dict | None:
         return {'name': truth.name, 'error': 'no depth or camera_info'}
     to_ground = data['tree'].lookup(bag.GROUND, data['depth_frame'] or bag.CAMERA)
     intr = data['intrinsics']
-    geo = T.Geometry.from_params(params)
     frames = data['depth'][::step]
 
-    base_rows, ms = [], []
-    base_est = []
+    rows, ms = [], []
     for depth in frames:
         t0 = time.perf_counter()
         est = P.estimate_pallet(depth, intr, to_ground, params)
         ms.append((time.perf_counter() - t0) * 1000)
-        base_est.append(est)
         if est is not None and len(est.pockets) == 2:
             mid = np.mean([p.center[:2] for p in est.pockets], axis=0)
-            base_rows.append(truth.errors(mid, est.yaw))
-    out = {'name': truth.name, 'frames': len(frames),
-           'base_found': sum(e is not None for e in base_est),
-           'base_pairs': len(base_rows), 'base_ms': float(np.median(ms)),
-           'base': base_rows, 'truth': truth}
-
-    def run_tracker(prior):
-        rows, times = [], []
-        track_floor = prior.floor
-        T.track(frames[0], intr, to_ground, prior, geo)                # warm-up
-        for depth in frames:
-            res = T.track(depth, intr, to_ground, prior, geo)
-            times.append(res.seconds * 1000)
-            if res.ok:
-                rows.append(truth.errors(res.mid[:2], res.yaw))
-                prior = T.prior_from_result(res, T.Prior(prior.centre, prior.normal, track_floor))
-        return rows, float(np.median(times))
-
-    first = next((e for e in base_est if e is not None and len(e.pockets) == 2), None)
-    if first is not None:
-        out['proto_a'], out['proto_a_ms'] = run_tracker(T.prior_from(first))
-    else:
-        out['proto_a'], out['proto_a_ms'] = [], float('nan')
-    c = truth.centre + 0.05 * truth.normal + 0.05 * truth.tangent
-    angle = math.radians(2.0)
-    n2 = np.array([math.cos(truth.yaw + angle), math.sin(truth.yaw + angle)])
-    out['proto_b'], out['proto_b_ms'] = run_tracker(T.Prior(c, n2, SIM_FLOOR))
-    return out
+            rows.append(truth.errors(mid, est.yaw))
+    return {'name': truth.name, 'frames': len(frames), 'pairs': len(rows),
+            'ms': float(np.median(ms)), 'rows': rows, 'truth': truth}
 
 
 def report(results: list[dict]) -> None:
-    print(f'{"bag":18s} {"pose":22s} {"CURRENT PIPELINE":^40s} {"TRACKER, truth+5cm prior":^34s}')
-    print(f'{"":18s} {"":22s} {"pairs":>7s} {"range":>8s} {"lat":>7s} {"yaw":>6s} {"ms":>5s}'
-          f' {"ok":>5s} {"range":>8s} {"lat":>7s} {"yaw":>6s} {"ms":>5s}')
+    print(f'{"bag":18s} {"pose":22s} {"pairs":>7s} {"range":>8s} {"lat":>7s} {"yaw":>6s} {"ms":>5s}')
     for r in results:
         if 'error' in r:
             print(f'{r["name"]:18s} {r["error"]}')
@@ -150,22 +95,13 @@ def report(results: list[dict]) -> None:
             pose += f' p{t.protrusion * 100:.0f}'
         if t.load:
             pose += f' L{t.load:.2f}'
-        # Score against the block face when the blocks stand proud, else the deck.
         key = 'block' if t.protrusion else 'deck'
-        b, p = r['base'], r['proto_b']
-        print(f'{r["name"]:18s} {pose:22s} {r["base_pairs"]:>3d}/{r["frames"]:<3d} '
-              f'{summary(b, "range_" + key):>8s} {summary(b, "lateral_" + key):>7s} '
-              f'{summary(b, "yaw"):>6s} {r["base_ms"]:5.1f}'
-              f' {len(p):>3d}/{r["frames"]:<1d} {summary(p, "range_" + key):>8s} '
-              f'{summary(p, "lateral_" + key):>7s} {summary(p, "yaw"):>6s} {r["proto_b_ms"]:5.1f}')
-    print('\nrange/lat in mm (median over frames; range: + = estimate farther than the true face), '
-          'yaw in degrees.\nScored against the block face for bags with blocks proud (p..), '
-          'the deck otherwise.')
-    print('Tracker started from the TRUTH moved 5 cm / 5 cm / 2 deg, not from the current pipeline.')
-    a = [r for r in results if 'proto_a' in r and r['proto_a']]
-    if a:
-        print(f'Tracker started from the current pipeline\'s first estimate: ran on {len(a)} of '
-              f'{len(results)} bags (the rest had no two-pocket estimate to start from).')
+        rows = r['rows']
+        print(f'{r["name"]:18s} {pose:22s} {r["pairs"]:>3d}/{r["frames"]:<3d} '
+              f'{summary(rows, "range_" + key):>8s} {summary(rows, "lateral_" + key):>7s} '
+              f'{summary(rows, "yaw"):>6s} {r["ms"]:5.1f}')
+    print('\nmm and deg, median over frames; range + = farther than the true face '
+          '(the block face for bags with blocks proud, p.., else the deck).')
 
 
 def main() -> int:
