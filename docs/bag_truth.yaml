@@ -21,10 +21,54 @@
 #     light: ceiling lights on, blinds open
 #     measured: true
 
-# 2026-10-15 session: recorded to target distances; tape not transcribed.
-pallet_s_129:   {side: short, dL: 1.29, dR: 1.29, lat: 0.0, measured: false}
-pallet_s_071:   {side: short, dL: 0.71, dR: 0.71, lat: 0.0, measured: false}
-pallet_l_129:   {side: long,  dL: 1.29, dR: 1.29, lat: 0.0, measured: false}
+# 2026-10-27 lab session, tape readings by Athreya. Each reading is good to
+# about 1 cm, so a yaw from dL - dR is good to about 1-1.4 deg on the short face
+# (two readings over 0.795 m) and about 1 deg on the long one. Agreement between
+# sensors finer than that cannot be scored against these. `lat` was only taken
+# for the two _lat_ bags; elsewhere it is 0 by setup, not by tape.
+pallet_s_305:           {side: short, dL: 3.050, dR: 3.050, lat: +0.00, light: normal, measured: true}
+pallet_s_255:           {side: short, dL: 2.550, dR: 2.550, lat: +0.00, light: normal, measured: true}
+pallet_s_205:           {side: short, dL: 2.050, dR: 2.050, lat: +0.00, light: normal, measured: true}
+pallet_s_155:           {side: short, dL: 1.550, dR: 1.550, lat: +0.00, light: normal, measured: true}
+pallet_s_129:           {side: short, dL: 1.290, dR: 1.290, lat: +0.00, light: normal, measured: true}
+pallet_s_105:           {side: short, dL: 1.050, dR: 1.050, lat: +0.00, light: normal, measured: true}
+pallet_s_080:           {side: short, dL: 0.800, dR: 0.800, lat: +0.00, light: normal, measured: true}
+pallet_s_071:           {side: short, dL: 0.710, dR: 0.710, lat: +0.00, light: normal, measured: true}
+pallet_s_060:           {side: short, dL: 0.600, dR: 0.600, lat: +0.00, light: normal, measured: true}
+pallet_s_024:           {side: short, dL: 0.240, dR: 0.240, lat: +0.00, light: normal, measured: true}
+pallet_l_305:           {side: long,  dL: 3.050, dR: 3.050, lat: +0.00, light: normal, measured: true}
+pallet_l_255:           {side: long,  dL: 2.550, dR: 2.550, lat: +0.00, light: normal, measured: true}
+pallet_l_205:           {side: long,  dL: 2.050, dR: 2.050, lat: +0.00, light: normal, measured: true}
+pallet_l_155:           {side: long,  dL: 1.550, dR: 1.550, lat: +0.00, light: normal, measured: true}
+pallet_l_129:           {side: long,  dL: 1.290, dR: 1.290, lat: +0.00, light: normal, measured: true}
+pallet_l_80:            {side: long,  dL: 0.800, dR: 0.800, lat: +0.00, light: normal, measured: true}
+pallet_l_49:            {side: long,  dL: 0.490, dR: 0.490, lat: +0.00, light: normal, measured: true}
+pallet_l_24:            {side: long,  dL: 0.240, dR: 0.240, lat: +0.00, light: normal, measured: true}
+pallet_s_129_p10:       {side: short, dL: 1.355, dR: 1.232, lat: +0.00, light: normal, measured: true}  # labelled +10 deg; tape gives +8.9
+pallet_s_129_p20:       {side: short, dL: 1.425, dR: 1.155, lat: +0.00, light: normal, measured: true}  # labelled +20; tape +19.9
+pallet_s_129_m10:       {side: short, dL: 1.220, dR: 1.365, lat: +0.00, light: normal, measured: true}  # labelled -10; tape -10.5
+pallet_s_129_m20:       {side: short, dL: 1.150, dR: 1.430, lat: +0.00, light: normal, measured: true}  # labelled -20; tape -20.6
+pallet_s_129_lat_p30:   {side: short, dL: 1.290, dR: 1.290, lat: +0.30, light: normal, measured: true}
+pallet_s_129_lat_m30:   {side: short, dL: 1.290, dR: 1.290, lat: -0.30, light: normal, measured: true}
+pallet_s_205_p10:       {side: short, dL: 2.120, dR: 2.005, lat: +0.00, light: normal, measured: true}  # labelled +10; tape +8.3
+pallet_s_205_p20:       {side: short, dL: 2.160, dR: 1.935, lat: +0.00, light: normal, measured: true}  # labelled +20; tape +16.4
+pallet_s_305_p10:       {side: short, dL: 3.120, dR: 2.990, lat: +0.00, light: normal, measured: true}  # labelled +10; tape +9.4
+
+# Board bags (flat board, not a pallet). evaluate_bags.py does not read these:
+# there is no `board` side in params.yaml, and the board's width is not
+# recorded. NOTE the angle bags here use the OPPOSITE sign to the pallet bags
+# (p10deg has dL < dR), and dL - dR over the nominal angle gives a board width
+# of ~1.0 m at 10 deg but ~0.72 m at 20 deg, so the angle labels are nominal.
+deck_80:          {side: board, dL: 0.800, dR: 0.800, lat: 0.0, measured: true}
+deck_105:         {side: board, dL: 1.050, dR: 1.050, lat: 0.0, measured: true}
+deck_129:         {side: board, dL: 1.290, dR: 1.290, lat: 0.0, measured: true}
+deck_205:         {side: board, dL: 2.050, dR: 2.050, lat: 0.0, measured: true}
+deck_255:         {side: board, dL: 2.550, dR: 2.550, lat: 0.0, measured: true}
+deck_305:         {side: board, dL: 3.050, dR: 3.050, lat: 0.0, measured: true}
+deck_129_p10deg:  {side: board, dL: 1.220, dR: 1.399, lat: 0.0, measured: true}
+deck_129_p20deg:  {side: board, dL: 1.168, dR: 1.420, lat: 0.0, measured: true}
+deck_129_m10deg:  {side: board, dL: 1.350, dR: 1.175, lat: 0.0, measured: true}
+deck_129_m20deg:  {side: board, dL: 1.390, dR: 1.150, lat: 0.0, measured: true}
 
 # 2026-10-14: the first real bag, on the 2.0 m tape mark (face_x 2.000).
 pallet_2m_0deg: {side: short, dL: 1.5375, dR: 1.5375, lat: 0.0, measured: false}

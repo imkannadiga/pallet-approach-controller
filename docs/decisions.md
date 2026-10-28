@@ -1372,6 +1372,70 @@ the robot:* run `start_positions.py --seed 7`, set the pallet to each row's
 is read as INSERTED, the pickup's success outcome, since approach-only is gone
 (D95). (Athreya, 2026-10-27)
 
+**D97. Camera and LiDAR are fused into one pallet estimate, which replaces the
+camera-only estimate; the pipeline's working range is a face 1.5-3.0 m away.**
+The LiDAR gives the face line (range and yaw), the camera finds the pockets
+along it, and a filter in `odom` carries the pallet pose between measurements
+on wheel odometry. Outside the range the pipeline refuses the run rather than
+stretching to it: getting the robot into the range is the navigation system's
+job, and if it cannot, that is what gets fixed. *Why:* on the 2026-10-27 tape
+bags the LiDAR's range had a constant offset (+22 to +36 mm) with 0.3-1.6 mm
+scatter and yaw within the tape's resolution at every range, while the camera's
+range error grew to +33/+68 mm at 3.5 m; the camera, in turn, resolves pocket
+edges about six times finer than the LiDAR's columns at 2.5 m. Beyond 3.0 m the
+camera's pocket estimate is not good enough, which sets the upper bound.
+*Interpretation (confirmed 2026-10-28 with D102):* distances are face distances from
+`base_footprint`, the frame every other pipeline distance is in (standoff 1.75,
+`min_run_up` 2.5), i.e. 1.04-2.54 m from the bumper on the tape. The closing
+loop then lies entirely inside the range, but a computed run-up above 3.0 m
+(lateral offsets beyond roughly 0.2 m; 0.30 m needs 3.40) can no longer be
+reached and must be refused. *Not yet built.* (Athreya, 2026-10-27)
+
+**D98. No pocket check during the close range or insertion; the pockets are
+assumed empty and insertable.** Below about 1.5 m the tines would already be
+in, and a real autonomous forklift would carry proximity sensors on the tines
+for that. The LiDAR's ability to see pocket-height returns down to 0.29 m from
+the bumper is therefore not used for a pocket check. *Scope:* this is about the
+close range only; the GO/NO-GO rules at the standoff are unchanged. (Athreya,
+2026-10-27)
+
+**D99. The camera-to-LiDAR offset is fixed by a measured extrinsic
+calibration, not by subtracting a constant.** A checkerboard board seen by
+both sensors in many poses: the camera gets the board's plane from the
+checkerboard corners (solvePnP on the rectified left image, which does not use
+stereo depth), the LiDAR from the returns on the board; the transform that
+makes the two sets of planes agree is the extrinsic. *Why:* the +30 mm is a
+symptom; a subtraction would hide which transform is wrong and would be wrong
+again for yaw, height and any other range. It also replaces D74's LiDAR
+correction, which the four-heading floor bags already showed is wrong for the
+current mount. (Athreya, 2026-10-27)
+
+**D100. The calibration is a separate, installable tool that drives the robot;
+its result is published on /tf.** `lidar-camera-calib`, outside this
+repository (`~/Desktop/personal/lidar-camera-calib`). One checkerboard board,
+fixed; the operator places it in four poses (upright, turned +30, turned -30,
+leaned back ~40 deg) and the robot drives in and back at each, measuring at up
+to five stops 0.5 m apart (forward 0.10 m/s, reverse 0.05, never above 0.20;
+never nearer than 1.0 m to the board), with a pre-check before it moves (board
+found, at the asked angle within 10 deg) and stops while driving on stale
+data, an obstacle in the corridor, a lost board, or Ctrl-C. Confidence
+is per-axis uncertainty (jackknife over stops), repeatability (way in vs way
+back), residual, an independent floor check and observability, graded GOOD
+(3 mm / 0.2 deg) / USABLE (10 mm / 0.5 deg) / FAIL; the calibration file is
+written only when it is not FAIL, the old one kept as a backup, the raw data
+of every stop saved. The result is published as `<camera frame> ->
+lidar_calibrated` (Athreya's choice: the correction usable machine-wide
+through tf), and the LiDAR relay is to re-stamp its clouds with that frame.
+*Why separate:* it is a robot-commissioning tool, not part of the pickup, and
+it should work on any robot with a camera, a LiDAR and odometry. *Why one
+leaning pose:* upright boards never measure the LiDAR's height, whatever
+the yaw or the distance (a synthetic conditioning check). *Why a drive:* the range of
+distances separates a rotation error from a sideways offset; on synthetic data
+the full plan recovered a known transform to 0.1-2.6 mm and 0.13 deg, and a run
+with all stops within 0.6 m was 6-15 mm off and said so. *Not yet done in this
+repository:* publishing the file at startup and the relay's re-stamping.
+(Athreya, 2026-10-28)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
