@@ -6,6 +6,19 @@ decided until it reaches `decisions.md`.
 
 ## Perception
 
+### Fused perception (D102, D104): open items
+- The fused sideways sigma is optimistic (+-2 mm claimed, -12/-3 mm on the two
+  taped bags): record more taped-lateral bags before trusting it.
+- `perception:=fused` has not yet reached GO in the sim: the overlay fix
+  (params_file / overlay_file passed with `-p`) is untested.
+
+### Fused perception on the robot (needs the robot)
+Rebuild the image; `./docker/build_and_run.sh dry` with `fusion:=true` (shadow) and then `perception:=fused`; read
+/pallet_fusion/stats (timing on the Jetson, rates, sigma) next to the old
+pipeline's estimate through a few runs. Also: D101 dry run, D103 against the
+calibration runs' PnP distances, taped-lateral and loaded-pallet bags.
+
+
 - **Learned pallet detector in front of the geometry.** A small detector
   (YOLO class, TensorRT on the Orin's GPU; an open-vocabulary model such as
   YOLO-World prompted with "pallet", or one fine-tuned on a public pallet set)
