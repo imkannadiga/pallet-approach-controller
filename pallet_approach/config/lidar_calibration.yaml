@@ -1,0 +1,91 @@
+# Written by lidar-camera-calib. Do not edit by hand: re-run the calibration.
+# The full report, with every stop, is calib_runs/20261028-170946/report.yaml
+tool: lidar-camera-calib 0.1.0
+date: '2026-10-28T17:25:12'
+grade: USABLE
+parent_frame: zed2_left_camera_frame_optical
+child_frame: lidar_calibrated
+transform:
+  translation:
+  - 0.073679
+  - -0.226084
+  - -0.243313
+  rotation_xyzw:
+  - 0.50188992
+  - 0.502698766
+  - -0.49492646
+  - 0.500448057
+  rpy_deg:
+  - 152.73036
+  - 89.40702
+  - 63.09307
+camera_frame: zed2_left_camera_frame_optical
+lidar_frame: os_lidar
+camera_T_lidar:
+  translation:
+  - 0.073679
+  - -0.226084
+  - -0.243313
+  rotation_xyzw:
+  - 0.50188992
+  - 0.502698766
+  - -0.49492646
+  - 0.500448057
+  rpy_deg:
+  - 152.73036
+  - 89.40702
+  - 63.09307
+camera_T_lidar_prior:
+  translation:
+  - 0.060071
+  - -0.257295
+  - -0.217
+  rotation_xyzw:
+  - -0.5
+  - -0.5
+  - 0.5
+  - -0.5
+  rpy_deg:
+  - -45.0
+  - 90.0
+  - -135.0
+correction_mm:
+- 13.61
+- 31.21
+- -26.31
+correction_deg:
+- 0.5279
+- -0.27
+- 0.3627
+confidence:
+  uncertainty_mm:
+  - 2.6907
+  - 3.9181
+  - 0.8679
+  uncertainty_deg:
+  - 0.0801
+  - 0.0626
+  - 0.1283
+  prediction_error_mm: 2.1819
+  prediction_error_deg: 0.6152
+  repeatability_mm: 0.6568
+  residual_mm: 7.6891
+  lidar_plane_noise_mm: 7.0699
+  floor_check_deg: 0.1029
+  floor_check_mm: 1.9532
+  observability: 0.2935
+  stops_used: 34
+  poses:
+  - back40
+  - minus30
+  - plus30
+  - upright
+board:
+  inner_corners:
+  - 9
+  - 6
+  square_m: 0.065
+  size_m:
+  - 0.8
+  - 1.0
+run_dir: calib_runs/20261028-170946

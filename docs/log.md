@@ -1048,3 +1048,31 @@ depth is a model fitted to real bags at 1.2-2.4 m and extrapolates beyond):
   and an 8 cm all-round overhang still pass the current pipeline.
 - The tracker needs a prior. Acquiring a loaded pallet in the first place is
   not solved by it.
+
+## 2026-10-28
+
+**Camera-LiDAR calibration, measured and wired in (D100, D101).**
+- Built `lidar-camera-calib`, a separate installable tool (outside this repo):
+  the robot drives in and back past a fixed checkerboard in four poses and
+  solves the camera-LiDAR transform from the board's plane as each sensor sees
+  it. Ran it on the robot five times; what each run taught:
+  - A3 sheet at "50 mm": a 3 % scale error (the print was 48.5 mm, "fit to
+    page"). The per-stop mismatch grew linearly with distance, -30 to +31 mm.
+  - A3 at 48.5 mm: USABLE. Then a 1.0 x 1.2 m panel with the same A3 sheet
+    on it: the height moved by 24 mm and the floor check failed. Not a bowed
+    panel (the flatness map is a straight slope): the Ouster reads a fixed flat
+    board's lean differently with distance (-0.3 deg at 3.1 m, about -1.3 deg
+    at 1.2 m). A big panel gives that effect many close-range rows to pull with.
+  - 9x6, 65 mm on 80 x 100 cm: the model fits (residual 7.7 mm against 7.1 mm
+    LiDAR noise), floor check 0.10 deg / 2 mm, USABLE. In use now.
+- Found and fixed on the way: rclpy's own Ctrl-C handler shut ROS down before
+  the tool could send its stopping zeros (now SignalHandlerOptions.NO, and a
+  check that presses Ctrl-C mid-drive); the floor counted as an obstacle
+  because the LiDAR's URDF height is 4-6 cm out; results written inside the
+  stack container were lost when it was removed.
+- **Validation on 16 tape bags not used in the calibration: LiDAR range error
+  +29.8 mm -> -0.5 mm (sd 3.4 mm either way).**
+- The robot does not drive straight: forward 1 m and back leaves the front
+  wheels 0.5 cm and the rear 2.3 cm to one side (~2 deg). Not the calibration's
+  problem (each stop is a snapshot), but blind insertion runs on odometry with
+  angular zero; the forward-only drift over 1.05 m is still to be measured.

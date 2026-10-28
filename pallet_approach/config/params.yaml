@@ -272,12 +272,27 @@
       # returns passed the 3 cm margins: the cross-check saw a "surface" 0.5 m
       # in front of every pallet face and never confirmed one. The height is
       # the floor's AFTER levelling; the correction moves it to floor_z.
-      # STOPGAP until the auto-calibration routine (D74) measures it.
+      # SUPERSEDED by the measured calibration below (D101, 2026-10-28):
+      # kept for old bags and as a fallback, off.
       lidar_correction:
-        enabled: true
+        enabled: false
         measured_floor_pitch: -0.010158     # -0.582 deg
         measured_floor_roll: -0.002034      # -0.117 deg
         measured_floor_height: 0.0253       # m, levelled; floor_z is -0.025
+
+      # [measured 2026-10-28, D101] The LiDAR's pose, calibrated against the
+      # camera with lidar-camera-calib (a separate tool, D100): a 9x6, 65 mm
+      # checkerboard on an 80 x 100 cm board, four poses, 34 stops, graded
+      # USABLE -- +-2.7 / 3.9 / 0.9 mm and <= 0.13 deg within the run, about
+      # +-5 mm forward between runs; independent floor check 0.10 deg / 2 mm.
+      # The launch file publishes config/lidar_calibration.yaml on /tf as
+      # <camera optical> -> `frame`, the LiDAR relay re-stamps every cloud with
+      # `frame`, and the tracker and controller give the LiDAR the camera's
+      # tilt correction above, rotated about the camera (it is fixed to it).
+      # Replace the file to recalibrate; nothing else changes.
+      lidar_calibration:
+        enabled: true
+        frame: lidar_calibrated
 
     # BGR, by what the robot is DOING rather than one colour per state: looking
     # (grey), driving towards the pallet (amber), committed with the forks going

@@ -21,8 +21,10 @@
     frames:
       extrinsic_correction:
         enabled: false
-      # The sim's LiDAR is mounted exactly where the URDF says (D74).
+      # The sim's LiDAR is mounted exactly where the URDF says (D74, D101).
       lidar_correction:
+        enabled: false
+      lidar_calibration:
         enabled: false
       # 3. Sim plumbing is slower than the ZED's. The camera's dynamic tf link
       #    is relayed per frame by a Python node (sim/.../camera_tf.py), and on

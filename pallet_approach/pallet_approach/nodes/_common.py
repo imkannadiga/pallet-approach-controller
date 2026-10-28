@@ -126,20 +126,61 @@ def logged_transition(callback):
     return wrapper
 
 
+LIDAR_PARAMS = {
+    # D74's floor-based correction: the fallback, off since D101.
+    'frames.lidar_correction.enabled': False,
+    'frames.lidar_correction.measured_floor_pitch': 0.0,
+    'frames.lidar_correction.measured_floor_roll': 0.0,
+    'frames.lidar_correction.measured_floor_height': -0.025,
+    # D101: the calibrated LiDAR, which follows the camera's tilt correction.
+    'frames.lidar_calibration.enabled': False,
+    'frames.camera_optical': 'zed2_left_camera_frame_optical',
+    'frames.extrinsic_correction.enabled': False,
+    'frames.extrinsic_correction.measured_floor_pitch': 0.0,
+    'frames.extrinsic_correction.measured_floor_roll': 0.0,
+}
+
+
+def declare_lidar_params(node) -> None:
+    """The parameters `lidar_in_ground` reads; one list for every node that uses the LiDAR."""
+    for name, default in LIDAR_PARAMS.items():
+        if not node.has_parameter(name):
+            node.declare_parameter(name, default)
+
+
+def lidar_in_ground(node, buffer, cloud_frame: str, stamp, timeout) -> np.ndarray:
+    """4x4 ``ground <- cloud_frame`` with the LiDAR correction in force: D101
+    (calibrated, moved with the camera's tilt correction), else D74, else tf as is.
+    Shared by the tracker and the controller so both put the LiDAR in one place.
+    """
+    from pallet_approach.calibration import (correct_lidar_transform, correction_matrix,
+                                             lidar_follows_camera)
+    from pallet_approach.ros_conversions import transform_to_matrix
+    get = lambda name: node.get_parameter(name).value   # noqa: E731
+    ground = get('frames.ground')
+    matrix = transform_to_matrix(lookup_waiting(buffer, ground, cloud_frame, stamp, timeout))
+    if get('frames.lidar_calibration.enabled'):
+        camera = transform_to_matrix(lookup_waiting(
+            buffer, ground, get('frames.camera_optical'), stamp, timeout))
+        correction = np.eye(3)
+        if get('frames.extrinsic_correction.enabled'):
+            correction = correction_matrix(get('frames.extrinsic_correction.measured_floor_pitch'),
+                                           get('frames.extrinsic_correction.measured_floor_roll'))
+        return lidar_follows_camera(matrix, camera, correction)
+    if get('frames.lidar_correction.enabled'):
+        return correct_lidar_transform(matrix, get('frames.lidar_correction.measured_floor_pitch'),
+                                       get('frames.lidar_correction.measured_floor_roll'),
+                                       get('frames.lidar_correction.measured_floor_height'),
+                                       get('floor_z'))
+    return matrix
+
+
 def lookup_waiting(buffer, target: str, source: str, stamp, timeout=None):
-    """`buffer.lookup_transform`, but waiting by SLEEPING, not spinning.
+    """`buffer.lookup_transform` that waits by sleeping, not spinning.
 
-    rclpy's tf2 `lookup_transform(..., timeout)` waits in a hot loop. Measured
-    2026-10-22 with py-spy: 81 % of fork_overlay's CPU was `can_transform`,
-    the node at 87 % of a core, every time tf ran behind the image. On the
-    Jetson that core is taken from perception. Here the wait polls every 5 ms
-    and sleeps in between, which releases the GIL so the listener's own
-    thread (`spin_thread=True`, see the nodes) can deliver the transform being
-    waited for. Same timeout, same exceptions: after the deadline it makes the
-    ordinary lookup, which raises exactly what it always did.
-
-    `timeout` is an rclpy Duration, seconds as a float, or None for no wait.
-    The deadline is wall time, so it means the same in sim time and real time.
+    rclpy's own timeout busy-waits (81 % of fork_overlay's CPU, 2026-10-22). Polls
+    every 5 ms against a wall-clock deadline, then makes the ordinary lookup, so
+    the exceptions are unchanged. `timeout`: a Duration, seconds, or None.
     """
     seconds = 0.0
     if timeout is not None:

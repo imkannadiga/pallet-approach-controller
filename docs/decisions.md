@@ -1436,6 +1436,30 @@ with all stops within 0.6 m was 6-15 mm off and said so. *Not yet done in this
 repository:* publishing the file at startup and the relay's re-stamping.
 (Athreya, 2026-10-28)
 
+**D101. The camera-LiDAR calibration replaces D74's LiDAR correction.** The
+result of lidar-camera-calib (D100) on 2026-10-28 -- a 9x6, 65 mm checkerboard
+on an 80 x 100 cm board, four poses, 34 stops, graded USABLE (+-2.7 / 3.9 /
+0.9 mm and <= 0.13 deg within the run; independent floor check 0.10 deg /
+2 mm) -- is `config/lidar_calibration.yaml`. The launch file publishes it as
+`zed2_left_camera_frame_optical -> lidar_calibrated`; `lidar_relay` re-stamps
+every cloud with `lidar_calibrated` in its serialized bytes (`cdr.py`, still
+never decoding the cloud), so everything that reads the LiDAR gets the
+measured pose through tf. Because the LiDAR is now calibrated to the camera,
+it inherits the camera's tilt correction, applied as a rotation about the
+camera (`calibration.lidar_follows_camera`; one helper, `lidar_in_ground`,
+serves both the tracker's cross-check and the controller's insertion stop).
+D74's `lidar_correction` is kept as a fallback, off; the sim turns the
+calibration off (`lidar_calibration:=none`). *Measured effect* (16 short-face
+bags with tape truth, none used in the calibration): the LiDAR's range error
+against tape went from +29.8 mm mean to -0.5 mm, spread 3.4 mm either way;
+yaw unchanged. *Known limits:* the forward value varied by ~7 mm between
+calibration runs (A3 board vs this one), so +-5 mm forward is the honest
+figure; height and pitch carry the Ouster's own distance-dependent tilt (about
+1 deg between 3 m and 1.2 m on a flat board), which no rigid transform can
+remove. *Not yet run on the robot:* the node path (`lidar_in_ground` with the
+calibration on) is covered by unit tests and by the same functions in the
+offline tools, not yet by a dry run. (Athreya, 2026-10-28)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

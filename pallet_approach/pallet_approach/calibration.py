@@ -1,35 +1,13 @@
-"""Extrinsic correction for the camera mounting.
+"""Mounting corrections for the camera and the LiDAR.
 
-The URDF says the ZED's optical frame is level with `base_footprint`. Measured
-2026-10-14 against the floor plane, it is not: it is pitched down 0.698° and
-rolled -0.516°, 0.868° in total. See docs/SYSTEM.md for the measurement and
-`tools/floor_plane_check.py` to repeat it.
-
-The LiDAR is out too (measured 2026-10-23; an earlier note called it level):
-its floor came out 50 mm high after levelling and pitched -0.58°, which put
-floor returns 3-4 cm above the camera's floor -- above the 3 cm margins of
-both the LiDAR cross-check and the insertion stop. `correct_lidar_transform`
-corrects it, by the same method plus a height shift. A stopgap until the
-auto-calibration routine measures both sensors (decisions.md, D74).
-
-Left uncorrected that is 22 mm of vertical error at the standoff and 30 mm at
-2 m, against a 30 mm pocket-height tolerance -- so it has to be corrected before
-pocket geometry means anything.
-
-The correction lives here rather than in the robot description, because that
-URDF is in a container shared with other projects and cannot easily be rebuilt.
-Keeping it here also makes it an explicit, re-measurable parameter instead of a
-number buried in a xacro.
-
-**What a ground plane can and cannot calibrate.** A plane has three parameters:
-two for its normal direction and one for its distance. So observing a known
-plane pins down exactly three of the six extrinsic degrees of freedom -- the two
-tilt angles and the height. It is blind to the other three: you cannot tell how
-a sensor has slid along the plane (x, y) or spun about its normal (yaw), because
-none of those change what the plane looks like. So this module corrects pitch
-and roll only. The height came out right already (-0.0246 m measured against
--0.025 m from the tape measure, agreeing to 1.7 mm). Yaw, x and y need a
-different reference -- an object at a taped position.
+Camera: the ZED is pitched 0.698 deg and rolled -0.516 deg against the URDF
+(measured 2026-10-14 from the floor, `tools/floor_plane_check.py`, docs/SYSTEM.md);
+`correction_matrix` + `correct_transform` level it. A floor fit only constrains
+pitch, roll and height, not x, y or yaw.
+LiDAR: calibrated against the camera (D101, `config/lidar_calibration.yaml`) and
+moved with the camera's correction by `lidar_follows_camera`. D74's floor-based
+`correct_lidar_transform` is the fallback, off.
+Kept here, not in the URDF, because that URDF lives in a shared container.
 """
 
 from __future__ import annotations
@@ -39,7 +17,8 @@ import math
 import numpy as np
 
 __all__ = ['measured_floor_normal', 'levelling_rotation', 'correction_matrix',
-           'correct_transform', 'apparent_floor_normal']
+           'correct_transform', 'apparent_floor_normal', 'lidar_follows_camera',
+           'read_lidar_calibration']
 
 
 def measured_floor_normal(pitch: float, roll: float) -> np.ndarray:
@@ -130,3 +109,35 @@ def correct_lidar_transform(ground_from_lidar: np.ndarray,
     out[2, 3] += float(floor_z) - float(measured_floor_height)
     return out
 
+
+def lidar_follows_camera(ground_from_lidar: np.ndarray, ground_from_camera: np.ndarray,
+                         camera_correction: np.ndarray) -> np.ndarray:
+    """The calibrated LiDAR (D101) moved with the camera's tilt correction.
+
+    tf gives ground <- camera (URDF) . camera <- lidar (measured); the LiDAR is
+    fixed to the camera, so it is rotated about the camera, not the ground
+    origin (5 mm at 0.34 m for 0.87 deg). Returns
+    corrected(ground <- camera) . (ground <- camera)^-1 . (ground <- lidar).
+    """
+    g_c = np.asarray(ground_from_camera, dtype=float)
+    inv = np.eye(4)
+    inv[:3, :3] = g_c[:3, :3].T
+    inv[:3, 3] = -g_c[:3, :3].T @ g_c[:3, 3]
+    return correct_transform(g_c, camera_correction) @ inv @ np.asarray(ground_from_lidar, dtype=float)
+
+
+def read_lidar_calibration(path) -> tuple[str, str, np.ndarray]:
+    """(parent frame, child frame, 4x4 parent <- child) from a lidar-camera-calib file."""
+    import yaml
+    with open(path) as f:
+        doc = yaml.safe_load(f)
+    t = doc['transform']
+    x, y, z, w = (float(v) for v in t['rotation_xyzw'])
+    n = math.sqrt(x * x + y * y + z * z + w * w)
+    x, y, z, w = x / n, y / n, z / n, w / n
+    out = np.eye(4)
+    out[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                   [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                   [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
+    out[:3, 3] = [float(v) for v in t['translation']]
+    return doc['parent_frame'], doc['child_frame'], out

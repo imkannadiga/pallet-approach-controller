@@ -22,6 +22,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import PointCloud2
 
+from pallet_approach.cdr import restamp
+
 BEST_EFFORT = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
 
 
@@ -30,6 +32,8 @@ class LidarRelay(Node):
     def _declare(self):
         self.declare_parameter('topics.lidar_source', '/ouster/points')
         self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
+        self.declare_parameter('frames.lidar_calibration.enabled', False)
+        self.declare_parameter('frames.lidar_calibration.frame', 'lidar_calibrated')
 
     def __init__(self):
         super().__init__('lidar_relay')
@@ -38,9 +42,14 @@ class LidarRelay(Node):
         target = self.get_parameter('topics.lidar').value
         self._pub = self.create_publisher(PointCloud2, target, BEST_EFFORT)
         # raw=True: the bytes are passed on as they came, never decoded.
-        self.create_subscription(PointCloud2, source, self._pub.publish, BEST_EFFORT,
-                                 raw=True)
-        self.get_logger().info(f'relaying {source} -> {target} (one network copy)')
+        callback = self._pub.publish
+        note = ''
+        if self.get_parameter('frames.lidar_calibration.enabled').value:
+            frame = self.get_parameter('frames.lidar_calibration.frame').value
+            callback = lambda raw: self._pub.publish(restamp(raw, frame))   # noqa: E731
+            note = f', re-stamped {frame} (D101)'
+        self.create_subscription(PointCloud2, source, callback, BEST_EFFORT, raw=True)
+        self.get_logger().info(f'relaying {source} -> {target} (one network copy{note})')
 
 
 def main(args=None):

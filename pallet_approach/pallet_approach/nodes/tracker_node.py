@@ -39,19 +39,17 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
-from pallet_approach.nodes._common import LatestRaw, lookup_waiting
+from pallet_approach.nodes._common import LatestRaw, declare_lidar_params, lidar_in_ground
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 from pallet_approach_interfaces.msg import TrackedPallet
 
 from pallet_approach.model import Pose2D
-from pallet_approach.calibration import correct_lidar_transform
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     estimate_from_msg,
     estimate_to_msg,
     pose2d_from_odometry,
     stamp_to_seconds,
-    transform_to_matrix,
 )
 from pallet_approach.tracker import Tracker
 
@@ -92,10 +90,7 @@ class TrackerNode(Node):
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
         self.declare_parameter('floor_z', -0.025)
-        self.declare_parameter('frames.lidar_correction.enabled', True)
-        self.declare_parameter('frames.lidar_correction.measured_floor_pitch', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_roll', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_height', -0.025)
+        declare_lidar_params(self)   # D74 / D101, shared with the controller
         self.declare_parameter('pallet.pallet_height', 0.145)
         for name, default in (
             ('window', 10), ('min_window_frames', 5), ('confirm_frames', 5),
@@ -197,7 +192,7 @@ class TrackerNode(Node):
             return None
         ground = self.get_parameter('frames.ground').value
         try:
-            transform = lookup_waiting(self._buffer, ground, cloud.header.frame_id, cloud.header.stamp,
+            matrix = lidar_in_ground(self, self._buffer, cloud.header.frame_id, cloud.header.stamp,
                 rclpy.duration.Duration(
                     seconds=float(self.get_parameter('frames.tf_timeout').value)))
         except Exception as error:
@@ -205,14 +200,6 @@ class TrackerNode(Node):
                 f'tf {ground} <- {cloud.header.frame_id}: {error}',
                 throttle_duration_sec=5.0)
             return None
-        matrix = transform_to_matrix(transform)
-        if self.get_parameter('frames.lidar_correction.enabled').value:
-            matrix = correct_lidar_transform(
-                matrix,
-                self.get_parameter('frames.lidar_correction.measured_floor_pitch').value,
-                self.get_parameter('frames.lidar_correction.measured_floor_roll').value,
-                self.get_parameter('frames.lidar_correction.measured_floor_height').value,
-                self.get_parameter('floor_z').value)
         return transform_points(unpack_cloud(cloud), matrix)
 
     def _on_estimate(self, msg: PalletEstimateMsg):

@@ -50,17 +50,16 @@ from pallet_approach_interfaces.msg import DriveCommand, DriveStatus, TrackedPal
 
 from pallet_approach import closing
 from pallet_approach.approach import points_then_to_now
-from pallet_approach.controller import ZERO, RateLimiter
+from pallet_approach.controller import ZERO, Command, RateLimiter
 from pallet_approach.drive import MODES, DriveExecutor, Request, Result, executor_params
-from pallet_approach.nodes._common import LatestRaw, logged_transition, lookup_waiting
-from pallet_approach.calibration import correct_lidar_transform
+from pallet_approach.nodes._common import (LatestRaw, declare_lidar_params, lidar_in_ground,
+                                           logged_transition)
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     command_to_twist,
     estimate_from_msg,
     pose2d_from_odometry,
     stamp_to_seconds,
-    transform_to_matrix,
 )
 
 RELIABLE = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
@@ -106,10 +105,7 @@ class ControllerNode(LifecycleNode):
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
         self.declare_parameter('floor_z', -0.025)
-        self.declare_parameter('frames.lidar_correction.enabled', True)
-        self.declare_parameter('frames.lidar_correction.measured_floor_pitch', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_roll', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_height', -0.025)
+        declare_lidar_params(self)   # D74 / D101, shared with the tracker
         self.declare_parameter('standoff_distance', 1.75)
         self.declare_parameter('robot.width', 0.6996)
         self.declare_parameter('robot.rear_bumper_x', -0.4625)
@@ -352,20 +348,12 @@ class ControllerNode(LifecycleNode):
             return None
         ground = self._get('frames.ground')
         try:
-            transform = lookup_waiting(self._buffer, ground, cloud.header.frame_id, cloud.header.stamp,
+            matrix = lidar_in_ground(self, self._buffer, cloud.header.frame_id, cloud.header.stamp,
                 rclpy.duration.Duration(seconds=float(self._get('frames.tf_timeout'))))
         except Exception as error:
             self.get_logger().warning(f'tf {ground} <- {cloud.header.frame_id}: '
                                       f'{error}', throttle_duration_sec=5.0)
             return None
-        matrix = transform_to_matrix(transform)
-        if self._get('frames.lidar_correction.enabled'):
-            matrix = correct_lidar_transform(
-                matrix,
-                self._get('frames.lidar_correction.measured_floor_pitch'),
-                self._get('frames.lidar_correction.measured_floor_roll'),
-                self._get('frames.lidar_correction.measured_floor_height'),
-                self._get('floor_z'))
         points = transform_points(unpack_cloud(cloud), matrix)
         return self._to_now(points, stamp_to_seconds(cloud.header.stamp))
 

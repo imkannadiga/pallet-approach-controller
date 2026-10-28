@@ -26,6 +26,11 @@ Arguments:
     video_stream:=false  do not start MediaMTX or the video streamers (no
                          GStreamer/MediaMTX needed then -- useful on a
                          desk/CI box that has neither installed)
+    lidar_calibration:=<path>|none  the camera-LiDAR calibration published on
+                         /tf (D101); default config/lidar_calibration.yaml.
+                         "none" publishes nothing -- then also set
+                         frames.lidar_calibration.enabled: false, or the
+                         relayed clouds carry a frame tf cannot resolve.
     encoder:=auto        forwarded to video_stream.launch.py: auto | nvenc |
                          x264 | vp8. "auto" probes for the Jetson's hardware
                          encoder at startup and falls back to x264 if it is
@@ -67,11 +72,34 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
+from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode, Node
+
+
+def lidar_calibration_tf(context, *args, **kwargs):
+    """The camera-LiDAR calibration on /tf, as one static transform (D101).
+
+    Read from the file the calibration tool wrote, so recalibrating is
+    replacing that file; nothing in params.yaml holds a copy of the numbers.
+    """
+    path = LaunchConfiguration('lidar_calibration').perform(context)
+    if path.lower() in ('', 'none', 'false'):
+        return []
+    import yaml
+    with open(path) as f:
+        doc = yaml.safe_load(f)
+    (x, y, z), (qx, qy, qz, qw) = doc['transform']['translation'], doc['transform']['rotation_xyzw']
+    return [Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name='lidar_calibration_tf', output='screen',
+        arguments=['--x', str(x), '--y', str(y), '--z', str(z),
+                   '--qx', str(qx), '--qy', str(qy), '--qz', str(qz), '--qw', str(qw),
+                   '--frame-id', doc['parent_frame'], '--child-frame-id', doc['child_frame']],
+    )]
 
 
 def generate_launch_description():
@@ -122,6 +150,11 @@ def generate_launch_description():
             description='forwarded to video_stream.launch.py; "auto" probes '
                         'for nvv4l2h264enc and falls back to x264'),
         DeclareLaunchArgument('log_level', default_value='info'),
+        DeclareLaunchArgument(
+            'lidar_calibration',
+            default_value=os.path.join(share, 'config', 'lidar_calibration.yaml'),
+            description='camera-LiDAR calibration file published on /tf (D101); none to skip'),
+        OpaqueFunction(function=lidar_calibration_tf),
 
         # Arbitration: safety stop > pallet controller > Nav2 (D3, D10, D30).
         # twist_mux publishes `cmd_vel_out`, which is remapped onto the topic
