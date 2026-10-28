@@ -410,6 +410,30 @@
     camera_depth:
       disparity_bias: 0.0048         # 1/m
 
+    # Camera and LiDAR in one estimate (D102 step c, pallet_approach/fusion.py):
+    # a Kalman filter on the pallet's pose in odom. Measurement errors are the
+    # measured ones (tape bags, 2026-10-27/28); process noise is odometry drift.
+    fusion:
+      lidar_sigma_range: 0.004       # m: -0.5 +- 3.4 mm against tape after D101
+      lidar_sigma_lateral: 0.015     # m: face edges from columns ~15 mm apart at 2.5 m
+      lidar_sigma_yaw_deg: 1.0       # agrees with tape within its own 1-1.4 deg resolution
+      camera_sigma_lateral: 0.005    # m: 0 and -9 mm on the taped-lateral bags, 0.1-1.7 mm scatter
+      process_sigma_xy: 0.002        # m per sqrt(s): odometry drift while the robot moves
+      process_sigma_yaw_deg: 0.2     # deg per sqrt(s): ~1 deg per metre measured (2026-10-28)
+      gate_chi2_3d: 11.34            # 99 %: LiDAR faces further than this from the estimate are outliers
+      gate_chi2_1d: 6.63             # 99 %, camera
+      # [D102 item 6] no GO when the camera and the LiDAR disagree by more than
+      # this, for this many frames in a row (camera depth corrected, D103).
+      disagree_range: 0.020
+      disagree_yaw_deg: 3.0
+      disagree_frames: 5
+      # [D102 item 7] tracking may go on with one sensor; GO needs both fresh.
+      lidar_max_age: 0.5             # s: 5 sweeps at 10 Hz
+      camera_max_age: 0.5            # s
+      # [D104 item 3] "stable" = both sensors accepted for this many frames
+      # in a row, nothing refused by the gate, the camera seeing both pockets.
+      healthy_frames: 5
+
     # The camera's part (D102 step b, pallet_approach/camera_pockets.py): the
     # pockets' position along the LiDAR's face line, from depth sampled at
     # pocket height on that line. No image-wide search.

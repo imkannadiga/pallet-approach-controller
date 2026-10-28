@@ -1115,3 +1115,19 @@ bags explain it: the calibrated LiDAR is within +-5 mm of tape from 1.26 to
 (-10 mm at 1.5 m, -19 at 2.5, -32 at 3.0, -47 at 3.5). D102 item 6 (no GO
 beyond 20 mm camera-LiDAR disagreement) would trip on that alone; to be
 decided before step (c).
+
+**D103 and D102 step (c).** The ZED's disparity offset, fitted on the board
+bags (beta 0.0048 1/m), takes the camera-vs-LiDAR range on the pallet bags from
+-2..-26 mm to -5..+4 mm (held out). The camera also measures the face angle now
+(the wood's depth trend along the face: a 4 deg turn reads 4 +- 1 deg).
+`pallet_approach/fusion.py`: a Kalman filter on the pallet pose in odom --
+LiDAR gives range (4 mm), angle (1 deg) and a rough lateral (15 mm); the
+camera only the lateral (5 mm); the disagreement rule (20 mm / 3 deg / 5
+frames) and the stale-sensor rule gate GO. `tools/evaluate_fusion.py` runs the
+whole chain on the bags (robot still): GO allowed on all 15 pallet bags inside
+1.5-3.0 m, range -7..+13 mm, yaw within the tape's resolution, the
+disagreement rule never tripped; 3.5 m no GO (LiDAR too thin, no camera
+pockets); empty floor, nothing. **Caveat:** sideways the filter claims +-2 mm
+but the two bags with taped lateral read -12 and -3 mm: the camera's sideways
+sigma, or a small sideways bias (the calibration's?), is not yet known. More
+taped-lateral bags needed before trusting sigma_lateral in a GO rule.
