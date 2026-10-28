@@ -1,39 +1,13 @@
-"""The watchdog: measures whether the stack is healthy, and stops the robot.
+"""The watchdog: reports whether the stack is healthy, and stops the robot.
 
-Two jobs, and they are deliberately in one node:
+1. Publishes `/health`, so the coordinator refuses (D12) or aborts (D9) runs.
+2. While a run is in progress, publishes zeros on twist_mux's safety input,
+   which outranks the controller and Nav2. This depends on neither the
+   coordinator being alive nor correct; the overlap is deliberate.
 
-1. **Report.** Publish `/health` at a steady rate so the coordinator can refuse
-   a goal when something is already wrong (D12) and abort a run when something
-   goes wrong partway through (D9).
-2. **Act.** While a run is in progress, publish a zero command on the safety
-   input of `twist_mux`, which outranks both the pallet controller and Nav2.
-
-Job 2 is the one that matters. The coordinator aborting a run is the normal
-path, and it depends on the coordinator being alive and correct. This node
-depends on neither: it watches the same sensors and drives the highest-priority
-input directly, so a coordinator that has wedged or died still ends up with a
-stationary robot. The two mechanisms overlap on purpose.
-
-Three design points worth defending:
-
-**It never subscribes to depth.** The camera's liveness is taken from
-`depth/camera_info`, which the ZED publishes in the same callback as the depth
-image and which is a few dozen bytes. Watching the 3.7 MB/frame image topic to
-read its timestamp would cost real memory bandwidth on the Jetson for
-information that arrives free next door. It also means this node obeys the
-network rule (docs/SYSTEM.md) by construction, wherever it
-runs.
-
-**The LiDAR subscription is BEST_EFFORT.** `/ouster/points` publishes
-BEST_EFFORT, and a RELIABLE subscriber receives *nothing at all* from it --
-measured 2026-10-15, which is how `tools/lidar_coverage.py` came to report an
-empty bag. A watchdog that silently sees no LiDAR would latch a stop on every
-run.
-
-**The stop latches.** A sensor that flickers in and out would otherwise produce
-a stutter of stop and go, which is worse than either. Once the stop fires it
-holds until the run ends, and the reason reaches the operator through
-`/health`.
+Camera liveness comes from `depth/camera_info`, never the depth image. The
+LiDAR subscription is BEST_EFFORT (a RELIABLE one receives nothing). The stop
+latches until the run ends, so a flickering sensor cannot stutter the robot.
 """
 
 from __future__ import annotations
@@ -50,8 +24,8 @@ from sensor_msgs.msg import CameraInfo, PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
-from pallet_approach.nodes._common import lookup_waiting
-from pallet_approach_interfaces.msg import Health
+from pallet_approach.nodes._common import lookup_waiting, tracked_topic
+from pallet_approach_interfaces.msg import Health, TrackedPallet
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach.health import (
@@ -108,8 +82,16 @@ class WatchdogNode(Node):
         self.create_subscription(CameraInfo,
                                  self.get_parameter('topics.depth_camera_info').value,
                                  lambda _: self._seen('camera_info'), RELIABLE)
-        self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
-                                 lambda _: self._seen('estimate'), RELIABLE)
+        # `estimate` = perception is alive and producing during the run. With
+        # the fused perception (D104) that is pallet_fusion's tracked pallet:
+        # the old perception node is never activated, and requiring its
+        # estimate aborted the first fused sim run at once.
+        if self.get_parameter('perception_source').value == 'fused':
+            self.create_subscription(TrackedPallet, tracked_topic('fused'),
+                                     lambda _: self._seen('estimate'), RELIABLE)
+        else:
+            self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
+                                     lambda _: self._seen('estimate'), RELIABLE)
         self.create_subscription(Odometry, self.get_parameter('topics.odom').value,
                                  lambda _: self._seen('odom'), RELIABLE)
         # raw=True: only the arrival is timed, so the ~1.6 MB cloud is never
@@ -132,10 +114,11 @@ class WatchdogNode(Node):
     # ------------------------------------------------------------- params
 
     def _declare(self):
+        self.declare_parameter('perception_source', 'camera')
         self.declare_parameter('topics.depth_camera_info',
                                '/zed2/zed_node/depth/camera_info')
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('topics.lidar', '/ouster/points')
+        self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
         self.declare_parameter('topics.cmd_vel_safety', '/cmd_vel_safety')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.camera_optical',

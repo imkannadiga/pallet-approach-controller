@@ -1,34 +1,16 @@
 #!/usr/bin/env python3
 """Run the perception pipeline at wall-clock speed against a recorded bag.
 
-`replay.py` answers "what did the pipeline do to this frame", one frame at a
-time, as fast as the laptop can. This answers a different question: **what
-would the node do on the robot, right now, at the rate the camera actually
-produces frames.** It replays the bag's depth frames on their own timestamps,
-puts them through the same `FrameGate` the node uses, and prints what the node
-would publish -- including the frames it drops and how old the estimate is by
-the time it exists.
-
-That is the part you cannot see from a static replay, and it is where the real
-failures live: a pipeline that has quietly fallen to 1 Hz still produces
-estimates that look perfectly reasonable one at a time.
+Replays depth frames on their own timestamps through the node's `FrameGate`
+and prints what the node would publish, including dropped frames and
+estimate age.
 
     python3 pallet_approach/tools/live.py ~/bags/pallet_s_129 --view --loop
-    python3 pallet_approach/tools/live.py ~/bags/pallet_s_129
     python3 pallet_approach/tools/live.py ~/bags/pallet_l_129 --rate 2 --speed 0.5
 
-`--view` opens a window with the camera image and the detected pockets drawn
-back onto it, beside the same estimate seen from above. That projection is the
-honest test of the geometry: a pocket measured correctly in metres lands on the
-hole in the picture, and one measured wrongly does not. A table of numbers
-cannot show you that, and neither can a plot of the point cloud -- only putting
-the answer back where the question came from.
-
-No ROS: it reads the bag with `rosbags` and calls `estimate_pallet` directly,
-with the parameters and the extrinsic correction from `config/params.yaml`, so
-the geometry is exactly what the robot would compute. What it does NOT model is
-the Jetson's speed -- it runs at your laptop's, which on the measured numbers is
-roughly 2-3x faster. Treat the frame time it prints as a lower bound.
+`--view` draws the detected pockets back onto the camera image beside a top
+view. No ROS. Runs at the laptop's speed (roughly 2-3x the Jetson's), so the
+printed frame time is a lower bound.
 """
 
 from __future__ import annotations
@@ -191,7 +173,6 @@ class LiveView:
         # only arrangement worth having: a viewer that draws its own version
         # can agree with the geometry while the robot's disagrees.
         if image is not None and self.overlay_params is not None:
-            import cv2
             bgr = np.ascontiguousarray(image[:, :, ::-1])
             floor = estimate.floor if (estimate and estimate.floor is not None) \
                 else self.fallback_floor
@@ -509,7 +490,7 @@ def main() -> int:
     print(f'  frames processed   {gate.processed}   dropped {gate.dropped} '
           f'({gate.drop_fraction() * 100:.0f} %)')
     print(f'  estimates          {published} with a pallet, {no_pallet} without')
-    print(f'  sides              ' + ', '.join(f'{k} {v}' for k, v in sorted(sides.items())))
+    print('  sides              ' + ', '.join(f'{k} {v}' for k, v in sorted(sides.items())))
     print(f'  frame time ms      mean {ft.mean():.1f}  p50 {np.percentile(ft, 50):.1f}  '
           f'p95 {np.percentile(ft, 95):.1f}  max {ft.max():.1f}')
     print(f'  estimate age ms    mean {ag.mean():.0f}  p95 {np.percentile(ag, 95):.0f}  '

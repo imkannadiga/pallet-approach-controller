@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
-"""Fit the floor plane in a bag and report it in `base_footprint`.
-
-A calibration check, not part of the runtime pipeline. Give it camera bags and
-LiDAR bags from the same session and it answers three questions:
-
-1. Is the floor level in `base_footprint`? It should be, if the camera extrinsic
-   and `base_footprint` are both right.
-2. Do the camera and the LiDAR agree? They descend from the same `bottom_box_link`,
-   so a disagreement is one sensor mis-mounted relative to the other, which is
-   the number to calibrate out.
-3. Is any common tilt fixed to the robot or to the world? Given two bags taken
-   at different robot headings, a robot-fixed tilt is a mounting error and a
-   world-fixed tilt is a sloped floor. The headings come from `/odom`, so the
-   turn does not have to be measured by hand.
+"""Fit the floor plane in camera and LiDAR bags and report it in `base_footprint`.
 
     python3 floor_plane_check.py ~/bags/floor_cam_pose1 ~/bags/floor_lidar_pose1 ...
 
-Works on depth images (`sensor_msgs/Image`, 32FC1) and point clouds
-(`sensor_msgs/PointCloud2`). Needs no ROS: reads the bag with `rosbags`.
+Answers: is the floor level (extrinsic and base_footprint right)? Do camera
+and LiDAR agree? Is a common tilt robot-fixed (mounting) or world-fixed
+(sloped floor)? The last needs bags at different headings, taken from /odom.
+Reads depth images and point clouds with `rosbags`; no ROS.
 """
 
 from __future__ import annotations
@@ -36,54 +25,11 @@ except ImportError:
     sys.exit('pip install rosbags numpy pyyaml  (in a venv)')
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from _bagutil import GROUND, Tree, fill_static, quat_matrix  # noqa: E402
 from pallet_approach.calibration import correct_transform, correction_matrix  # noqa: E402
-
-GROUND = 'base_footprint'
 DTYPES = {1: np.int8, 2: np.uint8, 3: np.int16, 4: np.uint16,
           5: np.int32, 6: np.uint32, 7: np.float32, 8: np.float64}
-
-
-# ------------------------------------------------------------------ transforms
-
-def quat_matrix(t, q) -> np.ndarray:
-    x, y, z, w = q.x, q.y, q.z, q.w
-    m = np.eye(4)
-    m[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
-                 [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
-                 [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
-    m[:3, 3] = [t.x, t.y, t.z]
-    return m
-
-
-class Tree:
-    """Static tf tree, with the up-then-down lookup tf2 does.
-
-    `base_footprint` is a *child* of `base_link`, not an ancestor of the sensors,
-    so walking parent links from a camera frame never reaches it. A lookup has to
-    climb to the common ancestor and descend the other branch.
-    """
-
-    def __init__(self):
-        self.parent: dict[str, str] = {}
-        self.edge: dict[str, np.ndarray] = {}
-
-    def add(self, parent: str, child: str, matrix: np.ndarray) -> None:
-        self.parent[child] = parent
-        self.edge[child] = matrix
-
-    def _to_root(self, frame: str) -> np.ndarray:
-        m, node = np.eye(4), frame
-        while node in self.parent:
-            m = self.edge[node] @ m
-            node = self.parent[node]
-        return m
-
-    def lookup(self, target: str, source: str) -> np.ndarray:
-        """target <- source."""
-        known = set(self.parent) | set(self.parent.values())
-        if target not in known or source not in known:
-            raise KeyError(f'{target} or {source} not in the tf tree')
-        return np.linalg.inv(self._to_root(target)) @ self._to_root(source)
 
 
 # ---------------------------------------------------------------- bag reading
@@ -221,8 +167,23 @@ def describe(normal, offset) -> dict:
 # ----------------------------------------------------------------------- main
 
 def analyse(path: pathlib.Path, typestore, rmin: float, rmax: float,
-            correction=None):
+            correction=None, donor=None):
     tree, clouds, yaw = read_bag(path, typestore)
+    if donor is not None:
+        # A bag can arrive with part of /tf_static missing (the recorder joined
+        # the latched topic before it had discovered every publisher). The
+        # missing edges are fixed to the robot, so a sibling bag has them.
+        borrowed = [c for c in donor.parent if c not in tree.parent]
+        for child in borrowed:
+            tree.add(donor.parent[child], child, donor.edge[child])
+        if borrowed:
+            print(f'  {path.name}: borrowed static transforms for {", ".join(borrowed)} '
+                  f'-- an ASSUMPTION that nothing was moved')
+    # Whatever is still missing comes from the exported reference (rigid mounting).
+    filled = fill_static(tree)
+    if filled:
+        print(f'  {path.name}: filled in {len(filled)} static transform(s) from '
+              f'config/static_tf.yaml ({", ".join(filled[:3])}...)')
     results = []
     for frame, pts in clouds.items():
         try:
@@ -256,6 +217,8 @@ def main() -> int:
     ap.add_argument('--rmin', type=float, default=1.0, help='metres from the robot')
     ap.add_argument('--rmax', type=float, default=4.0)
     ap.add_argument('--typestore', default='ROS2_HUMBLE')
+    ap.add_argument('--borrow-tf-from', type=pathlib.Path,
+                    help='fill in static transforms a bag is missing from this bag')
     ap.add_argument('--correct', action='store_true',
                     help="apply the camera extrinsic correction from "
                          "config/params.yaml, to check the residual tilt")
@@ -287,9 +250,10 @@ def main() -> int:
           f'{"height":>8} {"rms":>7} {"yaw":>8}  points')
     print('-' * 100)
 
+    donor = read_bag(args.borrow_tf_from, typestore)[0] if args.borrow_tf_from else None
     rows = []
     for bag in args.bags:
-        for r in analyse(bag, typestore, args.rmin, args.rmax, correction):
+        for r in analyse(bag, typestore, args.rmin, args.rmax, correction, donor):
             r['bag'] = bag.name
             rows.append(r)
             print(f'{bag.name:26} {r["kind"]:7} {r["pitch_deg"]:+8.3f} '
@@ -305,6 +269,10 @@ def main() -> int:
     return 0
 
 
+RMS_LIMIT = {'camera': 0.004, 'lidar': 0.020}
+"""Metres. Floor fits above these are not floors; see `decompose`."""
+
+
 def decompose(rows) -> None:
     """Split the measured tilt into a robot-fixed and a world-fixed part.
 
@@ -313,16 +281,35 @@ def decompose(rows) -> None:
     so rotating with the robot's heading. Two bags at different headings give
     two equations and separate them. The headings come from `/odom`, so the turn
     needs no measuring -- it only has to be large.
+
+    With more than two headings this is a least-squares fit over ALL of them,
+    and the residual is the self-check: if one constant mounting tilt and one
+    constant slope explain every heading, the residual is small. A large one
+    means the floor's slope changed between where the robot stood for the
+    different bags (the robot moved while turning), or the odometry's heading is
+    off. Exactly two bags is the old exact solve, unchanged.
     """
     for kind in ('camera', 'lidar'):
         group = [r for r in rows if r['kind'] == kind and not math.isnan(r['yaw'])]
+        # A floor fit with a large residual is not a floor: at a heading where
+        # the sensor faces a wall or furniture a metre away, the 1-4 m window
+        # holds that instead (a camera fit of pitch -10 deg, height +0.38 m,
+        # rms 70 mm came from exactly that). Good fits sit at 1-2 mm (camera) and
+        # about 10 mm (LiDAR, whose beams are sparse); these limits are
+        # heuristic, and what is dropped is printed.
+        limit = RMS_LIMIT[kind]
+        dropped = [r for r in group if r['rms'] > limit]
+        for r in dropped:
+            print(f'\n{kind}: dropping {r["bag"]} -- floor fit rms {r["rms"] * 1000:.1f} mm '
+                  f'(limit {limit * 1000:.0f} mm): the window held something other than the floor')
+        group = [r for r in group if r['rms'] <= limit]
         if len(group) < 2:
             continue
-        # use the two most widely separated headings
-        group.sort(key=lambda r: r['yaw'])
-        a, b = group[0], group[-1]
-        separation = abs(math.degrees(a['yaw'] - b['yaw']))
-        if min(separation, 360 - separation) < 30:
+        yaws = [r['yaw'] for r in group]
+        # The angle BETWEEN two headings, each pair wrapped to 0-180, then the widest.
+        separation = max(min(abs(math.degrees(a - b)) % 360, 360 - abs(math.degrees(a - b)) % 360)
+                         for a in yaws for b in yaws)
+        if separation < 30:
             print(f'\n{kind}: headings only {separation:.0f} deg apart -- too close '
                   f'to separate a mounting error from a floor slope')
             continue
@@ -335,18 +322,30 @@ def decompose(rows) -> None:
             c, s_ = math.cos(angle), math.sin(angle)
             return np.array([[c, s_], [-s_, c]])
 
-        matrix = rot(a['yaw']) - rot(b['yaw'])
-        world = np.linalg.solve(matrix, gradient(a) - gradient(b))
-        mount = gradient(a) - rot(a['yaw']) @ world
+        # gradient_i = mount + R(yaw_i) @ world, linear in (mount, world).
+        design = np.vstack([np.hstack([np.eye(2), rot(r['yaw'])]) for r in group])
+        target = np.concatenate([gradient(r) for r in group])
+        solution, *_ = np.linalg.lstsq(design, target, rcond=None)
+        mount, world = solution[:2], solution[2:]
+        residual = design @ solution - target
 
         def size(g):
             return math.degrees(math.atan(float(np.linalg.norm(g))))
 
-        print(f'\n{kind.upper()}  ({separation:.0f} deg between headings)')
+        print(f'\n{kind.upper()}  ({len(group)} headings, up to {separation:.0f} deg apart)')
         print(f'   mounting tilt, robot-fixed   {size(mount):6.3f} deg   '
               f'pitch {math.degrees(math.atan(mount[0])):+.3f}  '
               f'roll {-math.degrees(math.atan(mount[1])):+.3f}')
         print(f'   floor slope, world-fixed     {size(world):6.3f} deg')
+        if len(group) > 2:
+            # Judged against what is being separated: the residual has to be
+            # small next to the floor slope, or the split is not trustworthy.
+            worst = float(np.max(np.abs(np.degrees(np.arctan(residual)))))
+            slope = size(world)
+            verdict = ('consistent' if worst < 0.5 * slope else
+                       'NOT consistent: the floor or the heading differs between bags')
+            print(f'   fit residual                 worst {worst:.3f} deg against a {slope:.3f} deg '
+                  f'slope ({verdict})')
         heights = [r['height'] for r in group]
         print(f'   floor height                 {np.mean(heights):+.4f} m   '
               f'spread {1000 * (max(heights) - min(heights)):.1f} mm')

@@ -1,36 +1,18 @@
 """Lifecycle node: the only thing in this stack that moves the robot.
 
-It executes one of four behaviours at a time, chosen by the coordinator over
-`~/drive`, and nothing else:
+Executes one behaviour at a time, chosen by the coordinator over `~/drive`:
+CLOSE (servo onto the pocket centre line, D38), REVERSE (straight back with the
+rear LiDAR check, D42), INSERT (stop on the earlier of odometry and LiDAR,
+abort if they disagree, D18), BACKOUT. The coordinator says which and how far;
+this node owns how.
 
-    CLOSE     servo onto the pocket centre line, stop at the standoff (D38)
-    REVERSE   straight back, with the rear LiDAR check and the travelled-ground
-              allowance (D42)
-    INSERT    straight forward, stopping on the earlier of odometry and the
-              LiDAR, aborting if they disagree (D18)
-    BACKOUT   straight back out of the pallet
-
-The division of labour is deliberate: the coordinator says WHICH behaviour and
-how far, and this node owns HOW -- the gains, the limits and the stop rules. So
-the sequencing can be tested without a controller and the control laws without
-a state machine, which is why `closing.py`, `insertion.py` and `coordinator.py`
-have no ROS in them at all.
-
-Five safety properties live here and must not be weakened:
-
-1. **No publishing unless activated.** The publisher exists from `configure`,
-   but `_active` gates every write and only the lifecycle state sets it.
-2. **Fixed rate, explicit zeros.** The base driver has no command timeout, so a
-   command it already has keeps it moving. The timer publishes every tick while
-   active, and deactivating sends several explicit zeros.
-3. **Stale input means stop.** A drive command older than `target_timeout`, or
-   a pallet estimate older than it during CLOSE, stops the robot rather than
-   acting on a measurement that may no longer be true.
-4. **Somebody is listening.** At configure it checks something subscribes to
-   its command topic and refuses otherwise, because with twist_mux absent every
-   command would vanish and the stack would report that it was driving (D31).
-5. **It never invents a mode.** An unknown mode string stops the robot and says
-   so. There is no default behaviour.
+Safety properties:
+1. No publishing unless activated (`_active`, set only by the lifecycle).
+2. Fixed rate and explicit zeros: the base has no command timeout.
+3. A drive command, or during CLOSE an estimate, older than `target_timeout`
+   stops the robot.
+4. Configure refuses if nothing subscribes to the command topic (D31).
+5. An unknown mode stops the robot; there is no default.
 """
 
 from __future__ import annotations
@@ -50,17 +32,16 @@ from pallet_approach_interfaces.msg import DriveCommand, DriveStatus, TrackedPal
 
 from pallet_approach import closing
 from pallet_approach.approach import points_then_to_now
-from pallet_approach.controller import ZERO, RateLimiter
+from pallet_approach.controller import ZERO, Command, RateLimiter
 from pallet_approach.drive import MODES, DriveExecutor, Request, Result, executor_params
-from pallet_approach.nodes._common import LatestRaw, logged_transition, lookup_waiting
-from pallet_approach.calibration import correct_lidar_transform
+from pallet_approach.nodes._common import (LatestRaw, declare_lidar_params, lidar_in_ground,
+                                           logged_transition, tracked_topic)
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     command_to_twist,
     estimate_from_msg,
     pose2d_from_odometry,
     stamp_to_seconds,
-    transform_to_matrix,
 )
 
 RELIABLE = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
@@ -102,14 +83,12 @@ class ControllerNode(LifecycleNode):
     def _declare(self):
         self.declare_parameter('topics.cmd_vel_pallet', '/cmd_vel_pallet')
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('topics.lidar', '/ouster/points')
+        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
         self.declare_parameter('floor_z', -0.025)
-        self.declare_parameter('frames.lidar_correction.enabled', True)
-        self.declare_parameter('frames.lidar_correction.measured_floor_pitch', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_roll', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_height', -0.025)
+        declare_lidar_params(self)   # D74 / D101, shared with the tracker
         self.declare_parameter('standoff_distance', 1.75)
         self.declare_parameter('robot.width', 0.6996)
         self.declare_parameter('robot.rear_bumper_x', -0.4625)
@@ -127,7 +106,7 @@ class ControllerNode(LifecycleNode):
             ('closing.range_tolerance', 0.03), ('closing.arrival_yaw', 0.035),
             ('closing.resume_range', 0.10), ('closing.min_run_up', 3.0),
             ('closing.residual_target', 0.020), ('closing.run_up_margin', 0.20),
-            ('closing.divergence_frames', 5),
+            ('closing.divergence_frames', 8), ('closing.divergence_window', 1.6),
             ('closing.min_divergence_growth', 0.040),
             ('reverse.speed', 0.05), ('reverse.max_unverified', 0.50),
             ('reverse.side_margin', 0.10), ('reverse.min_height', 0.03),
@@ -162,18 +141,10 @@ class ControllerNode(LifecycleNode):
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         topic = self._get('topics.cmd_vel_pallet')
 
-        # Everything a subscription callback can touch is built FIRST, before
-        # any subscription exists to call one. This is not just tidiness:
-        # `_wait_for_a_subscriber` below spins this node's own executor while
-        # it waits, and a subscription created earlier is live during that
-        # spin -- so if DriveCommand had been subscribed before `self._executor`
-        # existed, a message arriving during the wait (the coordinator
-        # publishes a STOP heartbeat at 20 Hz even while idle, so there is
-        # always one queued) would call `_on_drive` with `self._executor` still
-        # `None`. Measured 2026-10-19: exactly that, an AttributeError that
-        # killed the node, which then made the coordinator's NEXT configure
-        # attempt fail too ("could not configure the managed nodes") because
-        # the service was no longer there to answer it.
+        # Everything a callback touches is built before any subscription:
+        # `_wait_for_a_subscriber` spins this node, and the coordinator's 20 Hz
+        # STOP heartbeat would otherwise reach `_on_drive` with no executor
+        # (an AttributeError that killed the node, 2026-10-19).
         self._limiter = RateLimiter(self._get('limits.max_linear_accel'),
                                     self._get('limits.max_angular_accel'))
         self._executor = DriveExecutor(executor_params(self._get))
@@ -186,7 +157,7 @@ class ControllerNode(LifecycleNode):
         self.create_subscription(Odometry, self._get('topics.odom'),
                                  self._on_odom, RELIABLE)
         self.create_subscription(DriveCommand, '~/drive', self._on_drive, RELIABLE)
-        self.create_subscription(TrackedPallet, '/pallet_tracker/tracked',
+        self.create_subscription(TrackedPallet, tracked_topic(self._get('perception_source')),
                                  self._on_tracked, RELIABLE)
         self.create_subscription(PointCloud2, self._get('topics.lidar'),
                                  self._on_cloud, BEST_EFFORT, raw=True)
@@ -311,12 +282,7 @@ class ControllerNode(LifecycleNode):
 
     def _on_drive(self, msg: DriveCommand):
         if self._executor is None:
-            # Belt and suspenders alongside the construction order in
-            # on_configure: this subscription must not be live before
-            # self._executor exists, and now it never is -- but a callback
-            # assuming its own node's state just because it was called is the
-            # exact class of bug that put a None here before, so it costs one
-            # guard to make sure it cannot happen a second way.
+            # Also guarded here, besides the construction order in on_configure.
             return
         self._command_at = self._now()
         if msg.mode == self._executor.mode and self._command is not None:
@@ -352,20 +318,12 @@ class ControllerNode(LifecycleNode):
             return None
         ground = self._get('frames.ground')
         try:
-            transform = lookup_waiting(self._buffer, ground, cloud.header.frame_id, cloud.header.stamp,
+            matrix = lidar_in_ground(self, self._buffer, cloud.header.frame_id, cloud.header.stamp,
                 rclpy.duration.Duration(seconds=float(self._get('frames.tf_timeout'))))
         except Exception as error:
             self.get_logger().warning(f'tf {ground} <- {cloud.header.frame_id}: '
                                       f'{error}', throttle_duration_sec=5.0)
             return None
-        matrix = transform_to_matrix(transform)
-        if self._get('frames.lidar_correction.enabled'):
-            matrix = correct_lidar_transform(
-                matrix,
-                self._get('frames.lidar_correction.measured_floor_pitch'),
-                self._get('frames.lidar_correction.measured_floor_roll'),
-                self._get('frames.lidar_correction.measured_floor_height'),
-                self._get('floor_z'))
         points = transform_points(unpack_cloud(cloud), matrix)
         return self._to_now(points, stamp_to_seconds(cloud.header.stamp))
 
@@ -450,7 +408,7 @@ class ControllerNode(LifecycleNode):
         new_frame = self._frames_seen != self._frames_stepped
         self._frames_stepped = self._frames_seen
         result = self._executor.step(geometry=geometry, lidar_points=points,
-                                     new_frame=new_frame)
+                                     new_frame=new_frame, now=self._now())
         if result.arrived and not result.abort:
             self.get_logger().info(f'{self._executor.mode} complete: '
                                    f'{result.reason}',

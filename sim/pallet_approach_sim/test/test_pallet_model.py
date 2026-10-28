@@ -103,3 +103,28 @@ def test_placement_puts_the_face_where_asked(face, yaw):
 def test_placement_refuses_an_unknown_face():
     with pytest.raises(ValueError):
         pallet_model.placement('top', 3.0, 0.0, 0.0)
+
+
+def test_the_plain_pallet_is_unchanged_by_the_evaluation_options():
+    assert pallet_model.boxes() == pallet_model.boxes(block_protrusion=0.0)
+    assert pallet_model.load_box(0.0) is None
+    assert 'load' not in pallet_model.sdf()
+
+
+def test_block_protrusion_moves_only_the_outer_blocks_at_the_short_ends():
+    plain = {b.name: b for b in pallet_model.boxes()}
+    proud = {b.name: b for b in pallet_model.boxes(block_protrusion=0.02)}
+    assert proud['block_2_0'].x[1] == pytest.approx(plain['block_2_0'].x[1] + 0.02)
+    assert proud['block_0_1'].x[0] == pytest.approx(plain['block_0_1'].x[0] - 0.02)
+    assert proud['block_1_1'] == plain['block_1_1']          # the middle column
+    assert proud['deck'] == plain['deck']                    # the deck does not move
+
+
+def test_a_load_sits_on_the_deck_and_overhangs_every_side():
+    flush = pallet_model.load_box(0.5)
+    assert flush.z == pytest.approx((pallet_model.HEIGHT, pallet_model.HEIGHT + 0.5))
+    assert flush.x == pytest.approx((-pallet_model.LENGTH / 2, pallet_model.LENGTH / 2))
+    over = pallet_model.load_box(0.5, overhang=0.08)
+    assert over.x == pytest.approx((-pallet_model.LENGTH / 2 - 0.08, pallet_model.LENGTH / 2 + 0.08))
+    assert over.y == pytest.approx((-pallet_model.WIDTH / 2 - 0.08, pallet_model.WIDTH / 2 + 0.08))
+    assert 'load_c' in pallet_model.sdf(load_height=0.5)

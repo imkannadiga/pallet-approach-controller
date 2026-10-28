@@ -37,12 +37,7 @@ from pallet_approach.nodes._common import (
 )
 from pallet_approach.ros_conversions import estimate_to_msg, transform_to_matrix
 
-# The ZED publishes RELIABLE/VOLATILE, so match it. A BEST_EFFORT subscription
-# would also work, but being explicit documents the measured QoS.
-#
-# depth=1 on the depth subscription, deliberately. The node processes the
-# NEWEST frame and drops the rest (see _on_depth), so a deeper queue would only
-# hand it frames it is going to throw away, having paid to deliver them.
+# RELIABLE/VOLATILE as the ZED publishes. Depth 1: only the newest frame is used.
 SENSOR_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
 
 # Beyond this much difference between a frame's stamp and our own clock, the
@@ -265,14 +260,8 @@ class PerceptionNode(LifecycleNode):
         # subscriber to raw depth dropped the ZED node to 0.2 Hz).
         self._diag_pub = self.create_lifecycle_publisher(
             DiagnosticArray, '~/diagnostics', 1)
-        # Two GO/NO-GO rules need points rather than an estimate --
-        # `check_overhang` and `check_pocket_clearance` -- and both treat
-        # missing data as a NO-GO rather than a pass, so without these the
-        # coordinator refuses every run with "no points to check the load
-        # against". The clouds are purpose-built and small: the pallet cluster
-        # (a few thousand voxels) and a box around the face, not the ROI. They
-        # stay on the Jetson, between two nodes a process apart; nothing
-        # subscribes to them from the main PC and nothing should.
+        # Points for check_overhang and check_pocket_clearance: the pallet
+        # cluster and a box around the face. Small, and local to the Jetson.
         self._cluster_pub = self.create_lifecycle_publisher(
             PointCloud2, '~/cluster_points', 1)
         self._scene_pub = self.create_lifecycle_publisher(
@@ -357,19 +346,8 @@ class PerceptionNode(LifecycleNode):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _on_depth(self, msg: bytes):
-        """Keep the newest frame; process at most `max_rate` times a second.
-
-        Depth arrives at ~37 Hz and one frame costs ~90 ms, so the node cannot
-        process every frame and must not try. The alternative -- letting rclpy
-        queue them -- would not lose a single frame and would be far worse: the
-        backlog grows about 26 frames a second, so within ten seconds the
-        estimate being published describes where the pallet was seven seconds
-        ago, while the robot acts on it. Dropping frames costs nothing here,
-        because a stationary pallet looks the same in all of them.
-
-        So: remember only the latest frame, and start work on it when the rate
-        limit allows. What gets published is always the most recent thing the
-        camera saw, never a backlog.
+        """Keep the newest frame; process at most `max_rate` times a second
+        (see rate_limit.py: a queue would publish an ever older estimate).
         """
         self._latest = msg
         self._gate.max_rate = self.get_parameter('max_rate').value
@@ -400,12 +378,8 @@ class PerceptionNode(LifecycleNode):
             self.get_logger().error(str(error))
             return
 
-        # Is this frame's stamp even on the same clock we are? Checked before
-        # the tf lookup, because a mismatch surfaces there as "extrapolation
-        # into the past" with a plausible-looking requested time, and that
-        # error names tf rather than the clock. Measured 2026-10-15 on the
-        # robot: depth stamped 1835.8 (about half an hour, so an uptime clock)
-        # against a tf buffer on Unix epoch, 1.79e9 seconds apart.
+        # Same clock as ours? A mismatch would otherwise surface in the tf
+        # lookup as "extrapolation into the past" (2026-10-15: 1.79e9 s apart).
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self._stamp_skew = self._now() - stamp
         mismatched = abs(self._stamp_skew) > CLOCK_MISMATCH_SECONDS
@@ -427,28 +401,10 @@ class PerceptionNode(LifecycleNode):
         timeout = rclpy.duration.Duration(
             seconds=self.get_parameter('frames.tf_timeout').value)
         try:
-            # Stamped lookup, not Time(): zed2_camera_center ->
-            # zed2_left_camera_frame is republished at 58 Hz by the SDK's
-            # self-calibration, so "latest" is not the same as "at this frame".
-            # Normally the lookup is STAMPED, because
-            # zed2_camera_center -> zed2_left_camera_frame is republished at
-            # 58 Hz by the SDK's self-calibration, so "latest" is not the same
-            # as "at this frame".
-            #
-            # The exception is a clock mismatch, where the stamp cannot be used
-            # at all and the only alternative to stopping is the latest
-            # available. That is a BENCH setting, off by default:
-            #
-            #   harmless here  -- the one moving link is a stereo
-            #       self-calibration that drifts by microradians, so "latest"
-            #       and "0.2 s ago" are the same number;
-            #   not harmless once the robot drives -- composing a pallet pose
-            #       with odometry needs to know WHEN the pallet was seen, and
-            #       a wrong stamp puts the standoff in the wrong place. It also
-            #       makes every recorded bag unusable for replay.
-            #
-            # So: use it to measure the pipeline while parked, and fix the
-            # clock before stage 3.
+            # Stamped, because the SDK's self-calibration republishes
+            # zed2_camera_center -> zed2_left_camera_frame at 58 Hz. On a clock
+            # mismatch the latest is used instead: a bench-only setting (off by
+            # default), since composing with odometry needs the right stamp.
             lookup_time = (rclpy.time.Time() if mismatched
                            else msg.header.stamp)
             transform = lookup_waiting(self._tf_buffer, ground_frame, camera_frame, lookup_time, timeout)
@@ -564,13 +520,8 @@ class PerceptionNode(LifecycleNode):
             ('estimate_age_ms', f'{self._last_age * 1e3:.0f}'),
             ('processed', str(gate.processed)),
             ('dropped', str(gate.dropped)),
-            # Of frames DELIVERED to this node, not of frames the camera
-            # produced. The subscription is KEEP_LAST depth 1, so while a frame
-            # is being worked on the middleware overwrites the queue and those
-            # frames never reach the callback at all -- they are invisible here.
-            # Measured 2026-10-15: the camera published ~56 Hz while this node
-            # saw ~13 callbacks a second. Compare delivered_hz below against
-            # `ros2 topic hz` on the depth topic to see that upstream loss.
+            # Of frames DELIVERED (depth-1 queue): compare delivered_hz with
+            # `ros2 topic hz` on the depth topic to see upstream loss.
             ('drop_fraction_of_delivered', f'{gate.drop_fraction():.2f}'),
             ('delivered_hz', f'{(gate.processed + gate.dropped) / max(now - (gate.window_start or now), 1e-6):.1f}'),
             ('estimates_published', str(self._frames)),

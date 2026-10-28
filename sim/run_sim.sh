@@ -4,10 +4,11 @@
 #   ./sim/run_sim.sh build                 # both images (the stack's is the robot's own Dockerfile)
 #   ./sim/run_sim.sh up [launch args]      # Gazebo, then the stack, both detached
 #   ./sim/run_sim.sh up face_x:=2.5 face_y:=0.3 face_yaw:=0.2
-#   ./sim/run_sim.sh start approach_only   # trigger a run, as Nav2's caller would
+#   ./sim/run_sim.sh start pickup         # trigger a run, as Nav2's caller would
 #   ./sim/run_sim.sh start pickup
-#   ./sim/run_sim.sh run approach_only    # start and follow it to the result
+#   ./sim/run_sim.sh run pickup           # start and follow it to the result
 #   ./sim/run_sim.sh cancel
+#   ./sim/run_sim.sh record NAME [seconds]  # bag the topics the offline tools read -> sim/bags/NAME
 #   ./sim/run_sim.sh result                # wait for and print /pallet_approach/result
 #   ./sim/run_sim.sh status                # /coordinator/status and /health, once
 #   ./sim/run_sim.sh logs [gazebo|stack]
@@ -24,7 +25,9 @@
 # The stack container is the SAME image the Jetson runs, built for amd64 from
 # docker/Dockerfile.jetson, started with the same launch file. Two things are
 # added: overlay_params:=config/sim_overlay.yaml (sim time, no camera tilt
-# correction) and encoder:=x264 (no Jetson encoder here).
+# correction) and encoder:=x264 (no Jetson encoder here). The fused perception
+# (D102) runs in shadow too, fusion:=true; SIM_FUSION=false to leave it out.
+# SIM_PERCEPTION=fused runs the whole stack ON the fused perception (D104).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -133,13 +136,14 @@ case "${1:-}" in
     docker run -d --name "$STACK" --network host --ipc host "${ROS_ENV[@]}" \
       -e MTX_WEBRTCLOCALTCPADDRESS=:8189 -e MTX_WEBRTCADDITIONALHOSTS=127.0.0.1 \
       "$STACK_IMAGE" bash -lc \
-      'source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py \
+      "source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py \
          overlay_params:=/ros2_ws/install/pallet_approach/share/pallet_approach/config/sim_overlay.yaml \
-         encoder:=x264'
+         lidar_calibration:=none encoder:=x264 fusion:=${SIM_FUSION:-true} \
+         perception:=${SIM_PERCEPTION:-camera}"
     echo "started $GAZEBO and $STACK on domain $DOMAIN (localhost only)."
     echo "  give Gazebo ~20 s to spawn the robot, then:"
     echo "  ./sim/run_sim.sh status"
-    echo "  ./sim/run_sim.sh start approach_only"
+    echo "  ./sim/run_sim.sh start pickup"
     echo "  http://localhost:8889/dashboard"
     if [ "$GUI" = true ] && [ "${SIM_OPEN_BROWSER:-true}" = true ]; then
       # The dashboard next to the Gazebo window: once MediaMTX is serving.
@@ -152,16 +156,39 @@ case "${1:-}" in
     ;;
 
   start)
-    mode=${2:?usage: start approach_only|pickup}
+    mode=${2:?usage: start pickup}
     docker cp "$REPO_ROOT/pallet_approach/tools/trigger.py" "$STACK:/tmp/trigger.py" >/dev/null
     in_stack "python3 /tmp/trigger.py $mode"
     ;;
 
   run)
     # Start a run and follow it to its result, one line per state change.
-    mode=${2:?usage: run approach_only|pickup [timeout_s]}
+    mode=${2:?usage: run pickup [timeout_s]}
     docker cp "$REPO_ROOT/sim/tools/follow_run.py" "$STACK:/tmp/follow_run.py" >/dev/null
     in_stack "python3 -u /tmp/follow_run.py $mode ${3:-1800}"
+    ;;
+
+  record)
+    # What tools/evaluate_bags.py, track_prototype.py and lidar_face.py read:
+    # the depth image and its camera_info, the LiDAR, odometry and tf. No RGB
+    # image -- at 30 Hz it is most of a bag and nothing here uses it. On sim
+    # time, so the stamps line up with tf. The bag is made inside the stack
+    # container and copied out, because the container has no host mount.
+    name=${2:?usage: record NAME [seconds]}
+    seconds=${3:-8}
+    out="$REPO_ROOT/sim/bags"
+    mkdir -p "$out"
+    in_stack "rm -rf /tmp/bag_$name; timeout -s INT $seconds ros2 bag record --use-sim-time \
+      --compression-mode file --compression-format zstd -o /tmp/bag_$name \
+      /zed2/zed_node/depth/depth_registered /zed2/zed_node/depth/camera_info \
+      /zed2/zed_node/rgb/color/rect/camera_info /ouster/points /odom /tf /tf_static \
+      >/dev/null 2>&1 || true"
+    # A few seconds for the recorder to finish writing its compressed file:
+    # one bag in a set of 21 (2026-10-27) arrived truncated.
+    sleep 3
+    rm -rf "$out/$name"
+    docker cp "$STACK:/tmp/bag_$name" "$out/$name" >/dev/null
+    echo "recorded $out/$name"
     ;;
 
   cancel)

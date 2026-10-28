@@ -219,23 +219,23 @@ for PROBE in "${PROBES[@]}"; do
   fi
 done
 
-# The Ouster driver runs on the robot PC, so --with-lidar means its cloud crosses
-# the network into the Jetson's container. That is the mirror image of the trap in
-# docs/SYSTEM.md's network rule, where a remote subscriber throttled the ZED to 0.2 Hz: these
-# topics are RELIABLE, so a subscriber that cannot keep up slows the publisher.
-# The difference is scale and medium -- 31 MB/s over the wired switch rather than
-# 136 MB/s over wifi -- so it is expected to work, but it has not been measured.
-# Check the rate afterwards and fall back to two bags if the Ouster has dropped.
+# --with-lidar records the relay's copy, /pallet_approach/lidar, which lidar_relay
+# publishes on the Jetson itself: the Jetson already takes one network copy of
+# the cloud for the whole stack, and this adds no second one. (Recording the raw
+# /ouster/points here was the earlier version, and it throttled the Ouster to
+# 2.6-4.6 Hz.) The stack container must be up, because the relay runs in it.
+# --lidar-only is the one case that reads the raw topic, on the robot PC, where
+# the driver is local and nothing crosses the network.
 if [ "$WITH_LIDAR" = "1" ] && [ "$LIDAR_ONLY" = "0" ]; then
   cat <<'MSG'
 
-  NOTE: --with-lidar subscribes to /pallet_approach/lidar across the network, from the
-  robot PC into the Jetson. Unmeasured: watch for the Ouster's rate dropping.
-  After this bag, confirm it is still ~10 Hz:
+  NOTE: --with-lidar records /pallet_approach/lidar, the relay's copy on the
+  Jetson (the stack must be up). It adds no network traffic. After this bag,
+  confirm it is still ~10 Hz:
       ros2 topic hz /pallet_approach/lidar
-  If it has dropped, record two bags instead (camera on the Jetson, LiDAR with
-  --lidar-only on the robot PC) and align them offline by timestamp -- the
-  clocks are chrony-synced.
+  If the relay is not running, record two bags instead (camera on the Jetson,
+  LiDAR with --lidar-only on the robot PC) and align them offline by
+  timestamp -- the clocks are chrony-synced.
 MSG
 fi
 

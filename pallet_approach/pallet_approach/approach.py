@@ -1,31 +1,16 @@
-"""Standoff and line-up geometry.
-
-Given where the pallet's front face is and which way it faces, this works out
-where the robot has to stand to be in fork-insertion alignment, and how far off
-it currently is. Pure functions, no ROS, no state: everything here is unit
-testable against hand-computed numbers.
-
-The picture, looking down (x right, y up on the page is x forward, y left on the
-robot):
+"""Standoff geometry: where the robot must stand for fork insertion, and how
+far off it is. Pure functions, metres and radians.
 
         pallet face
     ════════════════════
             │ n  (outward face normal, points at the robot)
-            │
             C                    C = midpoint between the pocket centres
             │
             ●  S = C + d·n       standoff: where base_footprint stops
 
-The robot servos onto the centre line while closing in (`closing.py`); this
-module is the geometry it and the GO/NO-GO rules measure against. The line-up
-point that used to sit further back on the same line went with the two-leg
-approach (D38).
-
-Everything is metres and radians. Points are NumPy arrays; only x and y are
-used, so a (3,) point from perception can be passed in directly -- and because
-`base_footprint` and `base_link` differ by a pure z translation, a planar pose
-computed here is valid in either, which is what lets `transform_pose` compose it
-with the base_link pose that /odom publishes.
+Only x and y are used. `base_footprint` and `base_link` differ by a pure z
+translation, so a planar pose computed here composes directly with the
+base_link pose /odom publishes.
 """
 
 from __future__ import annotations
@@ -34,7 +19,7 @@ import math
 
 import numpy as np
 
-from pallet_approach.model import PalletEstimate, Pocket, Pose2D
+from pallet_approach.model import Pocket, Pose2D
 
 __all__ = [
     'wrap_angle',
@@ -52,15 +37,7 @@ __all__ = [
 
 
 def wrap_angle(angle: float) -> float:
-    """Wrap an angle into [-pi, pi].
-
-    Every angular error in the stack goes through this. Without it, a robot at
-    +179 deg and a target at -179 deg look 358 deg apart instead of 2 deg, and
-    the controller spins the long way round.
-
-    The range is atan2's, so both -pi and +pi can come out; they are the same
-    angle and nothing downstream distinguishes them.
-    """
+    """Wrap an angle into [-pi, pi] (atan2's range; both ends can come out)."""
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
@@ -80,17 +57,9 @@ def outward_normal(
 ) -> np.ndarray:
     """Flatten `normal` into the ground plane, pointing from the face at the robot.
 
-    A plane fit gives a normal with an arbitrary sign: RANSAC has no idea which
-    side of the pallet the robot is on. We always want the one pointing at the
-    observer, because the standoff point is on that side. Pass `face_point` (a
-    point on the face, normally its centre) and the sign is fixed here by
-    testing which way the normal leans relative to `toward`, which defaults to
-    the origin -- in `base_footprint`, the robot itself. Without `face_point` the
-    caller's sign is trusted and only the flattening happens.
-
-    Only x and y survive: the approach is planar, and a face normal that is not
-    roughly horizontal means the face fit is not a wall at all (see
-    `face.max_tilt_from_vertical` in params.yaml).
+    A plane fit's normal has an arbitrary sign. Given `face_point`, the sign is
+    chosen to point towards `toward` (default: the origin, i.e. the robot in
+    `base_footprint`); without it the caller's sign is kept.
     """
     n = np.asarray(normal, dtype=float)
     planar = unit(np.array([n[0], n[1], 0.0])) if np.linalg.norm(n[:2]) > 1e-9 else None
@@ -147,15 +116,6 @@ def standoff_pose(center: np.ndarray, normal: np.ndarray, distance: float) -> Po
     if distance <= 0.0:
         raise ValueError(f'standoff distance must be positive, got {distance}')
     return _pose_on_normal(center, normal, distance)
-
-
-# `lineup_pose` and `approach_targets` lived here. They computed the line-up
-# point P1 = C + (d + L)*n for the rotate-drive-rotate approach, which D38
-# superseded on 2026-10-19: the robot no longer drives to a point and turns onto
-# the centre line, it servos onto the line continuously while closing in
-# (`closing.py`). Removed rather than left unused -- dead code with passing
-# tests behind it is worse than no code, because it looks like a design that is
-# still in force.
 
 
 def lateral_offset(robot: Pose2D, center: np.ndarray, normal: np.ndarray) -> float:
@@ -216,17 +176,8 @@ def transform_pose(pose: Pose2D, frame_in_target: Pose2D) -> Pose2D:
 
 
 def transform_point(point: np.ndarray, frame_in_target: Pose2D) -> np.ndarray:
-    """Express a (3,) point given in frame A in frame B, shape (3,).
-
-    The same composition as `transform_pose` without a heading, used to put a
-    perception measurement into `odom`. z passes through untouched: the two
-    frames this is ever used between (`base_footprint` and `odom`) differ by a
-    planar motion, so a height in one is a height in the other.
-
-    Only approximately true of `base_link`, which /odom actually reports --
-    but the URDF joint between it and `base_footprint` is a pure z translation
-    (rpy "0 0 0"), so x, y and yaw are shared exactly and the z difference is a
-    constant that cancels in every comparison this is used for.
+    """Express a (3,) point given in frame A in frame B. z passes through: the
+    frames this is used between differ by a planar motion.
     """
     p = np.asarray(point, dtype=float)
     if p.shape != (3,):

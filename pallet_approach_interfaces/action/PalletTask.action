@@ -13,10 +13,9 @@
 #   ros2 action send_goal /pallet_task pallet_approach_interfaces/action/PalletTask "{mode: pickup}" --feedback
 
 # ---------------- Goal ----------------
-# "pickup"         the whole sequence, ending with the forks loaded
-# "approach_only"  stop at the GO/NO-GO decision and report it; insert nothing.
-#                  This is what the first driving session runs.
-# An empty string means "pickup".
+# "pickup"         the whole sequence, ending with the forks loaded.
+#                  The only mode (D95); an empty string also means "pickup".
+#                  Any other value is refused.
 string mode
 ---
 # ---------------- Result ----------------
@@ -26,11 +25,9 @@ string mode
 #           justified. `reason` says which.
 # NO_PALLET nothing was confirmed within the timeout
 # ABORTED   cancelled, an unhealthy stack, a lost pallet, a controller abort
-# GO        the rules passed and the run was asked to stop there
-#           (mode "approach_only"); nothing was inserted
 string outcome
 string reason                         # why, with the numbers in it
-string mode                           # which mode this run was asked for
+string mode                           # which mode this run was asked for (only "pickup")
 
 # Which face was entered. "short" or "long"; empty if it never got that far.
 # Not a label: it selects the pocket nominals, the fork geometry and the

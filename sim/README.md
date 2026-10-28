@@ -9,7 +9,7 @@ lifecycle, tf, the clock, the launch file, the container and the dashboard.
 ./sim/run_sim.sh build          # once; see "Prerequisites"
 ./sim/run_sim.sh up             # Gazebo + the stack, detached
 ./sim/run_sim.sh status         # /coordinator/status and /health
-./sim/run_sim.sh start approach_only
+./sim/run_sim.sh start pickup
 ./sim/run_sim.sh result
 ./sim/run_sim.sh start pickup
 ./sim/run_sim.sh cancel
@@ -29,11 +29,11 @@ Place the pallet with launch arguments (robot at the origin, looking along +x):
 ```
 
 The acceptance batch (D83): ten runs from random starts where Nav2 might leave
-the robot -- 2.5 m from the face, up to +-0.15 m off the centre line and
-+-10 deg turned -- each on a fresh sim; GO in at least 9 of 10 passes:
+the robot -- 2.5 m from the origin, up to +-0.15 m off the centre line and
++-10 deg turned -- each on a fresh sim; INSERTED in at least 9 of 10 passes (D96):
 
 ```bash
-./sim/tools/batch_runs.sh approach_only 10 --random 7    # same seed, same ten runs
+./sim/tools/batch_runs.sh 7 10    # the shared starts (D96): 9 of 10 INSERTED to pass
 ```
 
 ## The room and the depth model (D80-D82)
@@ -51,7 +51,7 @@ static warp whose spread grows as 0.74 mm x exp(1.46 z) (10 mm at 1.75 m,
 ~25 mm at 2.5 m; an extrapolation past 2.4 m), pockets filled with a surface
 0.2-0.35 m behind the face, and face-to-pocket edges smeared over a few cm with
 in-between depths. Depth is published at up to 10 Hz, and perception is capped
-at the robot's ~3.3 Hz (`sim_overlay.yaml`).
+at params.yaml's `max_rate` (5 Hz; the 3.3 Hz cap of D82 was removed by D92).
 
 ## What is the same as the robot
 
@@ -141,7 +141,7 @@ Each of these was measured, and each fix is commented where it lives.
 sim/
   run_sim.sh                       the entry point
   tools/build_room.py              writes worlds/pallet_room.sdf
-  tools/batch_runs.sh              N fresh runs, --random for the D83 batch
+  tools/batch_runs.sh SEED [N]     N pickups from the shared starts (D96), 9 of 10 to pass
   Dockerfile.gazebo                FROM the sim-env image, plus pallet_approach_sim
   fastdds_sim.xml                  32 MB shm segments, UDP on loopback
   pallet_approach_sim/

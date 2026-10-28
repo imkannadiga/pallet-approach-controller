@@ -1,15 +1,6 @@
-"""PointCloud2 to NumPy, without ros2_numpy or point_cloud2.read_points.
-
-Twenty lines of buffer arithmetic instead of a dependency, for the same reason
-`nodes/_common.image_to_array` exists: the Humble builds of those helpers are
-compiled against NumPy 1.x, which is exactly what breaks inside the ZED
-container, and `point_cloud2.read_points` is a Python generator per point --
-65 536 of them per Ouster frame at 10 Hz.
-
-This lives in the package rather than in `tools/` because the offline tools and
-the running node must agree about what a point is. `tools/_bagutil.py` had its
-own copy; a cloud decoded two ways is a class of bug that only shows up as "it
-worked on the bag".
+"""PointCloud2 to NumPy, without ros2_numpy or point_cloud2.read_points (built
+against NumPy 1.x, and a per-point generator). Shared by the nodes and the
+offline tools so both decode a cloud the same way.
 """
 
 from __future__ import annotations
@@ -24,18 +15,11 @@ DATATYPES = {1: np.int8, 2: np.uint8, 3: np.int16, 4: np.uint16,
 
 
 def unpack_cloud(msg, fields=('x', 'y', 'z'), finite_only: bool = True) -> np.ndarray:
-    """A PointCloud2 as an (N, len(fields)) float array.
+    """A PointCloud2 as an (N, len(fields)) float array, read by declared offsets.
 
-    Reads the requested fields by their declared offsets, so it does not care
-    what else the cloud carries or in what order -- the Ouster's has nine
-    fields (intensity, t, reflectivity, ring, ambient, range) around the three
-    we want, and the layout differs between drivers.
-
-    With `finite_only` (the default) the no-return points are dropped. The
-    Ouster marks a beam that hit nothing as exactly (0, 0, 0) rather than NaN,
-    and a cloud of 40 000 points at the origin would be read by everything
-    downstream as a solid obstacle against the robot's own axle, so both
-    non-finite and exactly-zero points go.
+    With `finite_only` (default), non-finite and exactly-(0, 0, 0) points are
+    dropped: the Ouster marks a no-return beam as the origin, which would
+    otherwise look like an obstacle at the axle.
     """
     if msg.is_bigendian:
         # Nothing in this system is, and silently byte-swapping the wrong way

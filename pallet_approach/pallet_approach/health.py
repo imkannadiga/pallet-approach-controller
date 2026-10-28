@@ -1,31 +1,10 @@
-"""Is the stack healthy enough to drive?
+"""Is the stack healthy enough to drive? (D9, D12; no ROS.)
 
-D9 and D12 in `docs/decisions.md`: the robot stops if a sensor goes stale, and
-the coordinator refuses a goal if the stack is unhealthy when it arrives. Both
-need the same answer to the same question, so the question is answered once,
-here, with no ROS in sight.
-
-Two things this file is careful about, both learned the hard way on this
-project:
-
-**Never seen is not stale.** A source that has produced nothing since startup
-has no age at all. Reporting it as age 0.0 makes a dead topic look perfectly
-fresh, which is the same class of bug as the `last_start = 0.0` sentinel in
-`rate_limit.py` and the `False`-as-sentinel in `fork_overlay`. So the age of an
-unseen source is `None`, and `None` fails every limit.
-
-**Not yet measurable is not zero.** A rate needs two messages and enough
-elapsed time to mean anything. Immediately after activation there is neither,
-and a rate reported as 0.0 Hz would trip the rate limit on every run before the
-first second was out. So the rate is `None` until the window holds enough
-history, and a `None` rate is not judged -- the age limit covers that interval,
-which is what it is for.
-
-What is *required* changes with the run. The camera, the LiDAR, odometry and tf
-must be healthy before a goal is accepted; a perception estimate cannot be,
-because perception is deactivated between runs and publishes nothing. So each
-source carries the set of phases in which it is required, and `check` is told
-which phase the system is in.
+Never seen is not stale: an unseen source has age `None`, which fails every
+limit. Not yet measurable is not zero: a rate is `None` until the window holds
+enough history, and a `None` rate is not judged (the age limit covers it).
+Each source carries the phases in which it is required, since perception, for
+example, publishes nothing between runs.
 """
 
 from __future__ import annotations

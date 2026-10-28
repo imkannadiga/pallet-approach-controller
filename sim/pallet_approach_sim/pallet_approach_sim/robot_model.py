@@ -19,7 +19,6 @@ Two outputs from one URDF:
 
 from __future__ import annotations
 
-import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
@@ -219,12 +218,6 @@ def _lift_xml(lift: Lift) -> str:
             '<use_velocity_commands>true</use_velocity_commands>'
             '<p_gain>8.0</p_gain><cmd_max>0.8</cmd_max><cmd_min>-0.8</cmd_min>'
             '</plugin></gazebo>')
-
-
-def camera_intrinsics(c: Camera):
-    """(fx, fy, cx, cy) of an ideal pinhole with this field of view."""
-    fx = (c.width / 2) / math.tan(c.hfov / 2)
-    return fx, fx, c.width / 2, c.height / 2
 
 
 def _camera_xml(c: Camera) -> str:

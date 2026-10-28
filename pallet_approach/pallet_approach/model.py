@@ -1,29 +1,8 @@
-"""Shared data types for the pallet approach stack.
+"""Shared data types: the contract between perception and everything downstream.
 
-These are the contract between the perception stage and everything downstream.
-`perception.py` produces a `PalletEstimate`; `go_nogo.py`, `approach.py`,
-`controller.py` and `fork_overlay.py` consume one. Keeping them here means none
-of those modules has to import any of the others.
-
-Everything is SI: metres, radians, seconds. Every vector is a NumPy array of
-shape (3,) expressed in `base_footprint` unless a field says otherwise:
-x forward, y left, z up.
-
-`base_footprint`, not `base_link`: base_link is the chassis body frame, 0.235 m
-above the ground (the wheels mount at base_link level, which lifts the body), so
-heights there are all large negative offsets. In base_footprint a z is almost a
-height above the floor, which is how the pallet geometry, the pocket heights and
-the fork heights are all quoted.
-
-*Almost*: base_footprint is not exactly on the floor. Measured 2026-10-14, the
-real floor is at **z = -0.025** here -- the URDF's base_footprint joint is 25 mm
-out, while its wheel geometry is right to 0.2 mm. Nothing in the pipeline
-assumes z = 0 is the floor: every height is taken relative to `floor_height`
-below, which perception fits per frame.
-
-The two frames differ by a pure translation in z, so x, y and yaw are identical
-in both -- which is why planar driving targets computed here compose directly
-with the base_link pose that /odom publishes.
+SI units. Vectors are (3,) NumPy arrays in `base_footprint` (x forward, y
+left, z up) unless a field says otherwise. The floor there is at z = -0.025
+(measured), so heights are taken from the fitted floor plane, never from z.
 """
 
 from __future__ import annotations
@@ -37,20 +16,10 @@ import numpy as np
 class Plane:
     """A plane, as ``normal . p + offset = 0``.
 
-    The floor is carried around as a plane rather than as a single height, and
-    that is a deliberate design choice worth being able to defend.
-
-    Any error in the camera-to-robot transform rotates the *whole observed
-    scene* -- floor and pallet together. A rotation is an isometry, so the
-    perpendicular distance from an observed point to an observed plane does not
-    change. Measure pocket heights against this plane and they come out exactly
-    right even with an uncalibrated, drifting or freshly-knocked camera mount.
-    Measure them as a z-coordinate instead and the error leaks straight in,
-    because z is a direction in a frame the error has rotated away from.
-
-    Measured on the robot: the camera mount was 0.868 deg out, and a z-based
-    pocket height carried 4.5 mm of that while the perpendicular measurement
-    carried exactly none. See docs/SYSTEM.md.
+    The floor is a plane, not a height: a camera-to-robot rotation error rotates
+    floor and pallet together, so perpendicular distances to the observed plane
+    are unaffected while z-coordinates are not (0.868 deg of mount error put
+    4.5 mm into a z-based pocket height; see docs/SYSTEM.md).
     """
 
     normal: np.ndarray

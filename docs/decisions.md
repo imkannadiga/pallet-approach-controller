@@ -798,7 +798,7 @@ the first driving session" to "when convenient". Stated here rather than left
 implied, because an inert safety mechanism that looks active is worse than an
 absent one.
 
-**D56. `approach_only` is a goal mode, not a configuration flag.** `mode:
+*[Mode removed by D95, 2026-10-27.]* **D56. `approach_only` is a goal mode, not a configuration flag.** `mode:
 approach_only` runs the whole approach and stops at the GO/NO-GO decision with
 outcome `GO`, inserting nothing. `pickup` runs the whole sequence. An unknown
 mode is **refused**, not defaulted. *Why a mode:* ROADMAP's lab session B is
@@ -1189,12 +1189,12 @@ out: it is a 1200 x 1000 pallet with 0.36 m pockets 0.45 m apart over a 25 mm
 bottom deck, which perception would rightly reject. The target stays the
 measured pallet. (Athreya, 2026-10-23)
 
-**D82. The sim's perception is capped at 3.3 Hz**, the rate it reaches on the
+*[Cap removed by D92, 2026-10-26.]* **D82. The sim's perception is capped at 3.3 Hz**, the rate it reaches on the
 robot (`sim_overlay.yaml`), so timing failures appear in the sim too. Sensor
 mounting errors are NOT injected for now: they wait for the auto-calibration
 routine (D74), which they would test. (Athreya, 2026-10-23)
 
-**D83. Sim acceptance: GO in at least 9 of 10 `approach_only` runs from random
+*[Mode removed by D95, 2026-10-27. Criterion now 9 of 10 INSERTED, from shared starts: D96.]* **D83. Sim acceptance: GO in at least 9 of 10 `approach_only` runs from random
 starts** -- where Nav2 might leave the robot: 2.5 m from the face along the
 pallet's centre line, up to +-0.15 m off it and turned up to +-10 deg from it --
 in the room, with the ZED depth model and the 3.3 Hz cap
@@ -1309,6 +1309,252 @@ gone a minute later, most likely a person). *Found with it:* behind the robot,
 the D74-corrected LiDAR puts the floor 46 mm low (uncorrected: 31 mm high), so
 the rear check's 3 cm floor margin is not trustworthy there until the
 auto-calibration measures all round the robot. (Athreya, 2026-10-24)
+
+**D92. The sim's perception is no longer capped at 3.3 Hz.** Amends D82: the
+sim runs perception at params.yaml's `max_rate` (5 Hz). *Why:* the cap copied
+the robot's rate from before the 2026-10-23 speed work (80 -> 34 ms a frame on
+the laptop), and runs in the sim kept aborting on the watchdog's estimate
+rate and age at the cap's margin. The Jetson's rate after that work has not
+been measured yet. (Athreya, 2026-10-26)
+
+**D93. The tracker's jump gate grows with range like stereo depth error.**
+`tracker.max_jump_per_m2: 0.016`: an estimate may sit up to 0.15 m + 0.016 m/m^2
+x range^2 from the track (0.20 m at the 1.75 m standoff, 0.25 m at 2.5 m, 0.35 m
+at 3.5 m). *Why:* a stereo camera's depth error grows with range^2 (depth comes
+from image disparity). In the sim from 3.5 m with the worst-case depth model
+kept (D80), the estimate moved 18-24 cm in odom as the robot turned and every
+frame after was rejected as "a different object", aborting runs although the
+pallet and both pockets were found in every frame -- also at 30 Hz. Not the
+ROI crop: the pallet stayed within 14 deg of straight ahead, inside the crop's
++-23 deg at 3.5 m. Chosen over re-anchoring the track (a crate could take it
+over) and over limiting turns at range. (Athreya, 2026-10-26)
+
+**D94. The divergence check runs on time, and its growth threshold scales
+with range like stereo depth error.** `closing.divergence_window: 1.6` s: frames
+are averaged over 8 steps of 0.2 s and each step counts as one frame of the
+existing rule (8 rising steps, growth counted from the streak's start).
+`min_divergence_growth` (40 mm) applies at the standoff and is multiplied by
+(range / 1.75 m)^2 beyond it: 82 mm at 2.5 m, 160 mm at 3.5 m. *Why:* with
+D93 the tracker kept the pallet through a turn at 3.5 m, and the controller
+then aborted 2 of 3 sim runs as "diverging" on 88-128 mm of growth -- the
+re-measured line moving with the depth error, not the robot. And 8 frames at
+30 Hz is a quarter of a second, not 1.6 s. *Cost, measured:* a controller with a
+flipped gain from 3.5 m is caught at 244 mm of offset (2.6 s of drift), where
+the frame rule caught it earlier. A first version counted growth only within
+the last window and never caught it at all (drifted 0.69 m, NO_GO at the
+standoff); fixed before use, with test_a_sign_flipped_gain_is_caught as the
+guard. (Athreya, 2026-10-26)
+
+**D95. `pickup` is the only mode; `approach_only` is removed.** Supersedes the
+mode part of D56. *Why:* the approach-only mode existed for the first driving
+session, when insertion was not yet enabled. The robot now runs the full pickup
+from the start, and the dry rehearsal is the wheels-disconnected launch
+(`cmd_vel:=/cmd_vel_dry`), not a shorter sequence. *What changed:* `MODES` is
+`(PICKUP,)`; `Outcome.GO` is removed, since no path produces it; `trigger()`
+refuses `approach_only` as an unknown mode; the action's `mode` field stays, so
+the interface keeps its shape, and accepts only `pickup` (an empty string also
+means pickup). *Open:* the D83 sim acceptance (GO in 9 of 10 runs) was written
+for approach-only and needs a criterion for pickup runs (INSERTED?), and the lab
+session plan that relied on approach-only needs its first-session steps
+rewritten. (Athreya, 2026-10-27)
+
+**D96. Acceptance: 9 of 10 pickups, from the same starting positions in the sim
+and on the robot.** A run is accepted when it ends INSERTED. The ten starts come
+from one seed, through `pallet_approach/tools/start_positions.py`, which gives
+both the sim's pose arguments and the tape readings for the real pallet. Seed 7
+gives the same ten poses the sim batches used before, so earlier sim runs still
+describe the same starts. The batch needs a seed and passes at 9 of 10
+(`need = ceil(0.9 n)`). *Why:* one criterion for both lets the sim and the robot
+be compared run for run. The seed fixes the starts, not the depth noise: the sim
+has its own seeded noise, and the real world has none to share. *Procedure on
+the robot:* run `start_positions.py --seed 7`, set the pallet to each row's
+`dL`, `dR` and `lat` with tape, then trigger the run. *Interpretation:* "accepted"
+is read as INSERTED, the pickup's success outcome, since approach-only is gone
+(D95). (Athreya, 2026-10-27)
+
+**D97. Camera and LiDAR are fused into one pallet estimate, which replaces the
+camera-only estimate; the pipeline's working range is a face 1.5-3.0 m away.**
+The LiDAR gives the face line (range and yaw), the camera finds the pockets
+along it, and a filter in `odom` carries the pallet pose between measurements
+on wheel odometry. Outside the range the pipeline refuses the run rather than
+stretching to it: getting the robot into the range is the navigation system's
+job, and if it cannot, that is what gets fixed. *Why:* on the 2026-10-27 tape
+bags the LiDAR's range had a constant offset (+22 to +36 mm) with 0.3-1.6 mm
+scatter and yaw within the tape's resolution at every range, while the camera's
+range error grew to +33/+68 mm at 3.5 m; the camera, in turn, resolves pocket
+edges about six times finer than the LiDAR's columns at 2.5 m. Beyond 3.0 m the
+camera's pocket estimate is not good enough, which sets the upper bound.
+*Interpretation (confirmed 2026-10-28 with D102):* distances are face distances from
+`base_footprint`, the frame every other pipeline distance is in (standoff 1.75,
+`min_run_up` 2.5), i.e. 1.04-2.54 m from the bumper on the tape. The closing
+loop then lies entirely inside the range, but a computed run-up above 3.0 m
+(lateral offsets beyond roughly 0.2 m; 0.30 m needs 3.40) can no longer be
+reached and must be refused. *Not yet built.* (Athreya, 2026-10-27)
+
+**D98. No pocket check during the close range or insertion; the pockets are
+assumed empty and insertable.** Below about 1.5 m the tines would already be
+in, and a real autonomous forklift would carry proximity sensors on the tines
+for that. The LiDAR's ability to see pocket-height returns down to 0.29 m from
+the bumper is therefore not used for a pocket check. *Scope:* this is about the
+close range only; the GO/NO-GO rules at the standoff are unchanged. (Athreya,
+2026-10-27)
+
+**D99. The camera-to-LiDAR offset is fixed by a measured extrinsic
+calibration, not by subtracting a constant.** A checkerboard board seen by
+both sensors in many poses: the camera gets the board's plane from the
+checkerboard corners (solvePnP on the rectified left image, which does not use
+stereo depth), the LiDAR from the returns on the board; the transform that
+makes the two sets of planes agree is the extrinsic. *Why:* the +30 mm is a
+symptom; a subtraction would hide which transform is wrong and would be wrong
+again for yaw, height and any other range. It also replaces D74's LiDAR
+correction, which the four-heading floor bags already showed is wrong for the
+current mount. (Athreya, 2026-10-27)
+
+**D100. The calibration is a separate, installable tool that drives the robot;
+its result is published on /tf.** `lidar-camera-calib`, outside this
+repository (`~/Desktop/personal/lidar-camera-calib`). One checkerboard board,
+fixed; the operator places it in four poses (upright, turned +30, turned -30,
+leaned back ~40 deg) and the robot drives in and back at each, measuring at up
+to five stops 0.5 m apart (forward 0.10 m/s, reverse 0.05, never above 0.20;
+never nearer than 1.0 m to the board), with a pre-check before it moves (board
+found, at the asked angle within 10 deg) and stops while driving on stale
+data, an obstacle in the corridor, a lost board, or Ctrl-C. Confidence
+is per-axis uncertainty (jackknife over stops), repeatability (way in vs way
+back), residual, an independent floor check and observability, graded GOOD
+(3 mm / 0.2 deg) / USABLE (10 mm / 0.5 deg) / FAIL; the calibration file is
+written only when it is not FAIL, the old one kept as a backup, the raw data
+of every stop saved. The result is published as `<camera frame> ->
+lidar_calibrated` (Athreya's choice: the correction usable machine-wide
+through tf), and the LiDAR relay is to re-stamp its clouds with that frame.
+*Why separate:* it is a robot-commissioning tool, not part of the pickup, and
+it should work on any robot with a camera, a LiDAR and odometry. *Why one
+leaning pose:* upright boards never measure the LiDAR's height, whatever
+the yaw or the distance (a synthetic conditioning check). *Why a drive:* the range of
+distances separates a rotation error from a sideways offset; on synthetic data
+the full plan recovered a known transform to 0.1-2.6 mm and 0.13 deg, and a run
+with all stops within 0.6 m was 6-15 mm off and said so. *Not yet done in this
+repository:* publishing the file at startup and the relay's re-stamping.
+(Athreya, 2026-10-28)
+
+**D101. The camera-LiDAR calibration replaces D74's LiDAR correction.** The
+result of lidar-camera-calib (D100) on 2026-10-28 -- a 9x6, 65 mm checkerboard
+on an 80 x 100 cm board, four poses, 34 stops, graded USABLE (+-2.7 / 3.9 /
+0.9 mm and <= 0.13 deg within the run; independent floor check 0.10 deg /
+2 mm) -- is `config/lidar_calibration.yaml`. The launch file publishes it as
+`zed2_left_camera_frame_optical -> lidar_calibrated`; `lidar_relay` re-stamps
+every cloud with `lidar_calibrated` in its serialized bytes (`cdr.py`, still
+never decoding the cloud), so everything that reads the LiDAR gets the
+measured pose through tf. Because the LiDAR is now calibrated to the camera,
+it inherits the camera's tilt correction, applied as a rotation about the
+camera (`calibration.lidar_follows_camera`; one helper, `lidar_in_ground`,
+serves both the tracker's cross-check and the controller's insertion stop).
+D74's `lidar_correction` is kept as a fallback, off; the sim turns the
+calibration off (`lidar_calibration:=none`). *Measured effect* (16 short-face
+bags with tape truth, none used in the calibration): the LiDAR's range error
+against tape went from +29.8 mm mean to -0.5 mm, spread 3.4 mm either way;
+yaw unchanged. *Known limits:* the forward value varied by ~7 mm between
+calibration runs (A3 board vs this one), so +-5 mm forward is the honest
+figure; height and pitch carry the Ouster's own distance-dependent tilt (about
+1 deg between 3 m and 1.2 m on a flat board), which no rigid transform can
+remove. *Not yet run on the robot:* the node path (`lidar_in_ground` with the
+calibration on) is covered by unit tests and by the same functions in the
+offline tools, not yet by a dry run. (Athreya, 2026-10-28)
+
+**D102. How the fused perception (D97) works -- logic sheet accepted.** All
+defaults accepted by Athreya on 2026-10-28:
+1. *Acquisition* is LiDAR-first: the pallet is found in the calibrated LiDAR
+   cloud, looking only at pallet height; the camera confirms the two pockets.
+   *Why:* the current camera pipeline finds no pallet once a load sits on it
+   (0 of 8-12 frames, sim, 2026-10-27); a height band cannot see a load.
+2. *The camera's job* is the pockets' lateral positions and "two pockets
+   present"; its range only cross-checks. *Why:* it resolves edges ~6x finer
+   than the LiDAR's columns at 2.5 m, while the LiDAR's range is the better one
+   (-0.5 +- 3.4 mm against tape after D101; camera +1..+13 mm to 3 m, +33..+68 mm
+   at 3.5 m).
+3. *"The face" is the block fronts*, which stand 13-25 mm proud of the deck
+   boards on the real pallet: what the robot's body meets first, and what the
+   tape measures.
+4. *Height band* for both sensors: 0.02-0.145 m above the fitted floor.
+5. *Fusion*: a Kalman filter on the pallet's pose in `odom`, each measurement
+   weighted by its sensor's measured error at that range (tape tables);
+   replaces the tracker's N-frame median.
+6. *Disagreement*: camera and LiDAR more than 20 mm apart in range or 3 deg in
+   yaw for 5 frames means no GO.
+7. *LiDAR missing or too thin*: the camera may keep tracking alone, but never
+   decides GO.
+8. *Working range*: face 1.5-3.0 m from `base_footprint` (D97); refused
+   outside.
+9. *Latency*: tracking under 10 ms per frame on the Jetson; acquisition, which
+   runs once, up to 100 ms.
+10. *Rate*: camera tracking at 15 Hz (settles the uncommitted `max_rate`).
+11. *Loaded pallets are in scope*; real loaded-pallet bags to be recorded.
+12. *Done means*: tracker-level detection 100 % inside the working range on the
+    tape bags and the loaded bags; range, lateral and yaw error against tape;
+    Jetson timing measured. Synthetic numbers stay labelled synthetic.
+Build order: (a) LiDAR pallet-height acquisition, scored on the existing tape
+bags; (b) camera pocket strip along the LiDAR line; (c) the filter and the
+disagreement rule; (d) integration and Jetson timing. (Athreya, 2026-10-28)
+
+**D103. The ZED's depth is corrected for its disparity offset before the
+camera's range is compared with the LiDAR's** (D102 item 6; option 1 of three,
+chosen by Athreya). The ZED reads short by an error growing with the square of
+the distance -- one constant disparity offset: 1/z_measured = 1/z_true + beta.
+Fitted on the flat-board bags deck_80..deck_305 with tools/fit_depth_bias.py:
+beta = 0.00454 1/m against the tape, 0.00510 against the calibrated LiDAR;
+0.0048 used. Before: -1 to -47 mm from 0.9 to 3.1 m; after: within +-7 mm,
+3-4 mm rms. *Held-out check* (pallet bags, never in the fit): camera-vs-LiDAR
+range on the block fronts went from -2..-26 mm to -5..+4 mm (one bag +10 mm),
+so the 20 mm disagreement rule stands as decided. *Cost:* at 3.5 m, outside the
+working range, the camera's pocket match fell just below its threshold (0.78
+against 0.80). *To confirm* with the calibration runs' checkerboard distances
+(PnP, no stereo) when the Jetson is reachable. The old camera-only pipeline
+(perception.py) is unchanged. (Athreya, 2026-10-28)
+
+**D104. With the fused perception, GO/NO-GO is a decision tree along the
+pipeline; GO itself checks only alignment, now 3 deg and 30 mm.** Decided by
+Athreya on 2026-10-28, from a 15-rule draft he judged too many. Each stage of
+the fused pipeline answers one question before the next runs:
+1. *Acquire* (LiDAR): a vertical face of a pallet's width -- else NO_PALLET.
+   Which side, and is it insertable (D20) -- else NO_GO. **A pallet found
+   beyond the working range is approached, not refused** (supersedes D97's
+   "refused outside" for the far side): CLOSING already drives in from wherever
+   Nav2 left the robot (D89), so the drive-up is the closing drive; the limit
+   is the LiDAR's search, ~3.6 m. Nearer than the standoff stays a NO_GO (D89).
+2. *Pockets* (camera along the LiDAR face): the side's block/pocket layout
+   matches with both pockets open -- else NO_GO. This also stands in for the
+   pocket width and height rules: the layout uses the measured widths, and a
+   narrower, shifted or half-blocked pocket breaks the match or reads closed.
+3. *Track* (filter): camera and LiDAR disagree by more than 20 mm or 3 deg for
+   5 frames, or either goes quiet -- NO_GO (D102 items 6, 7; measured: no
+   tape-bag frame exceeds either, while 10 mm / 0.3 deg would trip on 5 % /
+   67 % of frames, the angle mostly as a steady per-bag offset of up to 2.4
+   deg between the sensors). "Stable" means a healthy track: both sensors
+   accepted for the last 5 frames, nothing rejected. Losing the pallet while
+   closing aborts, as before.
+4. *At the standoff*: yaw within **3 deg** (was 5) and sideways within
+   **30 mm** (was 50) -- the only checks left at GO. Retryable once (D50).
+   *Why 30 and not 20 mm:* the closing servo sizes its run-up to arrive within
+   20 mm and ignores errors under 15 mm; 30 mm leaves it a margin. These two
+   limits apply in both perception modes.
+Overhang and pocket clearance stay off (D61, D63). *Switching:* one launch
+setting, `perception:=camera|fused`; `camera` until the fused mode passes the
+sim acceptance (9/10, D96), an offline replay of the tape bags and a dry run
+on the robot. In fused mode the old perception node is not activated.
+(Athreya, 2026-10-28)
+
+**D105. The sim's depth error depends on the surface: vertical faces get the
+board-measured error, the floor keeps D80's.** D80's warp (sd 10 mm at
+1.75 m, 29 mm at 2.5 m, ~79 mm at 3.2 m extrapolated) was fitted on floor
+bags, a grazing surface and stereo's hard case. On the flat-board bags the
+real ZED, after D103, is within 3-4 mm rms (max 7 mm) on a vertical face, flat
+from 0.9 to 3.1 m, and camera-vs-LiDAR on the pallet bags is -5..+4 mm. With
+D80 everywhere, the first fused-mode sim run ended NO_GO on a camera-LiDAR
+disagreement of +36 mm at 3.2 m that the real sensors never show. Now
+`zed_depth_model` classifies each pixel by its surface normal (from the depth
+alone): floor-like surfaces keep D80's warp, vertical ones get a 4 mm warp
+constant with range. Edge smearing and cavity filling, measured on the real
+pallet, are unchanged. Option 1 of three, chosen by Athreya; D104's 20 mm /
+3 deg rule stands. (Athreya, 2026-10-28)
 
 ## Open, with numbers attached
 

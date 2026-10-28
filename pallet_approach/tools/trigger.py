@@ -1,6 +1,6 @@
 """Start or cancel a run, and confirm the coordinator heard it.
 
-    python3 trigger.py approach_only | pickup | cancel
+    python3 trigger.py pickup | cancel
 
 Why not `ros2 topic pub --once`: in Humble it sends its one message and exits
 without waiting for the subscriber to be matched, and /pallet_approach/start is

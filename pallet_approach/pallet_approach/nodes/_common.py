@@ -20,12 +20,8 @@ ENCODINGS = {
 
 
 def image_to_array(msg) -> np.ndarray:
-    """sensor_msgs/Image -> NumPy array, without cv_bridge.
-
-    Four lines of buffer arithmetic instead of a dependency whose Humble build
-    is compiled against NumPy 1.x -- which is exactly what breaks inside the
-    ZED container (docs/SYSTEM.md). `step` is the row stride in bytes and can
-    exceed width*channels*itemsize when rows are padded, so slice per row.
+    """sensor_msgs/Image -> NumPy array, without cv_bridge (its Humble build
+    needs NumPy 1.x, docs/SYSTEM.md). Rows may be padded beyond width*channels.
     """
     if msg.encoding not in ENCODINGS:
         raise ValueError(f'unhandled encoding {msg.encoding!r}')
@@ -52,13 +48,7 @@ def image_to_array(msg) -> np.ndarray:
 
 
 def intrinsics_from_camera_info(msg) -> dict:
-    """fx, fy, cx, cy from a CameraInfo.
-
-    K is row-major 3x3, so fx = k[0], fy = k[4], cx = k[2], cy = k[5]. The ZED
-    publishes rectified images with D all zero, so there is no undistortion to
-    do; if D is ever non-zero, the image is not the rectified one and the
-    pipeline's assumptions are wrong -- hence the check in the node.
-    """
+    """fx, fy, cx, cy from a CameraInfo (K row-major). The ZED's rectified images have D = 0."""
     k = list(msg.k)
     return {'fx': k[0], 'fy': k[4], 'cx': k[2], 'cy': k[5]}
 
@@ -69,16 +59,8 @@ def nested(node, prefix: str, keys) -> dict:
 
 
 def points_to_cloud(points, frame_id: str, stamp):
-    """(N, 3) NumPy array -> sensor_msgs/PointCloud2, xyz float32.
-
-    Written out rather than using `point_cloud2.create_cloud_xyz32`, for the
-    same reason as `image_to_array` above: the Humble build of that helper is
-    compiled against NumPy 1.x, which is exactly what breaks inside the ZED
-    container (docs/SYSTEM.md).
-
-    Unordered (height 1), dense, little-endian, 12 bytes a point. The
-    corresponding reader is `pallet_approach.pointcloud.unpack_cloud`, and
-    `test_pointcloud.py` puts a cloud through both.
+    """(N, 3) array -> unordered xyz float32 PointCloud2, written out for the same
+    NumPy reason as `image_to_array`. Read back by `pointcloud.unpack_cloud`.
     """
     from sensor_msgs.msg import PointCloud2, PointField
 
@@ -105,15 +87,10 @@ def points_to_cloud(points, frame_id: str, stamp):
 
 
 def logged_transition(callback):
-    """Log a lifecycle callback's exception before letting it propagate.
+    """Log a lifecycle callback's exception, then re-raise.
 
-    rclpy's lifecycle catches an exception raised in on_configure (or any
-    transition callback), fails the transition, and logs nothing: the node that
-    broke stays silent, and the caller only learns the transition failed.
-    Measured 2026-10-20 in the Gazebo sim -- a KeyError in the controller's
-    on_configure showed up as nothing but the coordinator's "could not
-    configure the managed nodes". Re-raised, so the transition still fails
-    exactly as it would have; this only makes it say why.
+    rclpy fails the transition silently otherwise (a KeyError in the controller's
+    on_configure, 2026-10-20, showed only as "could not configure").
     """
     @functools.wraps(callback)
     def wrapper(self, state):
@@ -126,20 +103,61 @@ def logged_transition(callback):
     return wrapper
 
 
+LIDAR_PARAMS = {
+    # D74's floor-based correction: the fallback, off since D101.
+    'frames.lidar_correction.enabled': False,
+    'frames.lidar_correction.measured_floor_pitch': 0.0,
+    'frames.lidar_correction.measured_floor_roll': 0.0,
+    'frames.lidar_correction.measured_floor_height': -0.025,
+    # D101: the calibrated LiDAR, which follows the camera's tilt correction.
+    'frames.lidar_calibration.enabled': False,
+    'frames.camera_optical': 'zed2_left_camera_frame_optical',
+    'frames.extrinsic_correction.enabled': False,
+    'frames.extrinsic_correction.measured_floor_pitch': 0.0,
+    'frames.extrinsic_correction.measured_floor_roll': 0.0,
+}
+
+
+def declare_lidar_params(node) -> None:
+    """The parameters `lidar_in_ground` reads; one list for every node that uses the LiDAR."""
+    for name, default in LIDAR_PARAMS.items():
+        if not node.has_parameter(name):
+            node.declare_parameter(name, default)
+
+
+def lidar_in_ground(node, buffer, cloud_frame: str, stamp, timeout) -> np.ndarray:
+    """4x4 ``ground <- cloud_frame`` with the LiDAR correction in force: D101
+    (calibrated, moved with the camera's tilt correction), else D74, else tf as is.
+    Shared by the tracker and the controller so both put the LiDAR in one place.
+    """
+    from pallet_approach.calibration import (correct_lidar_transform, correction_matrix,
+                                             lidar_follows_camera)
+    from pallet_approach.ros_conversions import transform_to_matrix
+    get = lambda name: node.get_parameter(name).value   # noqa: E731
+    ground = get('frames.ground')
+    matrix = transform_to_matrix(lookup_waiting(buffer, ground, cloud_frame, stamp, timeout))
+    if get('frames.lidar_calibration.enabled'):
+        camera = transform_to_matrix(lookup_waiting(
+            buffer, ground, get('frames.camera_optical'), stamp, timeout))
+        correction = np.eye(3)
+        if get('frames.extrinsic_correction.enabled'):
+            correction = correction_matrix(get('frames.extrinsic_correction.measured_floor_pitch'),
+                                           get('frames.extrinsic_correction.measured_floor_roll'))
+        return lidar_follows_camera(matrix, camera, correction)
+    if get('frames.lidar_correction.enabled'):
+        return correct_lidar_transform(matrix, get('frames.lidar_correction.measured_floor_pitch'),
+                                       get('frames.lidar_correction.measured_floor_roll'),
+                                       get('frames.lidar_correction.measured_floor_height'),
+                                       get('floor_z'))
+    return matrix
+
+
 def lookup_waiting(buffer, target: str, source: str, stamp, timeout=None):
-    """`buffer.lookup_transform`, but waiting by SLEEPING, not spinning.
+    """`buffer.lookup_transform` that waits by sleeping, not spinning.
 
-    rclpy's tf2 `lookup_transform(..., timeout)` waits in a hot loop. Measured
-    2026-10-22 with py-spy: 81 % of fork_overlay's CPU was `can_transform`,
-    the node at 87 % of a core, every time tf ran behind the image. On the
-    Jetson that core is taken from perception. Here the wait polls every 5 ms
-    and sleeps in between, which releases the GIL so the listener's own
-    thread (`spin_thread=True`, see the nodes) can deliver the transform being
-    waited for. Same timeout, same exceptions: after the deadline it makes the
-    ordinary lookup, which raises exactly what it always did.
-
-    `timeout` is an rclpy Duration, seconds as a float, or None for no wait.
-    The deadline is wall time, so it means the same in sim time and real time.
+    rclpy's own timeout busy-waits (81 % of fork_overlay's CPU, 2026-10-22). Polls
+    every 5 ms against a wall-clock deadline, then makes the ordinary lookup, so
+    the exceptions are unchanged. `timeout`: a Duration, seconds, or None.
     """
     seconds = 0.0
     if timeout is not None:
@@ -152,13 +170,8 @@ def lookup_waiting(buffer, target: str, source: str, stamp, timeout=None):
 
 
 class LatestRaw:
-    """The newest message of one topic, kept serialized and decoded on demand.
-
-    For big messages a node only sometimes reads: subscribe with `raw=True`,
-    `store` every arrival (a reference, no work), and `get` decodes the newest
-    one the first time it is asked for and caches it until the next arrival.
-    A 64 x 1024 Ouster cloud is ~1.6 MB at 10 Hz; the tracker reads one per
-    estimate and the controller one per tick only while it drives.
+    """The newest message of one topic, kept serialized and decoded once, on demand.
+    For big messages read only sometimes (a LiDAR cloud is ~1.6 MB at 10 Hz).
     """
 
     def __init__(self, msg_type):
@@ -180,29 +193,12 @@ class LatestRaw:
 class CameraTransformListener:
     """A tf listener that keeps up while its node is busy with depth frames.
 
-    Measured on the robot 2026-10-23: perception processes a frame in ~155 ms
-    at 5 Hz, and the stock `TransformListener(spin_thread=True)` fell 0.15 to
-    0.4 s behind within two seconds of activation, so almost every stamped
-    lookup failed with "extrapolation into the future" and the estimate rate
-    dropped to 1.8 Hz. A separate process saw the same transforms 44 ms old.
-    Two reasons, both in the stock listener:
-
-    * its thread spins the WHOLE node, so it also runs depth callbacks and
-      sits behind a 155 ms frame; and
-    * it decodes every /tf message in Python -- ~200 a second on the robot
-      (odom, map->odom, both ZED links) -- against the interpreter lock that
-      perception's NumPy work holds.
-
-    This one spins a private helper node holding only the tf subscriptions,
-    and decodes a /tf message only if its raw bytes name one of
-    `moving_links` as a child frame. Everything on /tf_static is kept. The
-    buffer is then the same buffer, stamped lookups behave exactly as before,
-    and a needed link missing from `moving_links` makes the lookup fail --
-    no estimate, the safe direction -- rather than silently use stale data.
-
-    Call `close()` when done. Dropping the reference is not enough: the thread
-    holds one, so the stock listener was never collected and every
-    configure/cleanup cycle left one more thread spinning the node.
+    The stock listener spins the whole node and decodes every /tf message in
+    Python, and fell 0.15-0.4 s behind on the robot (2026-10-23). This one spins a
+    private node holding only the tf subscriptions and decodes a /tf message only
+    if it names one of `moving_links`; /tf_static is kept whole. A needed link
+    missing from `moving_links` fails the lookup (the safe direction).
+    Call `close()` when done: the thread holds a reference to the node.
     """
 
     def __init__(self, buffer, node, moving_links):
@@ -256,3 +252,10 @@ class CameraTransformListener:
         self._executor.shutdown()
         self._thread.join(timeout=2.0)
         self._node.destroy_node()
+
+
+def tracked_topic(source: str) -> str:
+    """The TrackedPallet topic for a perception source (D104)."""
+    if source not in ('camera', 'fused'):
+        raise ValueError(f'perception_source must be camera or fused, not {source!r}')
+    return '/pallet_fusion/tracked' if source == 'fused' else '/pallet_tracker/tracked'

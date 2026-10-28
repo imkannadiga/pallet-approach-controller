@@ -1,29 +1,11 @@
-"""Pallet tracker: the memory perception does not have.
+"""Pallet tracker: one-frame estimates in, a track with a confidence and a LiDAR
+cross-check out. The coordinator reads this, not perception.
 
-Subscribes to one-frame estimates and publishes a track with a confidence and a
-LiDAR cross-check. The coordinator reads this node, not perception, so the
-"several consistent frames before anything moves" rule is enforced in one
-place instead of being re-implemented in the state machine.
-
-Two things are deliberate about the plumbing.
-
-**The LiDAR cloud is decoded lazily.** The raw message is kept and unpacked
-only when an estimate arrives, so a 65 536-point cloud is decoded at
-perception's 5 Hz rather than the Ouster's 10 Hz, and the cross-check compares
-the cloud with the estimate closest to it in time. A cloud older than
-`lidar.max_cloud_age` is treated as no LiDAR at all rather than compared
-anyway.
-
-**Odometry is looked up at the estimate's stamp**, not taken as the latest.
-At 50 Hz and 0.10 m/s the difference is a couple of millimetres, which does not
-matter -- but the tracker's whole argument for comparing positions in `odom` is
-that the robot's motion has been taken out, and taking out the motion at the
-wrong instant quietly undoes it. If no odometry sample is close enough to the
-stamp, the frame is rejected with that as the reason.
-
-The LiDAR subscription is BEST_EFFORT: `/ouster/points` publishes BEST_EFFORT
-and a RELIABLE subscriber receives nothing at all from it (measured
-2026-10-15).
+The LiDAR cloud is kept raw and decoded only when an estimate arrives; a
+cloud older than `lidar.max_cloud_age` counts as no LiDAR. Odometry is looked
+up at the estimate's stamp (otherwise the robot's motion is removed at the
+wrong instant); with no sample close enough the frame is rejected. The LiDAR
+subscription is BEST_EFFORT: a RELIABLE one receives nothing from the Ouster.
 """
 
 from __future__ import annotations
@@ -39,19 +21,17 @@ from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
-from pallet_approach.nodes._common import LatestRaw, lookup_waiting
+from pallet_approach.nodes._common import LatestRaw, declare_lidar_params, lidar_in_ground
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 from pallet_approach_interfaces.msg import TrackedPallet
 
 from pallet_approach.model import Pose2D
-from pallet_approach.calibration import correct_lidar_transform
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     estimate_from_msg,
     estimate_to_msg,
     pose2d_from_odometry,
     stamp_to_seconds,
-    transform_to_matrix,
 )
 from pallet_approach.tracker import Tracker
 
@@ -88,18 +68,16 @@ class TrackerNode(Node):
 
     def _declare(self):
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('topics.lidar', '/ouster/points')
+        self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
         self.declare_parameter('floor_z', -0.025)
-        self.declare_parameter('frames.lidar_correction.enabled', True)
-        self.declare_parameter('frames.lidar_correction.measured_floor_pitch', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_roll', 0.0)
-        self.declare_parameter('frames.lidar_correction.measured_floor_height', -0.025)
+        declare_lidar_params(self)   # D74 / D101, shared with the controller
         self.declare_parameter('pallet.pallet_height', 0.145)
         for name, default in (
             ('window', 10), ('min_window_frames', 5), ('confirm_frames', 5),
-            ('min_confidence', 0.6), ('max_jump', 0.15), ('max_turn', 0.20),
+            ('min_confidence', 0.6), ('max_jump', 0.15), ('max_jump_per_m2', 0.016),
+            ('max_turn', 0.20),
             ('require_same_side', True), ('odom_match_tolerance', 0.05),
             ('fusion_memory', 0.95), ('fusion_min_range', 0.5),
             ('lidar.search_ahead', 0.60), ('lidar.search_behind', 1.00),
@@ -124,6 +102,7 @@ class TrackerNode(Node):
             'confirm_frames': get('confirm_frames'),
             'min_confidence': get('min_confidence'),
             'max_jump': get('max_jump'),
+            'max_jump_per_m2': get('max_jump_per_m2'),
             'max_turn': get('max_turn'),
             'require_same_side': get('require_same_side'),
             'fusion_memory': get('fusion_memory'),
@@ -195,7 +174,7 @@ class TrackerNode(Node):
             return None
         ground = self.get_parameter('frames.ground').value
         try:
-            transform = lookup_waiting(self._buffer, ground, cloud.header.frame_id, cloud.header.stamp,
+            matrix = lidar_in_ground(self, self._buffer, cloud.header.frame_id, cloud.header.stamp,
                 rclpy.duration.Duration(
                     seconds=float(self.get_parameter('frames.tf_timeout').value)))
         except Exception as error:
@@ -203,14 +182,6 @@ class TrackerNode(Node):
                 f'tf {ground} <- {cloud.header.frame_id}: {error}',
                 throttle_duration_sec=5.0)
             return None
-        matrix = transform_to_matrix(transform)
-        if self.get_parameter('frames.lidar_correction.enabled').value:
-            matrix = correct_lidar_transform(
-                matrix,
-                self.get_parameter('frames.lidar_correction.measured_floor_pitch').value,
-                self.get_parameter('frames.lidar_correction.measured_floor_roll').value,
-                self.get_parameter('frames.lidar_correction.measured_floor_height').value,
-                self.get_parameter('floor_z').value)
         return transform_points(unpack_cloud(cloud), matrix)
 
     def _on_estimate(self, msg: PalletEstimateMsg):

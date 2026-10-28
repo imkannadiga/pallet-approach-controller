@@ -327,7 +327,7 @@ class Rig:
         else:
             geometry = geometry_of(self._estimate)
         result = self.executor.step(geometry=geometry, lidar_points=self._cloud,
-                                    new_frame=new_frame)
+                                    new_frame=new_frame, now=now)
         self.commands.append((result.command.linear, result.command.angular))
         self._note(self.machine.on_drive(DriveInfo(
             mode=request.mode, arrived=result.arrived, blocked=result.blocked,

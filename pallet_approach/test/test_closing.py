@@ -586,3 +586,39 @@ def test_the_unverified_part_of_the_allowance_is_small():
     """It is the admitted gap in the argument. If this grew, the reverse would
     be relying on nothing at all."""
     assert REVERSE['max_unverified'] <= 0.60
+
+
+def _feed(detector, offsets_per_second, seconds, rate, range_):
+    verdict = (False, '')
+    for i in range(int(seconds * rate)):
+        t = i / rate
+        verdict = detector.update(offsets_per_second(t), now=t, range_=range_)
+        if verdict[0]:
+            return t, verdict
+    return None, verdict
+
+
+def test_a_time_window_means_the_same_at_5_and_30_hz():
+    """D94: the steps are seconds, not frames, so a steady drift-off is
+    caught at the same time whatever the frame rate."""
+    drift = lambda t: 0.05 + 0.03 * t                       # 30 mm/s away from the line
+    times = []
+    for rate in (5.0, 30.0):
+        d = DivergenceDetector(frames=8, min_growth=0.04, min_offset=0.02,
+                               window=1.6, reference_range=1.75)
+        t, _ = _feed(d, drift, 10.0, rate, range_=1.75)
+        times.append(t)
+    assert None not in times
+    assert abs(times[0] - times[1]) < 0.4
+
+
+def test_far_away_a_noise_sized_swing_is_not_divergence():
+    """D94: at 3.5 m the measured line moves 9-13 cm in the sim while the robot
+    turns; the threshold scales with (range / standoff)^2 to 160 mm there."""
+    swing = lambda t: 0.05 + min(t, 2.0) * 0.06              # 120 mm over 2 s, then flat
+    d = DivergenceDetector(frames=8, min_growth=0.04, min_offset=0.02,
+                           window=1.6, reference_range=1.75)
+    assert _feed(d, swing, 6.0, 30.0, range_=3.5)[0] is None
+    d = DivergenceDetector(frames=8, min_growth=0.04, min_offset=0.02,
+                           window=1.6, reference_range=1.75)
+    assert _feed(d, swing, 6.0, 30.0, range_=1.75)[0] is not None   # at the standoff it is

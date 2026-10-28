@@ -1,0 +1,247 @@
+source_bag: floor_pose1
+exported: '2026-10-27'
+note: Static transforms of the real robot. Regenerate if the hardware or the robot
+  description changes. Dynamic transforms are not here.
+edges:
+- parent: base_link
+  child: base_footprint
+  translation:
+  - 0.0
+  - 0.0
+  - -0.21
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: base_link
+  child: front_mount
+  translation:
+  - 0.325
+  - 0.0
+  - 0.112701
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: base_link
+  child: inertial_link
+  translation:
+  - 0.0
+  - 0.0
+  - 0.0
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: base_link
+  child: rear_mount
+  translation:
+  - -0.325
+  - 0.0
+  - 0.112701
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: base_link
+  child: top_robot_link
+  translation:
+  - 0.0
+  - 0.0
+  - 0.113
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: bottom_box_link
+  child: imu_link
+  translation:
+  - 0.0
+  - 0.0
+  - 0.003
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: bottom_box_link
+  child: top_box_link
+  translation:
+  - -0.05
+  - 0.0
+  - 0.16
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: bottom_box_link
+  child: zed2_camera_link
+  translation:
+  - 0.3
+  - 0.0
+  - 0.035
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: os_sensor
+  child: os_imu
+  translation:
+  - -0.002441
+  - -0.009725
+  - 0.007533000000000001
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: os_sensor
+  child: os_lidar
+  translation:
+  - 0.0
+  - 0.0
+  - 0.038195
+  rotation:
+  - 0.0
+  - 0.0
+  - 1.0
+  - 0.0
+- parent: os_sensor_base_link
+  child: os_sensor_baseplate
+  translation:
+  - 0.0
+  - 0.0
+  - 0.008
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: os_sensor_baseplate
+  child: os_sensor
+  translation:
+  - 0.0
+  - 0.0
+  - 0.042
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: top_box_lidar_support_link
+  child: os_sensor_base_link
+  translation:
+  - 0.0
+  - 0.0
+  - -0.0039
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: top_box_link
+  child: gps_antenna_link
+  translation:
+  - 0.154
+  - -0.12
+  - 0.0
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: top_box_link
+  child: top_box_lidar_support_link
+  translation:
+  - 0.123
+  - 0.0
+  - 0.063
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: top_robot_link
+  child: bottom_box_link
+  translation:
+  - 0.1
+  - 0.0
+  - 0.0
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: zed2_camera_center
+  child: zed2_imu_link
+  translation:
+  - 0.0
+  - 0.0
+  - 0.0
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: zed2_camera_center
+  child: zed2_left_camera_frame
+  translation:
+  - -0.01
+  - 0.06
+  - 0.0
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: zed2_camera_center
+  child: zed2_right_camera_frame
+  translation:
+  - -0.01
+  - -0.06
+  - 0.0
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: zed2_camera_link
+  child: zed2_camera_center
+  translation:
+  - 0.0
+  - 0.0
+  - 0.015
+  rotation:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 1.0
+- parent: zed2_left_camera_frame
+  child: zed2_left_camera_frame_optical
+  translation:
+  - 0.0
+  - 0.0
+  - 0.0
+  rotation:
+  - 0.5
+  - -0.4999999999999999
+  - 0.5
+  - -0.5000000000000001
+- parent: zed2_right_camera_frame
+  child: zed2_right_camera_frame_optical
+  translation:
+  - 0.0
+  - 0.0
+  - 0.0
+  rotation:
+  - 0.5
+  - -0.4999999999999999
+  - 0.5
+  - -0.5000000000000001

@@ -645,13 +645,11 @@ script with nothing to wait for (D55):
 
 ```bash
 ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: pickup}"
-ros2 topic pub --once /pallet_approach/start  std_msgs/String "{data: approach_only}"
 ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty  "{}"
 ros2 topic echo /pallet_approach/result
 ```
 
-`approach_only` runs the whole approach and stops at the GO/NO-GO decision,
-inserting nothing. An unknown mode is refused, not defaulted — the difference
+`pickup` is the only mode (D95). An unknown mode is refused, not defaulted — the difference
 between the modes is whether the robot drives into the pallet. A run is also
 refused if the stack is unhealthy when the trigger arrives, and the refusal is
 published on `/pallet_approach/result` as well as logged, because nothing is

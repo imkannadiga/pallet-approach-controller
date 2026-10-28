@@ -21,8 +21,10 @@
     frames:
       extrinsic_correction:
         enabled: false
-      # The sim's LiDAR is mounted exactly where the URDF says (D74).
+      # The sim's LiDAR is mounted exactly where the URDF says (D74, D101).
       lidar_correction:
+        enabled: false
+      lidar_calibration:
         enabled: false
       # 3. Sim plumbing is slower than the ZED's. The camera's dynamic tf link
       #    is relayed per frame by a Python node (sim/.../camera_tf.py), and on
@@ -32,14 +34,20 @@
       #    the frames that would have succeeded anyway.
       tf_timeout: 0.5
 
+    # The real ZED reads short by a disparity offset (D103); the sim's depth
+    # does not, and correcting it made the camera read 30+ mm far. Read by
+    # pallet_fusion, which merges this file's /** block over params.yaml's.
+    camera_depth:
+      disparity_bias: 0.0
+
+pallet_fusion:
+  ros__parameters:
+    use_sim_time: true
 pallet_perception:
   ros__parameters:
     use_sim_time: true
-    # D82: the robot's perception achieves ~3.3 Hz (250-350 ms a frame on the
-    # Jetson with the whole stack running, 2026-10-23); the GPU machine would
-    # run it at the full 5 Hz. Capped here so timing failures -- a track lost
-    # for want of frames while the robot turns -- show up in the sim as well.
-    max_rate: 3.3
+    # D82 capped perception at 3.3 Hz here; removed 2026-10-26 (D92), so the
+    # sim runs perception at params.yaml's max_rate.
 approach_controller:
   ros__parameters:
     use_sim_time: true

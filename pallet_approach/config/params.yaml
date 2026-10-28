@@ -10,6 +10,14 @@
 
     use_sim_time: false
 
+    # [D104] Which perception the run uses: `camera` (pallet_perception +
+    # pallet_tracker) or `fused` (pallet_fusion, D102). Chooses the tracked
+    # topic the coordinator, controller and dashboard read, the GO/NO-GO
+    # evaluation, and whether the old perception node is activated. Set it with
+    # the launch argument perception:=fused, which also starts pallet_fusion.
+    # `camera` until fused passes the sim acceptance, a replay and a dry run.
+    perception_source: camera
+
     # [measured 2026-10-14] Where the real floor is in frames.ground. NOT zero:
     # the URDF's base_footprint joint is 25 mm out (its wheel geometry is right
     # to 0.2 mm). Shared, because three nodes need the same number -- the
@@ -142,6 +150,12 @@
       # travelled -- which is robust to noise over a long baseline and would
       # catch a divergence in half the frames. That is a decision, not a tweak.
       divergence_frames: 8
+      # [choice, Athreya 2026-10-26] D94. The 8 steps span this many seconds
+      # (8 frames at 5 Hz), whatever the frame rate: at 30 Hz eight frames were
+      # a quarter of a second. And min_divergence_growth below applies at the
+      # standoff; further out it grows with (range / standoff)^2 like stereo
+      # depth error -- 80 mm at 2.5 m, 160 mm at 3.5 m.
+      divergence_window: 1.6            # s
       # [choice, Athreya 2026-10-23] D86: 0.010 -> 0.040. With the ZED's
       # measured depth warp (D80) the measured offset wanders 13-19 mm over 8
       # frames on its own at 2-2.5 m, and two sim runs in 10 aborted as
@@ -266,12 +280,27 @@
       # returns passed the 3 cm margins: the cross-check saw a "surface" 0.5 m
       # in front of every pallet face and never confirmed one. The height is
       # the floor's AFTER levelling; the correction moves it to floor_z.
-      # STOPGAP until the auto-calibration routine (D74) measures it.
+      # SUPERSEDED by the measured calibration below (D101, 2026-10-28):
+      # kept for old bags and as a fallback, off.
       lidar_correction:
-        enabled: true
+        enabled: false
         measured_floor_pitch: -0.010158     # -0.582 deg
         measured_floor_roll: -0.002034      # -0.117 deg
         measured_floor_height: 0.0253       # m, levelled; floor_z is -0.025
+
+      # [measured 2026-10-28, D101] The LiDAR's pose, calibrated against the
+      # camera with lidar-camera-calib (a separate tool, D100): a 9x6, 65 mm
+      # checkerboard on an 80 x 100 cm board, four poses, 34 stops, graded
+      # USABLE -- +-2.7 / 3.9 / 0.9 mm and <= 0.13 deg within the run, about
+      # +-5 mm forward between runs; independent floor check 0.10 deg / 2 mm.
+      # The launch file publishes config/lidar_calibration.yaml on /tf as
+      # <camera optical> -> `frame`, the LiDAR relay re-stamps every cloud with
+      # `frame`, and the tracker and controller give the LiDAR the camera's
+      # tilt correction above, rotated about the camera (it is fixed to it).
+      # Replace the file to recalibrate; nothing else changes.
+      lidar_calibration:
+        enabled: true
+        frame: lidar_calibrated
 
     # BGR, by what the robot is DOING rather than one colour per state: looking
     # (grey), driving towards the pallet (amber), committed with the forks going
@@ -344,6 +373,98 @@
     #     above a 20 mm board.
     # That is what "four-way entry" means, and it is why every pocket number
     # below is per side rather than shared.
+    # LiDAR-first acquisition (D102 step a, pallet_approach/lidar_pallet.py):
+    # find the pallet in the calibrated LiDAR at pallet height, no prior.
+    lidar_acquisition:
+      # The floor, fitted from the LiDAR's own returns; heights are measured
+      # from it, never from z = 0.
+      floor_search: 0.12             # m either side of floor_z to look for floor
+      floor_min_range: 0.8           # m: nearer is the robot's blind cone
+      floor_max_range: 4.0
+      floor_threshold: 0.02          # m, RANSAC inlier distance
+      floor_stride: 4                # use every 4th return for the floor fit (speed)
+      # [D102 item 4] the pallet-height slice: a load above it is invisible.
+      band: [0.02, 0.145]
+      search_x: [1.0, 3.6]           # m ahead: the working range plus margin
+      search_y: 1.5                  # m either side
+      # Nearest surface per bearing: the face is the nearest wood (D102 item 3).
+      surface_bin_deg: 0.5           # ~2 LiDAR columns
+      surface_window: 0.05           # m: returns this close in range are one surface (block fronts stand 13-25 mm proud of the deck edge above them)
+      surface_min_height: 0.03       # m of height they must span to be VERTICAL (2+ beams), not floor
+      surface_depth: 0.06            # m behind it still counted (blocks 13-25 mm proud of the deck)
+      surface_extra_height: 0.06     # m above the band the vertical test may also use (the deck edge's beam)
+      cluster_link: 0.45             # m: returns closer than this are one object; spans a pocket (0.23 short, 0.385 long), whose bearings may keep no face return
+      min_points: 15
+      line_threshold: 0.025          # m: face-line inliers (the Ouster's ~7 mm noise, plus the blocks' unevenness)
+      max_face_yaw: 45.0             # deg: a face turned further is not the one to approach
+      width_tolerance: 0.12          # m: a face this close to 0.795 or 1.195 is that side
+      # Pockets: occupancy of the face line in bins along it, against the
+      # side's block/pocket layout slid +-pocket_search.
+      pocket_bin: 0.02
+      pocket_search: 0.20
+      pocket_min_points: 10
+      min_pocket_score: 0.30         # blocks minus pockets occupancy: below this, no pockets found
+      working_range: [1.5, 3.0]      # [D97] face distance from base_footprint, m
+
+    # [measured 2026-10-28, D103] The ZED's stereo depth reads short by a
+    # constant disparity offset: 1/z_measured = 1/z_true + beta, so the error
+    # grows with the square of the distance (-10 mm at 1.5 m, -19 at 2.5, -47
+    # at 3.5 on the flat-board bags). One number corrects it:
+    # z_true = z_measured / (1 - beta z_measured). Fitted with
+    # tools/fit_depth_bias.py on deck_80..deck_305: 0.00454 against the tape,
+    # 0.00510 against the calibrated LiDAR; residual 3-4 mm rms, max 7 mm.
+    # Used where the camera's range is compared with the LiDAR's (D102 item 6);
+    # the old camera-only pipeline (perception.py) does not use it.
+    camera_depth:
+      disparity_bias: 0.0048         # 1/m
+
+    # The fused perception, wired together (D102 step d,
+    # pallet_approach/fused_pipeline.py; the pallet_fusion node runs it).
+    fused_pipeline:
+      acquisition_sweeps: 5          # pooled while standing still (step a: 6/6 at 3.0-3.5 m this way)
+      still_distance: 0.01           # m of odometry motion that restarts the pool
+      still_angle_deg: 0.5
+      reacquire_after: 2.0           # s with no accepted LiDAR sweep: drop the track, acquire again
+
+    # Camera and LiDAR in one estimate (D102 step c, pallet_approach/fusion.py):
+    # a Kalman filter on the pallet's pose in odom. Measurement errors are the
+    # measured ones (tape bags, 2026-10-27/28); process noise is odometry drift.
+    fusion:
+      lidar_sigma_range: 0.004       # m: -0.5 +- 3.4 mm against tape after D101
+      lidar_sigma_lateral: 0.015     # m: face edges from columns ~15 mm apart at 2.5 m
+      lidar_sigma_yaw_deg: 1.0       # agrees with tape within its own 1-1.4 deg resolution
+      camera_sigma_lateral: 0.005    # m: 0 and -9 mm on the taped-lateral bags, 0.1-1.7 mm scatter
+      process_sigma_xy: 0.002        # m per sqrt(s): odometry drift while the robot moves
+      process_sigma_yaw_deg: 0.2     # deg per sqrt(s): ~1 deg per metre measured (2026-10-28)
+      gate_chi2_3d: 11.34            # 99 %: LiDAR faces further than this from the estimate are outliers
+      gate_chi2_1d: 6.63             # 99 %, camera
+      # [D102 item 6] no GO when the camera and the LiDAR disagree by more than
+      # this, for this many frames in a row (camera depth corrected, D103).
+      disagree_range: 0.020
+      disagree_yaw_deg: 3.0
+      disagree_frames: 5
+      # [D102 item 7] tracking may go on with one sensor; GO needs both fresh.
+      lidar_max_age: 0.5             # s: 5 sweeps at 10 Hz
+      camera_max_age: 0.5            # s
+      # [D104 item 3] "stable" = both sensors accepted for this many frames
+      # in a row, nothing refused by the gate, the camera seeing both pockets.
+      healthy_frames: 5
+
+    # The camera's part (D102 step b, pallet_approach/camera_pockets.py): the
+    # pockets' position along the LiDAR's face line, from depth sampled at
+    # pocket height on that line. No image-wide search.
+    camera_pockets:
+      step: 0.005                    # m between samples along the face, and between template shifts
+      margin: 0.10                   # m sampled beyond each end of the face
+      rows: 5                        # heights sampled across the side's pocket band
+      wood_tolerance: 0.05           # m: depth this close to the face is wood (camera reads +1..+13 mm far to 3 m)
+      hole_depth: 0.08               # m deeper than the face: looking into a pocket
+      beyond: -0.3                   # template value past the face ends
+      search: 0.10                   # m: the LiDAR's pocket estimate is good to a few cm
+      open_below: -0.3               # a pocket's mean profile at or below this reads open
+      min_score: 0.30                # template match (1 = perfect) below which: no pockets
+      min_contrast: 0.80             # blocks minus pockets, of an ideal 2
+
     pallet:
       pallet_height: 0.145           # [measured] same from either side
 
@@ -813,8 +934,8 @@ coordinator:
       # the evaluation shows thin fits passing.
       min_face_inliers: 60
 
-      max_yaw_error: 0.087        # rad, 5 deg at the standoff
-      max_lateral_offset: 0.050   # m from the pocket centre line
+      max_yaw_error: 0.052        # rad, 3 deg at the standoff (D104; was 5 deg)
+      max_lateral_offset: 0.030   # m from the pocket centre line (D104; was 50 mm; the servo aims within 20)
       pocket_width_tolerance: 0.040
       pocket_height_tolerance: 0.030
       min_pocket_count: 2
@@ -1018,6 +1139,21 @@ watchdog:
 # Perception has no memory; this node is the memory, and the coordinator will
 # not move the robot until it says CONFIRMED.
 # ---------------------------------------------------------------------------
+pallet_fusion:
+  ros__parameters:
+    use_sim_time: false
+    # The fused perception (D102) in SHADOW: nothing reads its output yet.
+    # `always` processes even when no run is active -- what a measurement
+    # session wants; `running` only during runs.
+    run_when: always
+    max_rate: 15.0                   # depth frames per second, D102 item 10
+    odom_match_tolerance: 0.05       # s: odometry this close to a stamp is the robot's pose then
+    # The file the fused blocks (/** lidar_acquisition, camera_pockets, ...) are
+    # read from. The launch file passes the params file it used; empty means
+    # the installed config/params.yaml.
+    params_file: ''
+    overlay_file: ''                 # merged over params_file's /** (the launch passes overlay_params)
+
 pallet_tracker:
   ros__parameters:
 
@@ -1047,6 +1183,13 @@ pallet_tracker:
     # 0.15 m is the same gate the coordinator used for its outlier rejection
     # and is about ten times the ~13 mm spacing error measured on real bags.
     max_jump: 0.15            # m
+    # [choice, Athreya 2026-10-26] D93. The gate grows with range like a
+    # stereo camera's depth error, which goes with range^2: limit = max_jump +
+    # this x range^2 -- 0.20 m at the 1.75 m standoff, 0.25 m at 2.5 m, 0.35 m
+    # at 3.5 m. With the fixed 0.15 m, a turn at 3.5 m in the sim (worst-case
+    # depth error kept) moved the estimate 18-24 cm and every frame after it
+    # was rejected as a different object.
+    max_jump_per_m2: 0.016    # m / m^2
     max_turn: 0.20            # rad, ~11 deg
     # A pallet does not turn over between two frames 200 ms apart, so a side
     # that changes means one of the two classifications is wrong -- and which

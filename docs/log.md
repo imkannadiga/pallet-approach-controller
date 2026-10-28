@@ -999,3 +999,202 @@ a frame. Each step was checked on 31 real frames from five bags
 Changing the random draws exposed D88. Not yet measured on the Jetson (it was
 unreachable); GPU next (docs/TODO.md).
 
+
+## 2026-10-27 — removing approach_only, shared starts, and a first look at a template tracker
+
+**Decisions made** (decisions.md): D95 `pickup` is the only mode; D96 acceptance is
+9 of 10 INSERTED from the same ten starts in sim and on the robot
+(`tools/start_positions.py --seed 7`).
+
+**A strip-and-template tracker, prototyped, not wired in** (`tools/track_prototype.py`).
+It unprojects only the strip of depth rows where the pocket band should be,
+fits the face line, and slides a block/pocket template along it. Everything
+below is against the current pipeline or the sim's exact truth; none of it is
+tape.
+
+*Real bags* (`pallet_s_pos2_cond1`, ~2.2 m, 46 frames; `pallet_s_pos1_cond1`, ~2.9 m, 20 frames):
+- At 2.2 m the profile along the face is a clean comb and the tracker takes
+  ~2 ms a frame against ~26 ms for the current pipeline (laptop). That is the
+  per-frame cost given a prior; it excludes the floor fit, the tf lookup,
+  message decoding and first acquisition.
+- At 2.9 m the current pipeline finds the face every frame and never two
+  pockets (0 of 20); the tracker's profile is not a comb (the centre block is
+  washed out by depth smearing) and its quality numbers overlap those of
+  windows with no pallet. No evidence it finds pockets where the current
+  pipeline cannot.
+- The two methods differ by 21 mm in range on the 2.2 m bag. `tools/lidar_face.py`
+  shows why: **the pallet's front is not one plane.** The block fronts (heights
+  0.02-0.095 m) sit about 25 mm nearer the robot than the deck boards
+  (0.105-0.140 m) by the camera, and 13 mm by the LiDAR. The current pipeline's
+  pocket depth mixes the two; the tracker's band sees the blocks. CLAUDE.md
+  item 4 says the blocks are flush with the boards; these two bags say they are
+  not. Which surface the robot's body will meet first is the block face.
+- The LiDAR reads 26-39 mm FARTHER than the camera on both real bags. In the
+  sim the same tool reads 4-9 mm nearer than truth, so the real gap is not the
+  tool; it is a real mounting or range bias, bigger than D90's 14 mm. Needs tape.
+
+*Sim bags* (`~/bags/sim`, 21 bags, recorded by `sim/remote.sh bags`; the sim's
+depth is a model fitted to real bags at 1.2-2.4 m and extrapolates beyond):
+- Ten D96 start poses and a 1.75-3.25 m range sweep: both methods find two
+  pockets in every frame and land within a few mm of truth (range |error| median
+  2.0 mm current vs 2.7 mm tracker over the ten starts; lateral 0.45 vs 0.9 mm;
+  yaw 0.5 vs 0.65 deg). **No accuracy difference** beyond what the sim's smooth
+  depth warp sets for both. The sim does NOT reproduce the real 2.9 m failure.
+- Blocks 20 mm proud (as on the real pallet): the current pipeline's range is
+  +13 mm against the block face; the tracker's is 0.0 mm.
+- Loads rendered in Gazebo: flush 0.5 m, flush 0.8 m, flush 0.5 m on a proud-block
+  pallet: the current pipeline finds no pallet (0 of 8, 12, 12 frames); the
+  tracker is unchanged to the mm (it never looks above the band). A 4 cm load
+  and an 8 cm all-round overhang still pass the current pipeline.
+- The tracker needs a prior. Acquiring a loaded pallet in the first place is
+  not solved by it.
+
+## 2026-10-28
+
+**Camera-LiDAR calibration, measured and wired in (D100, D101).**
+- Built `lidar-camera-calib`, a separate installable tool (outside this repo):
+  the robot drives in and back past a fixed checkerboard in four poses and
+  solves the camera-LiDAR transform from the board's plane as each sensor sees
+  it. Ran it on the robot five times; what each run taught:
+  - A3 sheet at "50 mm": a 3 % scale error (the print was 48.5 mm, "fit to
+    page"). The per-stop mismatch grew linearly with distance, -30 to +31 mm.
+  - A3 at 48.5 mm: USABLE. Then a 1.0 x 1.2 m panel with the same A3 sheet
+    on it: the height moved by 24 mm and the floor check failed. Not a bowed
+    panel (the flatness map is a straight slope): the Ouster reads a fixed flat
+    board's lean differently with distance (-0.3 deg at 3.1 m, about -1.3 deg
+    at 1.2 m). A big panel gives that effect many close-range rows to pull with.
+  - 9x6, 65 mm on 80 x 100 cm: the model fits (residual 7.7 mm against 7.1 mm
+    LiDAR noise), floor check 0.10 deg / 2 mm, USABLE. In use now.
+- Found and fixed on the way: rclpy's own Ctrl-C handler shut ROS down before
+  the tool could send its stopping zeros (now SignalHandlerOptions.NO, and a
+  check that presses Ctrl-C mid-drive); the floor counted as an obstacle
+  because the LiDAR's URDF height is 4-6 cm out; results written inside the
+  stack container were lost when it was removed.
+- **Validation on 16 tape bags not used in the calibration: LiDAR range error
+  +29.8 mm -> -0.5 mm (sd 3.4 mm either way).**
+- The robot does not drive straight: forward 1 m and back leaves the front
+  wheels 0.5 cm and the rear 2.3 cm to one side (~2 deg). Not the calibration's
+  problem (each stop is a snapshot), but blind insertion runs on odometry with
+  angular zero; the forward-only drift over 1.05 m is still to be measured.
+
+**D102 step (a): LiDAR-first acquisition** (`pallet_approach/lidar_pallet.py`,
+scored by `tools/evaluate_lidar_acquisition.py` against the tape bags, with the
+D101 calibration). Four fixes found by the bags, each a property of the real
+pallet or sensor rather than tuning:
+- The 0.02-0.145 m slice also holds the top deck and, through the pockets, the
+  middle row of blocks: lines of the right width 0.2-0.6 m behind the face. ->
+  keep only the nearest surface at each bearing.
+- "Nearest" must be the nearest VERTICAL surface: far floor returns read 1-2 cm
+  high (the Ouster's distance-dependent tilt) and sit inside the slice. A face
+  stacks 2+ beams at one range; the floor never does.
+- The block fronts stand 13-25 mm proud of the deck edge above, so "one range"
+  needs a 5 cm window; and the face's pieces are a pocket apart (0.23 m short,
+  0.385 m long), so the grouping distance must span a pocket.
+- Lines are searched only among those facing the robot.
+Result, single sweeps: short face 1.26-2.5 m found 20/20, range error -7..+9 mm,
+pockets 20/20; long face 0.8-3.0 m 20/20, -5..+7 mm, classified long; empty
+floor 0/20. Five sweeps pooled (0.5 s standing still): the short face at 3.0
+and 3.5 m found 6/6 too (+9 / +31 mm), pockets 6/6. Lateral reads 6-30 mm to
+the right on bags whose lateral was set, not taped; the camera reads the same
+direction on the same bags, so it is most likely the setup. Cost 20-27 ms per
+sweep, 70-124 ms for five, on the laptop: over the 100 ms budget, to be cut.
+
+**D102 step (b): the camera's pockets along the LiDAR's face line**
+(`pallet_approach/camera_pockets.py`, `tools/evaluate_camera_pockets.py`). The
+camera samples depth only where the LiDAR's face plane crosses pocket height
+(5 mm apart, 5 heights), classifies wood / hole / unknown, and slides the
+block-pocket layout along the profile. On every short- and long-face tape bag
+from 0.8 to 3.5 m: both pockets found in 20/20 frames, 0.9-1.5 ms per frame on
+the laptop (budget 10 ms), frame-to-frame scatter 0.1-1.7 mm, sideways error
+-9 and 0 mm on the two bags whose lateral was taped. Acquisition sped up
+(grouping by 2 cm cells, floor fit on every 4th return): 45 ms for five pooled
+sweeps, from 70-124.
+**The camera reads the face 7-26 mm nearer than the LiDAR.** The flat-board
+bags explain it: the calibrated LiDAR is within +-5 mm of tape from 1.26 to
+3.51 m, while the ZED's stereo depth reads short by about 1 % of the distance
+(-10 mm at 1.5 m, -19 at 2.5, -32 at 3.0, -47 at 3.5). D102 item 6 (no GO
+beyond 20 mm camera-LiDAR disagreement) would trip on that alone; to be
+decided before step (c).
+
+**D103 and D102 step (c).** The ZED's disparity offset, fitted on the board
+bags (beta 0.0048 1/m), takes the camera-vs-LiDAR range on the pallet bags from
+-2..-26 mm to -5..+4 mm (held out). The camera also measures the face angle now
+(the wood's depth trend along the face: a 4 deg turn reads 4 +- 1 deg).
+`pallet_approach/fusion.py`: a Kalman filter on the pallet pose in odom --
+LiDAR gives range (4 mm), angle (1 deg) and a rough lateral (15 mm); the
+camera only the lateral (5 mm); the disagreement rule (20 mm / 3 deg / 5
+frames) and the stale-sensor rule gate GO. `tools/evaluate_fusion.py` runs the
+whole chain on the bags (robot still): GO allowed on all 15 pallet bags inside
+1.5-3.0 m, range -7..+13 mm, yaw within the tape's resolution, the
+disagreement rule never tripped; 3.5 m no GO (LiDAR too thin, no camera
+pockets); empty floor, nothing. **Caveat:** sideways the filter claims +-2 mm
+but the two bags with taped lateral read -12 and -3 mm: the camera's sideways
+sigma, or a small sideways bias (the calibration's?), is not yet known. More
+taped-lateral bags needed before trusting sigma_lateral in a GO rule.
+
+**D102 step (d): `pallet_fusion`, the fused perception as a node, in SHADOW.**
+`pallet_approach/fused_pipeline.py` (pure: acquire standing still, then track;
+drop the track after 2 s without an accepted sweep) and
+`nodes/fusion_node.py`, launched with `fusion:=true` (off by default).
+Publishes /pallet_fusion/tracked (the tracker's TrackedPallet type; pocket
+SIZES are nominal, flagged) and ~/stats. Nothing reads it: the GO/NO-GO rules'
+inputs need deciding first (docs/TODO.md). Replayed a real bag (pallet_s_129)
+through the real nodes under ROS Iron -- relay re-stamping, the calibration's
+static tf, pallet_fusion: acquired, short side, in range, GO allowed, camera
+within 3 mm of the LiDAR. The replay found what the unit tests could not: with
+the Jetson's NumPy 1.21 / SciPy 1.8 a sweep took 90-760 ms, mostly the floor
+RANSAC looping in Python; vectorised, 32 ms per sweep in the node (camera 7.5
+ms, acquisition 113 ms) on the laptop. The replay processed ~1 sweep in 3 --
+3 MB clouds through two extra local hops with default socket buffers; the
+robot's rate is to be read from ~/stats.
+
+**Sim run with the fused perception in shadow** (`./sim/run_sim.sh up`, which
+now launches `fusion:=true`; `SIM_FUSION=false` to leave it out). Two fixes the
+sim found:
+- The nearest-surface test needs two beams on a face. The sim's LiDAR sits at
+  the URDF height, 46 mm above the real one, and put only one beam inside the
+  0.02-0.145 slice (the other on the deck edge at ~0.145). The test may now
+  also use 6 cm above the slice; only slice points become the face. No
+  regression on the tape bags (205_p20 13 -> 15 of 20).
+- Acquisition only pooled sweeps standing still, so a run starting out of range
+  (the sim's default pallet is at 3.5 m) never acquired while driving in. Moving,
+  each sweep is now searched on its own.
+Then a full pickup (old pipeline driving): INSERTED 1.053 m. The shadow
+acquired while CLOSING, and at CHECKING agreed with the old tracker to 5 mm in
+range, 1 mm sideways, 0.1 deg: (3.514, +0.131, -3.2 deg) vs (3.519, +0.132,
+-3.3 deg) in odom, GO allowed, "both sensors agree". Lost during the blind
+insertion (expected), reacquired after backing out. Sim timing on the laptop:
+14-30 ms per sweep, 2-9 ms per camera frame.
+
+**D104 built; first fused-mode sim runs.** `perception:=fused` at launch (sim:
+`SIM_PERCEPTION=fused`) points coordinator, controller, dashboard and watchdog
+at /pallet_fusion/tracked, keeps the old perception node inactive, and makes
+GO = ready track + yaw <= 3 deg + lateral <= 30 mm (`go_nogo.evaluate_fused`);
+a camera-LiDAR disagreement while CLOSING/CHECKING ends the run NO_GO. Both
+modes now use 3 deg / 30 mm. Fixed on the way: the watchdog required the old
+perception's estimate (aborted the first fused run at once); the fusion node
+ignored the sim overlay (it reads params.yaml itself, now merges the overlay);
+the sim overlay sets the D103 disparity correction to 0 (the sim's depth has
+no such bias).
+Runs: default pallet at 3.5 m -> NO_PALLET (the sim's LiDAR cannot acquire at
+3.5 m standing still; the real one did, 6/6). Pallet at 3.2 m -> acquired out
+of range, the drive-up started (CLOSING), then NO_GO: camera and LiDAR
+disagree. **The sim's camera reads +36 mm against its LiDAR at 3.2 m**: D80's
+depth model is a random warp whose spread grows with range (10 mm at 1.75 m,
+29 mm at 2.5 m, ~79 mm at 3.2 m extrapolated), fitted on FLOOR bags. On the
+flat-board bags the real ZED, after D103, is within +-7 mm to 3.1 m, and
+camera-vs-LiDAR on the pallet bags is -5..+4 mm. Stopped to ask (hard rule 1):
+the sim's model or the rule.
+
+**D105 and a launch fix, not yet verified in a run.** The sim's depth model
+now gives vertical faces a 4 mm warp and keeps D80's on the floor (D105).
+The overlay fix above did not take effect: params.yaml sets `params_file` and
+`overlay_file` empty in pallet_fusion's own block, and a node-specific entry
+beats the launch file's parameter dict, so the node still read no overlay and
+the sim kept the real ZED's D103 correction. The launch now passes both paths
+with `-p`, which overrides every file. The next sim run, and the robot, will
+say whether fused mode reaches GO.
+
+**Clean-up.** Docstrings and comments across the package and tools cut to
+what the code does and why (decision refs, one-line measured facts); stale
+EPAL numbers and the old `GO` outcome removed from them. No behaviour change.

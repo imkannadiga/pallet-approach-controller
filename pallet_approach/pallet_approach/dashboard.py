@@ -1,39 +1,14 @@
 """Composite the fork overlay with a text HUD: everything about a run, on one frame.
 
-Pure drawing, like `fork_overlay.py`: this file only knows how to turn a
-`Snapshot` into pixels. `nodes/dashboard_node.py` is the only thing that reads
-a clock or a topic -- it collects the latest message from each of five topics
-into a `Snapshot` and calls `render` once a frame.
+Pure drawing: `nodes/dashboard_node.py` collects the latest message from each
+source into a `Snapshot` and calls `render`. `fork_overlay.py` draws the face
+geometry; this draws everything else (health, tracker, controller, forks,
+reason), with the same state colours.
 
-Why a second file rather than growing `fork_overlay.py`: that file's whole job
-is one specific calibration check (do the virtual tines line up with the real
-pockets), and it already draws a small panel with state, side and pocket
-count. This file is the opposite kind of overlay -- everything else about a
-run that is NOT face geometry: health, the tracker's confidence and LiDAR
-cross-check, what the controller is doing and measuring, the forks, and why.
-Keeping the two apart means a change to one cannot silently shift the other's
-pixels, and it mirrors the project's own split between `perception.py` (what
-is there) and `go_nogo.py` (what to do about it). `fork_overlay_node.py` is
-the one piece of shared state: it and this file use the same
-`STATE_COLOR_KEYS` mapping and the same `colors` palette from params.yaml, so
-a state never has two different colours depending on which overlay you are
-looking at.
-
-**Every value is shown as of when it arrived, never assumed current.** A
-field whose source has never published shows '--' in grey; a field older than
-its `stale_after` entry is shown dimmed with its age attached. This project
-keeps reintroducing the same bug -- a reasonable default, chosen silently,
-never reported (docs/decisions.md calls it out by name) -- and a dashboard is
-exactly where that bug is most tempting, because a frozen number still LOOKS
-like a number. So `Snapshot` tracks *when* each source last arrived, not just
-what it last said, the same way `health.py` tracks age rather than a value.
-
-**The output frame size is fixed, never data-dependent.** Every widget is
-exactly a title line plus two value lines; a reason too long to fit is
-truncated with an ellipsis rather than growing the panel. `frame_size` compute
-the total canvas size from `params` alone, with no image content involved, so
-a launch file that declares the video stream's resolution can match it exactly
--- `test_dashboard.py` checks that the checked-in default actually does.
+Every value is shown as of when it arrived: a source never seen shows '--' in
+grey, one older than its `stale_after` is dimmed with its age. The frame size
+depends on `params` alone (`frame_size`), so the video stream's declared
+resolution can match it; long reasons are truncated.
 """
 
 from __future__ import annotations
@@ -60,12 +35,7 @@ GREEN = (0, 200, 0)
 AMBER = (0, 200, 255)
 RED = (0, 0, 220)
 
-# Coordinator state (eleven states + ABORTED) -> the key fork_overlay.colors
-# uses. Moved here from fork_overlay_node.py on 2026-10-19 so this file and
-# fork_overlay's own state panel can share one mapping without this module
-# depending on anything that imports rclpy -- the node imports the mapping
-# back under the name it used before (`from pallet_approach.dashboard import
-# STATE_COLOR_KEYS as STATE_COLORS`), so moving it changed nothing it draws.
+# Coordinator state -> fork_overlay.colors key, shared with fork_overlay_node.
 STATE_COLOR_KEYS = {
     'IDLE': 'idle',
     'CONFIRMING': 'detecting',
@@ -93,10 +63,8 @@ TRACKER_STATUS_COLORS = {
     'REJECTED': RED,
 }
 
-# Outcome -> colour, mirroring go_nogo's own bias: GO/INSERTED read as success,
-# everything else (including the reserved GO-without-insertion label used by
-# approach_only... no, GO itself IS the success label there) reads as a stop.
-GOOD_OUTCOMES = ('INSERTED', 'GO')
+# Outcome -> colour. INSERTED reads as success; everything else reads as a stop.
+GOOD_OUTCOMES = ('INSERTED',)
 BAD_OUTCOMES = ('NO_GO', 'NO_PALLET', 'ABORTED')
 
 
@@ -209,12 +177,8 @@ class Snapshot:
 
 
 # ------------------------------------------------------------------ layout
-#
-# Every size below is fixed by these constants and by `params`, never by how
-# much text a widget happens to have this frame -- see the module docstring.
-# `_LAYOUT` is computed once by `_layout` and used by both `frame_size` (so a
-# caller can size a canvas, or a launch file, before any frame exists) and
-# `render` (so the two can never disagree about where anything goes).
+# Sizes depend on these constants and `params` only; `_layout` is shared by
+# `frame_size` and `render`, so the two cannot disagree.
 
 _TITLE_COLOR = (210, 210, 210)
 _COLUMNS = 4
@@ -263,10 +227,6 @@ def frame_size(image_width: int, image_height: int, params: dict) -> tuple[int, 
 
 
 # -------------------------------------------------------------- formatting
-
-def _age_text(age: float | None) -> str:
-    return 'never' if age is None else f'{age:.1f}s ago'
-
 
 def _num(value: float, unit: str = '', digits: int = 0) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
@@ -462,7 +422,6 @@ def render(image: np.ndarray | None, snapshot: Snapshot, params: dict) -> np.nda
                  (25, 25, 25), -1)
 
     stale_after = params.get('stale_after', {})
-    now = snapshot.now
     ages = {
         'coordinator': snapshot.age(snapshot.coordinator_at),
         'health': snapshot.age(snapshot.health_at),

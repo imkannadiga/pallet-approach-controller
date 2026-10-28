@@ -1,55 +1,18 @@
-"""The state machine for a whole virtual pickup.
+"""The state machine for a whole virtual pickup. No ROS: each event returns a
+`Transition` (state, stop, drive, forks, perception); the node acts on it.
 
-No ROS. The machine is driven by events and returns, for each one, what state
-to be in, whether to stop the robot, what the controller should be doing and
-what the forks should be doing. The node wrapper turns that into lifecycle
-transitions, drive commands, action feedback and velocity commands.
+    IDLE -> CONFIRMING (-> NO_PALLET) -> CLASSIFYING (-> NO_GO)
+         -> [BACKING_OFF] -> CLOSING -> CHECKING (-> NO_GO, one retry)
+         -> LOWERING -> INSERTING -> LIFTING -> BACKING_OUT -> DONE
+    Any state: cancel, unhealthy stack, lost pallet, controller abort -> ABORTED
 
-    IDLE
-     | goal
-     v
-    CONFIRMING    several consistent frames, LiDAR agreeing       -> NO_PALLET
-     v
-    CLASSIFYING   which face, and how much run-up this offset needs
-     |  not enough room -> BACKING_OFF -> back here
-     |  unclear side, or a face this site forbids -> NO_GO
-     v
-    CLOSING       servo onto the pocket centre line, stop at the standoff
-     v
-    CHECKING      stopped; the GO/NO-GO rules            -> NO_GO (or one retry)
-     |  GO, and mode is approach_only -> DONE, outcome GO
-     v  GO
-    LOWERING      forks to pocket height
-     v
-    INSERTING     straight in, stopping on the earlier of odometry and LiDAR
-     v
-    LIFTING       forks up, pallet off the floor
-     v
-    BACKING_OUT   straight back to the standoff
-     v
-    DONE          outcome INSERTED, control back to Nav2
-
-    Any state: cancel, unhealthy stack, lost pallet, controller abort
-               -> robot stopped -> ABORTED
-
-Keeping it pure is what makes the safety properties testable, and the ones that
-matter are stated as tests rather than as comments:
-
-* the controller is only ever commanded to drive in four states;
-* every terminal state stops the robot and deactivates everything;
-* a single frame cannot start the robot moving;
-* a cancel, a health failure and a controller abort are honoured from every
-  running state;
-* **an aborted insertion stops where it is.** It does not reverse out. The
-  robot's body is at least 0.204 m clear of the face at any legal stop (D13,
-  D16), so standing still is safe, and driving after an abort contradicts the
-  one rule that has no exceptions. Recovery is the operator's, with the reason
-  in the result.
+Safety properties are tests, not comments: the controller drives only in
+DRIVING_STATES; every terminal state stops the robot; one frame cannot start
+it; an aborted insertion stops where it is and does not reverse out (D49).
 """
 
 from __future__ import annotations
 
-import math
 
 import numpy as np
 
@@ -61,22 +24,17 @@ from pallet_approach.model import Decision
 
 __all__ = ['State', 'Outcome', 'DriveRequest', 'TrackInfo', 'DriveInfo',
            'ForkInfo', 'Transition', 'Coordinator', 'DRIVING_STATES',
-           'TERMINAL_STATES', 'MODES', 'PICKUP', 'APPROACH_ONLY']
+           'TERMINAL_STATES', 'MODES', 'PICKUP']
 
 PICKUP = 'pickup'
-"""The whole thing: approach, check, lower, insert, lift, back out."""
+"""The whole thing: approach, check, lower, insert, lift, back out.
 
-APPROACH_ONLY = 'approach_only'
-"""Stop at the GO/NO-GO decision and report it. Nothing is inserted.
-
-This is what lab session B runs (ROADMAP: "first driving: approach and GO/NO-GO
-only. Insertion is **not** enabled."). It is a goal mode rather than a
-configuration flag because it is a property of one run, not of the robot --
-the same stack, triggered twice, should be able to do a dry approach and then a
-full pickup without a restart.
+It is the only mode. An approach-only mode existed for the first driving
+session and was removed on 2026-10-27 (D95); a dry run now uses the
+wheels-disconnected launch (`cmd_vel:=/cmd_vel_dry`), not a shorter sequence.
 """
 
-MODES = (PICKUP, APPROACH_ONLY)
+MODES = (PICKUP,)
 
 
 class State(Enum):
@@ -110,9 +68,6 @@ class Outcome(Enum):
     INSERTED = 'INSERTED'
     """The whole sequence completed: forks in, lifted, backed out."""
 
-    GO = 'GO'
-    """The rules passed and the run was asked to stop there (APPROACH_ONLY)."""
-
     NO_GO = 'NO_GO'
     NO_PALLET = 'NO_PALLET'
     ABORTED = 'ABORTED'
@@ -144,6 +99,7 @@ class TrackInfo:
     heading: float
     reason: str = ''
     pallet_odom: tuple | None = None     # this frame's pocket midpoint in odom (D89)
+    disagreeing: bool = False            # fused perception: camera and LiDAR disagree (D104 item 3)
 
 
 @dataclass(frozen=True)
@@ -193,17 +149,10 @@ class Transition:
 
 
 def transitions_to_inactive(state: str) -> list[str] | None:
-    """Lifecycle transitions that bring a managed node to `inactive`, from the
-    state it reports (its label: 'unconfigured', 'inactive', 'active', ...).
-
-    A run leaves its nodes `inactive`, still configured, so the NEXT run must
-    not send `configure` again: from `inactive` that transition does not exist,
-    and rclpy's lifecycle does not refuse it -- it raises inside the service
-    callback and the node's process dies. Measured 2026-10-22 in the sim: the
-    second run after any first one failed with "could not configure the
-    managed nodes", and perception was gone until the stack restarted. So the
-    coordinator asks first and sends only what is missing. None means a state
-    a run cannot start from (finalized, or mid-transition).
+    """Lifecycle transitions that bring a managed node to `inactive` from its
+    current state label; None when a run cannot start from it. A run leaves its
+    nodes `inactive`, and re-sending `configure` from there kills the process
+    (rclpy raises inside the service), so only what is missing is sent.
     """
     return {
         'unconfigured': ['configure'],
@@ -213,15 +162,9 @@ def transitions_to_inactive(state: str) -> list[str] | None:
 
 
 def machine_params(get) -> dict:
-    """Everything `Coordinator` reads, from parameter names.
-
-    `get(name)` returns one parameter by its params.yaml name. The coordinator
-    node passes its own get_parameter, and test/sequence.py passes a lookup into
-    params.yaml -- so the whole-pickup harness runs on exactly the dict the
-    robot builds. Before 2026-10-20 the harness copied whole YAML blocks while
-    the node picked keys by hand, so a key the node forgot was invisible to
-    every test: the Gazebo sim found `closing.run_up_tolerance` missing, and
-    the coordinator died with a KeyError the moment a track confirmed.
+    """Everything `Coordinator` reads, by params.yaml name. The node passes its
+    get_parameter and test/sequence.py a YAML lookup, so the harness runs on
+    exactly the dict the robot builds.
     """
     def group(prefix, keys):
         return {key: get(f'{prefix}.{key}') for key in keys}
@@ -290,15 +233,8 @@ class Coordinator:
                           reason=reason, changed=True)
 
     def _stay(self, reason: str = '') -> Transition:
-        """No state change. Mirrors the current state's permissions exactly,
-        so a state's behaviour is defined in one place and repeating an event
-        cannot quietly change it.
-
-        It carries the outcome too. Without that, a second event arriving after
-        a run has ended reports `state = ABORTED` with `outcome = None`, which
-        reads as "aborted for no reason" to anything looking at the latest
-        transition rather than the last changed one. Found by a test that
-        ticked past the end of a run.
+        """No state change: the current state's permissions, with the outcome carried
+        along so a late event after the end still reports why the run ended.
         """
         return Transition(
             state=self.state,
@@ -345,9 +281,8 @@ class Coordinator:
     def trigger(self, now: float, mode: str = PICKUP) -> Transition:
         """A goal arrived. Only legal from IDLE or a terminal state.
 
-        `mode` is PICKUP or APPROACH_ONLY; an unknown mode is refused here
-        rather than defaulting, because the difference between the two is
-        whether the robot drives into the pallet.
+        `mode` must be PICKUP. An unknown mode is refused here rather than
+        defaulted to.
         """
         if self.state not in (State.IDLE, *TERMINAL_STATES):
             return self._stay('a run is already in progress')
@@ -401,6 +336,13 @@ class Coordinator:
                 return self._stay(track.reason or 'confirming')
             return self._classify(now)
 
+        # D104 item 3: once the approach has begun, camera and LiDAR telling
+        # different stories ends the run. Only the fused perception reports
+        # this; it has already waited the 5 frames.
+        if track.disagreeing and self.state in (State.CLOSING, State.CHECKING):
+            return self._finish(now, Outcome.NO_GO,
+                                f'camera and LiDAR disagree about the pallet: {track.reason}')
+
         if self.state is State.BACKING_OFF and self._backed_up_enough():
             return self._classify(now)
         return self._stay()
@@ -434,15 +376,8 @@ class Coordinator:
             return self._stay(drive.reason)
         if self.state is State.CLOSING:
             self.forward_travel += float(drive.travelled)
-            # Clear the history: the GO/NO-GO stability rule is evaluated over
-            # these frames, and the ones collected while CLOSING were taken
-            # with the robot moving at up to 0.10 m/s. Five of those span
-            # 100 mm of real travel, which the rule reads as an unstable
-            # estimate and refuses -- measured in test_sequence.py, where a
-            # perfectly good noisy run came back
-            # "stability: face position moved 118 mm across 5 frames".
-            # `ready_to_decide` then waits for five frames taken standing
-            # still, which is what the rule is actually about.
+            # Clear the history: frames taken while CLOSING span real travel
+            # and fail the stability rule, which is about standing still.
             self.history.clear()
             return self._at(State.CHECKING, now, stop=True, drive=None,
                             fork=None, perception=True,
@@ -494,11 +429,6 @@ class Coordinator:
         if self.state is not State.CHECKING:
             return self._stay()
         if decision.go:
-            if self.mode == APPROACH_ONLY:
-                return self._finish(
-                    now, Outcome.GO,
-                    f'GO: {decision.reason}. Stopping at the decision, as '
-                    f'asked -- nothing was inserted.')
             return self._at(State.LOWERING, now, stop=True, drive=None,
                             fork='LOWER', perception=True,
                             reason=f'GO: {decision.reason}')
@@ -670,13 +600,8 @@ class Coordinator:
         return True
 
     def _retryable(self, decision: Decision) -> bool:
-        """Which NO-GOs are worth another approach.
-
-        Only the ones another approach could change: where the robot is
-        standing, and how steady the estimate is. A pocket that measures the
-        wrong size, a face with no support behind the fit, an obstruction in
-        the pocket or a load overhanging the face are all properties of the
-        pallet, and driving the same approach again would measure them again.
+        """NO-GOs another approach could change: where the robot stands and how steady
+        the estimate is (`retryable_checks`), not properties of the pallet.
         """
         retryable = set(self.params['retryable_checks'])
         failed = {name for name, passed in decision.checks.items()

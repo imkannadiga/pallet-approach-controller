@@ -1,14 +1,7 @@
-"""ROS 2 node: stream a camera topic to the laptop as low-latency video.
-
-Runs on the Jetson. It subscribes to the image topic LOCALLY (on the same
-machine as the ZED node, so no camera data crosses the network as ROS
-messages), encodes it to H.264, and publishes it to MediaMTX, which serves it
-to browsers over WebRTC:
-
-    laptop browser:  http://<jetson-ip>:8889/<stream_path>
-
-Run one instance per stream (camera, later the fork overlay), each with its own
-`stream_path`.
+"""Stream a local image topic to MediaMTX as low-latency video (one instance per
+stream, each with its own `stream_path`); viewed at
+http://<jetson-ip>:8889/<stream_path>. No camera data crosses the network as
+ROS messages.
 """
 
 from __future__ import annotations
@@ -18,13 +11,9 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Image
 
-# NOT imported here: pallet_approach.video_stream runs Gst.init() at import
-# time, and on amd64 (the Gazebo sim's stack container) a process that has
-# NumPy and an initialised GStreamer loaded aborts inside rcl the first time it
-# creates a node -- no message, exit -11 from launch. Created the other way
-# round, node first, everything works, including nodes created afterwards.
-# Measured 2026-10-20; the root cause was not found. The Jetson never showed
-# it, but the import is deferred on every platform so there is one code path.
+# Imported after the node is created: on amd64, Gst.init() before the first
+# rcl node segfaults (exit -11; root cause unknown, 2026-10-20). Deferred
+# everywhere so there is one code path.
 
 
 class VideoStreamerNode(Node):

@@ -21,7 +21,6 @@ Passing here is the offline replay required before anything drives;
 it is not a substitute for lab session B.
 """
 
-import math
 import pathlib
 import sys
 
@@ -188,20 +187,6 @@ def test_an_unsteady_estimate_is_refused(params):
     assert len(bitten) >= len(runs) // 2, (
         f'only {len(bitten)} of {len(runs)} runs were refused on stability at '
         f'15 mm of per-frame scatter; the rule is not biting')
-
-
-def test_approach_only_runs_the_whole_approach_and_stops(params, slack):
-    """End to end in the mode the first driving session will use. It must reach
-    the decision, pass it, and insert nothing."""
-    run = fresh().run(S.facing(3.5, offset=0.10), mode='approach_only')
-    assert run.outcome == 'GO', run.describe()
-    assert run.states == ['CONFIRMING', 'CLOSING', 'CHECKING', 'DONE'], \
-        run.describe()
-    assert not run.visited('INSERTING')
-    assert not run.loaded
-    assert run.insertion_depth == 0.0
-    # and it still has to have done the approach properly
-    assert abs(run.offset) < slack
 
 
 # ------------------------------------------------------------- the run-up

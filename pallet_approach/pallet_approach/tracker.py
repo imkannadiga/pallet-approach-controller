@@ -1,33 +1,11 @@
-"""The pallet tracker: is this the same pallet, frame after frame?
+"""The pallet tracker: the same pallet, frame after frame? Pure, no ROS.
 
-Perception answers one frame at a time and has no memory, which means it cannot
-tell a pallet from a pallet-shaped coincidence. This file is the memory. It
-answers three questions the coordinator needs before it will move the robot:
-
-1. **Is it the same object?** Each estimate is placed in `odom` using the
-   robot's pose when the frame was taken, and compared with the running track
-   there. In `odom` a stationary pallet has a stationary position, so the
-   comparison means something while the robot drives -- which is exactly when
-   the closing loop needs it.
-2. **How sure are we?** A confidence, which is the fraction of the last
-   `window` offered frames that were accepted into the track. Not a Kalman
-   gain, not a likelihood: a count, because a count is what we can defend.
-3. **Does the LiDAR agree?** The camera can hallucinate a plane; a second
-   sensor on a different physical principle is the cheapest check against that
-   (D13 measured that the Ouster does see the face).
-
-**It averages the pallet's pose in `odom`, weighted by 1 / range^2** (D59,
-which refines D34). D34 rejected smoothing because averaging poses relative to
-a moving robot lags the truth. In `odom` the pallet stands still, so an average
-there has no lag, only the odometry's drift, which the bounded memory limits;
-and the 1 / range^2 weight keeps D34's point that the measurement improves as
-the robot closes in. One frame's normal wobbles by +-0.04 rad, which at 3 m is
-+-120 mm of centre line: steering onto single frames was the robot's wobble.
-`last_estimate` is still the newest single frame, for everything that judges
-one frame (GO/NO-GO, the run-up decision).
-
-Everything here is pure: positions, poses and timestamps come in as arguments,
-and nothing imports ROS.
+Each estimate is placed in `odom` (the robot's pose at the frame) and compared
+with the track there, where a stationary pallet is stationary. Confidence is
+the accepted fraction of the last `window` frames. The pose is averaged in odom
+weighted by 1 / range^2 (D59): one frame's normal wobbles +-0.04 rad. The LiDAR
+cross-check asks whether the Ouster sees the face the camera fitted (D13).
+`last_estimate` stays the newest single frame for single-frame judgements.
 """
 
 from __future__ import annotations
@@ -82,45 +60,13 @@ def cross_check_face(
 ) -> CrossCheck:
     """Does the LiDAR see a surface where the camera fitted the face?
 
-    The camera's plane is the reference and the LiDAR is asked about it, rather
-    than fitting a second plane and comparing two fits. One fit has one failure
-    mode; two fits have three, and the comparison then needs its own
-    correspondence argument.
-
-    The window the returns are taken from is most of the design:
-
-    * **laterally**, within half the MEASURED face width (plus a little), so
-      that whatever stands behind the pallet is occluded by the pallet over the
-      whole window. `half_width` is only a ceiling for the case where
-      perception reports no width.
-    * **vertically**, from `floor_margin` above the fitted floor to a little
-      above the pallet. The lower bound is the important one -- without it the
-      floor immediately in front of the face is included, and floor points lie
-      almost exactly ON a vertical plane's extension, so the check would agree
-      about a face that is bare ground.
-    * **in depth**, `search_ahead` towards the robot and `search_behind` away
-      from it. Asymmetric on purpose. Behind, the limit separates "this face is
-      not where the camera says" from "that is a different object": a
-      disagreement larger than `search_behind` leaves the window empty and
-      reads as NOT EVALUATED, which is honest -- nothing in view is the face,
-      so there is nothing to compare, and a gross error like that is caught by
-      the cluster size and ROI checks instead. Ahead, the limit keeps the
-      robot's own structure out of the statistic.
-
-    The statistic is the **90th percentile of the signed offsets**, which is
-    the surface nearest the robot rather than the average of everything in the
-    window. A loaded pallet's cargo sits behind the face and would drag a
-    median back; the face is what we are checking. Its one weakness is a
-    surface behind the pallet contributing more than 90 % of the returns, which
-    the lateral window makes unlikely by construction -- the pallet occludes
-    its own width.
-
-    Positive means the LiDAR sees a surface CLOSER to the robot than the camera
-    does, which also catches an obstacle standing in front of the face.
-
-    Returns a `CrossCheck`; `evaluated` is False when fewer than `min_points`
-    returns fall in the window, which is normal at long range and must never
-    read as agreement.
+    LiDAR returns in a window round the camera's face: half the measured face
+    width laterally (the pallet occludes what is behind), from `floor_margin`
+    above the fitted floor (else bare floor would "agree"), `search_ahead` /
+    `search_behind` in depth. The statistic is the 90th percentile of the signed
+    offsets: the nearest surface, robust to cargo behind the face; positive means
+    nearer than the camera (also catches an obstacle in front). Fewer than
+    `min_points` returns -> not evaluated, which never counts as agreement.
     """
     if lidar_points is None or len(lidar_points) == 0:
         return NOT_EVALUATED
@@ -163,6 +109,14 @@ def cross_check_face(
         evaluated=True, agrees=agrees, offset=surface, points=count,
         detail=(f'{count} returns, nearest surface {surface * 1000:+.0f} mm '
                 f'from the camera plane, limit {limit * 1000:.0f} mm'))
+
+
+def jump_limit(range_: float, params: dict) -> float:
+    """How far a new estimate may be from the track and still be the same pallet:
+    max_jump + max_jump_per_m2 * range^2, like stereo depth error (D93).
+    """
+    return (float(params['max_jump'])
+            + float(params.get('max_jump_per_m2', 0.0)) * range_ ** 2)
 
 
 def _face_axis(normal: np.ndarray) -> np.ndarray:
@@ -291,11 +245,12 @@ class Tracker:
         if self.track is not None:
             jump = float(np.linalg.norm(in_odom[:2] - self.track.center[:2]))
             turn = abs(wrap_angle(yaw_in_odom - self.track.yaw))
-            if jump > float(self.params['max_jump']):
+            limit = jump_limit(float(np.hypot(center[0], center[1])), self.params)
+            if jump > limit:
                 self.offered.append(False)
                 self.consecutive = 0
                 self.reason = (f'{jump * 100:.0f} cm from the track, limit '
-                               f'{float(self.params["max_jump"]) * 100:.0f} cm')
+                               f'{limit * 100:.0f} cm')
                 return self.track
             if turn > float(self.params['max_turn']):
                 self.offered.append(False)

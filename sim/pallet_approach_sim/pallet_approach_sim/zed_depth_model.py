@@ -63,6 +63,13 @@ class ZedParams:
     edge_jump: float = 0.10           # m
     smear_scale: float = 2.5
     downsample: int = 4               # cavity search resolution
+    # D105 (2026-10-28): the warp above was fitted on FLOOR bags -- a grazing
+    # surface, stereo's hard case. On a vertical face the real ZED does far
+    # better: on the flat-board bags deck_80..deck_305 its residual, once the
+    # disparity offset (D103) is removed, is 3-4 mm rms, at most 7 mm, and does
+    # not grow with range from 0.9 to 3.1 m. Vertical surfaces get that.
+    vertical_warp_sd: float = 0.004   # m, constant with range
+    horizontal_normal: float = 0.8    # |normal . up| at or above this: floor-like
 
 
 def warp_sd(z: np.ndarray, p: ZedParams) -> np.ndarray:
@@ -151,7 +158,7 @@ class DepthModel:
         width = depth.shape[1]
         for r, c in zip(rows, cols):
             near_c, far_c = (c, c + 1) if depth[r, c] < depth[r, c + 1] else (c + 1, c)
-            near, far = float(depth[r, near_c]), float(depth[r, far_c])
+            near = float(depth[r, near_c])
             half = int(p.smear_scale * float(warp_sd(near, p)) * fx / near)
             if half < 1:
                 continue
@@ -166,13 +173,43 @@ class DepthModel:
 
     # --------------------------------------------------------------- whole
 
+    def horizontal(self, depth: np.ndarray, fx: float) -> np.ndarray:
+        """Which pixels lie on a floor-like (horizontal) surface, from the depth alone.
+
+        Each pixel's 3D point in the optical frame (principal point at the
+        image centre, square pixels: the sim's ideal camera), and the local
+        surface normal from its right and lower neighbours. The optical y axis
+        points down, and the sim camera is mounted level, so a surface whose
+        normal is within ~37 deg of vertical (|n_y| >= horizontal_normal) is
+        floor-like. Worked out at `downsample` resolution and spread back.
+        """
+        step = self.p.downsample
+        h, w = depth.shape
+        z = depth[::step, ::step].astype(np.float64)
+        v, u = np.mgrid[0:h:step, 0:w:step].astype(np.float64)
+        pts = np.stack([(u - w / 2) * z / fx, (v - h / 2) * z / fx, z], axis=-1)
+        du = np.zeros_like(pts)
+        dv = np.zeros_like(pts)
+        du[:, :-1] = pts[:, 1:] - pts[:, :-1]
+        dv[:-1] = pts[1:] - pts[:-1]
+        n = np.cross(du, dv)
+        length = np.linalg.norm(n, axis=-1)
+        with np.errstate(invalid='ignore', divide='ignore'):
+            ny = np.abs(n[..., 1]) / length
+        small = np.nan_to_num(ny, nan=0.0) >= self.p.horizontal_normal
+        return np.repeat(np.repeat(small, step, axis=0), step, axis=1)[:h, :w]
+
     def apply(self, depth: np.ndarray, fx: float, progress: float) -> np.ndarray:
         d = np.asarray(depth, dtype=np.float32)
+        # Which surface each pixel is on is decided on the clean render, before
+        # the cavity fill and the edge smear invent depths that belong to none.
+        flat = self.horizontal(d, fx)
         d = self.fill_cavities(d, fx)
         d = self.smear_edges(d, fx)
         finite = np.isfinite(d)
         z = np.where(finite, d, 0.0)
         field = self.warp_field(progress, *d.shape)
-        noise = (field * warp_sd(z, self.p)
+        sd = np.where(flat, warp_sd(z, self.p), self.p.vertical_warp_sd)      # D105
+        noise = (field * sd
                  + self.rng.standard_normal(d.shape) * self.p.flicker * z * z)
         return np.where(finite, d + noise, d).astype(np.float32)

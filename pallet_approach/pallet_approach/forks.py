@@ -1,35 +1,16 @@
 """The virtual forks: a carriage this robot does not have.
 
-There is no hardware behind any of this, which makes one thing important: the
-simulator must not be able to claim something the sequence did not do. So it
-holds a height, moves it at a finite speed, and sets `loaded` only when it is
-asked to lift from the insertion height -- never because a state machine said
-the word LIFTING.
-
-Heights are of the tine UNDERSIDE above the floor, the same quantity as
-`forks.bottom_height` in params.yaml, which is what the overlay draws and what
-the pocket clearances in D27 are measured from. Not the tine centre, and not a
-z in any frame.
-
-Three heights matter:
-
-    park          0.150   clear of the floor, where the forks travel
-    insert        0.040   centred in the opening, D27
-    lifted        0.110   insert + lift_travel
-
-`lift_travel` is carriage travel, not pallet lift. The tine top starts
-`opening_top - (bottom_height + thickness)` below the top of the pocket -- 20 mm
-on the short face, 45 mm on the long one -- and takes that up before the pallet
-moves at all. So the same 70 mm of carriage travel lifts the short face 50 mm
-off the floor and the long face 25 mm. `pallet_lift` reports which, because
-"the pallet came off the floor" is the only claim a virtual pickup can actually
-make.
+It holds a height, moves it at a finite speed, and sets `loaded` only when
+asked to lift from the insertion height, never because the state machine
+said LIFTING. Heights are of the tine underside above the floor
+(`forks.bottom_height`). `lift_travel` is carriage travel; the tine first
+closes the gap to the pocket top, so `pallet_lift` reports how far the pallet
+actually came off the floor.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from enum import Enum
 
 __all__ = ['State', 'ForkSimulator', 'pallet_lift']

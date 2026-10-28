@@ -35,3 +35,6 @@ CLAUDE.md
 sim/remote.env
 # Raw system surveys list lab network addresses and MACs; keep them local.
 docs/survey/
+
+# Sim bags (sim/tools/record_bags.sh): large, regenerable from the spec
+sim/bags/

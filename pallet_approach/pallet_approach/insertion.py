@@ -1,25 +1,10 @@
 """Driving the virtual forks into the pockets, and knowing when to stop.
 
-The one phase where the robot deliberately drives at something it cannot fully
-see. The pockets leave the camera's view 0.58 m into the travel (D16), so the
-last 0.47 m is blind to the camera; the LiDAR holds the face for all of it,
-which is what makes a measured stop possible at all (D13).
-
-Two sources say when to stop and they are kept separate on purpose:
-
-* **odometry** -- the robot has travelled the planned distance;
-* **the LiDAR** -- the face is at the planned stop distance.
-
-D18: whichever says stop first stops the robot, and if they disagree by more
-than `max_disagreement` at that moment the run aborts instead of completing.
-Fail-safe in the direction of not touching the pallet, and a disagreement that
-large means one of the two is wrong, which is not a condition to drive forward
-in.
-
-Angular is exactly zero throughout (D7). The tines are inside the pallet and
-steering would drag them sideways through the blocks; the LiDAR's lateral
-reading is logged rather than acted on, and whether that should change is a
-decision for lab session C with a drift number in hand.
+The pockets leave the camera 0.58 m into the travel (D16); the LiDAR holds the
+face throughout (D13). Two stop sources, odometry travel and LiDAR face
+distance: whichever says stop first stops the robot, and if they disagree by
+more than `max_disagreement` the run aborts (D18). Angular is exactly zero
+(D7); the LiDAR's lateral reading is logged, not acted on.
 """
 
 from __future__ import annotations
@@ -61,16 +46,9 @@ class Plan:
 
 
 def plan_insertion(start_face_x: float, side: str, params: dict) -> Plan:
-    """Work out the travel for one insertion, or refuse to plan it.
-
-    Refuses rather than clamps in three cases, each of which means the robot is
-    not where the sequence believes it is:
-
-    * the face is already at or inside the stop distance -- there is nothing to
-      drive;
-    * the travel is longer than `max_travel`, which means the robot is further
-      from the pallet than any standoff would put it;
-    * the resulting depth would push the tips out of the back of the pallet.
+    """Work out the travel for one insertion, or refuse (never clamp) when the
+    face is already inside the stop distance, the travel exceeds `max_travel`,
+    or the tips would come out of the back of the pallet.
     """
     sides = params['sides']
     if side not in sides:
@@ -107,32 +85,17 @@ def face_distance_ahead(
     points: np.ndarray | None,
     params: dict,
 ) -> tuple[float | None, float, str]:
-    """Distance to the nearest surface ahead, from the LiDAR.
+    """Distance to the nearest surface ahead, from the LiDAR: (distance, lateral, detail).
 
-    Returns (distance, lateral, detail). `distance` is None when there is
-    nothing to measure -- which is NOT "the way is clear" and must never be
-    read as one; the caller counts consecutive Nones and aborts.
+    `distance` None means nothing measured, NOT clear; the caller aborts on
+    consecutive Nones. `lateral` is NaN when nothing was measured. The corridor
+    is narrow and low, so whatever it finds is a reason to stop.
 
-    `lateral` is the mean lateral position of the returns, logged so that lab
-    session C has a drift number for the decision about whether insertion
-    should track the face (ROADMAP stage 6). It is NaN when nothing was
-    measured.
-
-    The corridor is narrow (`half_width`) and low (`min_height` to
-    `max_height`, i.e. floor-clear to just above a pallet), so the surface it
-    finds is the pallet face or something standing in front of it. Either is a
-    reason to stop, which is why no attempt is made to tell them apart.
-
-    The statistic is the FRONT EDGE of the returns (D90): the first slice of
-    `edge_bin` along x, from the robot, holding at least `edge_min_returns`,
-    and the median x within it. Not the minimum, so a stray return early does
-    not stop the insertion short; and not a percentile of all returns, which
-    at the insertion stop is pulled back by the top deck and the pocket
-    interiors -- 1500 of 2000 returns there are behind the face, and the old
-    10th percentile read 32 mm too far against a tape (2026-10-24), enough
-    with latency and odometry to fail the 50 mm agreement check twice. Too
-    sparse for any slice to qualify, it falls back to the 10th percentile and
-    says so.
+    The statistic is the front edge (D90): the first `edge_bin` slice along x
+    holding `edge_min_returns`, its median x. A minimum stops short on a stray
+    return; a percentile of all returns is pulled back by the deck and pocket
+    interiors (32 mm long against a tape). Too sparse, it falls back to the 10th
+    percentile and says so.
     """
     if points is None or len(points) == 0:
         return None, float('nan'), 'no LiDAR data'

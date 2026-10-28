@@ -34,6 +34,7 @@ NODE_NAMES = {
     'forks_node.py': 'virtual_forks',
     'dashboard_node.py': 'dashboard',
     'lidar_relay_node.py': 'lidar_relay',
+    'fusion_node.py': 'pallet_fusion',
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")
@@ -385,8 +386,8 @@ def test_one_fork_setting_fits_both_faces(params_file):
         height_hi = min(height_hi, side['opening_top'] - thickness)
 
     assert spacing_lo <= spacing_hi, (
-        f'no single fork spacing fits both faces: short needs one window, long '
-        f'another, and they do not overlap')
+        'no single fork spacing fits both faces: short needs one window, long '
+        'another, and they do not overlap')
     assert height_lo <= height_hi, 'no single fork height fits both openings'
     assert spacing_lo <= spacing <= spacing_hi, (
         f'forks.spacing {spacing} is outside the {spacing_lo:.3f}-{spacing_hi:.3f} m '

@@ -28,21 +28,34 @@ except ImportError:                                           # pragma: no cover
     sys.exit('pip install rosbags numpy pyyaml  (in a venv)')
 
 GROUND = 'base_footprint'
+BUMPER_X = 0.4625          # base_footprint to the front bumper (D23); tape distances start here
 CAMERA = 'zed2_left_camera_frame_optical'
+
+CONFIG = pathlib.Path(__file__).resolve().parent.parent / 'config'
+STATIC_TF = CONFIG / 'static_tf.yaml'
+"""The real robot's static transforms, exported once from a good bag
+(tools/export_static_tf.py). They are rigid mounting, so a bag need not carry them."""
 
 
 def typestore(name: str = 'ROS2_HUMBLE'):
     return get_typestore(getattr(Stores, name))
 
 
-def quat_matrix(translation, rotation) -> np.ndarray:
-    x, y, z, w = rotation.x, rotation.y, rotation.z, rotation.w
+def matrix_from(translation, xyzw) -> np.ndarray:
+    """4x4 from a translation (3,) and a quaternion (x, y, z, w)."""
+    x, y, z, w = xyzw
     m = np.eye(4)
     m[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
                  [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
                  [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]]
-    m[:3, 3] = [translation.x, translation.y, translation.z]
+    m[:3, 3] = translation
     return m
+
+
+def quat_matrix(translation, rotation) -> np.ndarray:
+    """4x4 from geometry_msgs Vector3 and Quaternion."""
+    return matrix_from([translation.x, translation.y, translation.z],
+                       [rotation.x, rotation.y, rotation.z, rotation.w])
 
 
 class Tree:
@@ -75,6 +88,39 @@ class Tree:
             if frame not in known:
                 raise KeyError(f'{frame} is not in this bag\'s tf tree')
         return np.linalg.inv(self._to_root(target)) @ self._to_root(source)
+
+
+def static_reference(path: pathlib.Path | None = None) -> list:
+    """[(parent, child, 4x4)] from the static-transform reference file, or []."""
+    import yaml
+    path = STATIC_TF if path is None else path
+    if not path.exists():
+        return []
+    doc = yaml.safe_load(path.read_text())
+    out = []
+    for e in doc.get('edges', []):
+        out.append((e['parent'], e['child'], matrix_from(e['translation'], e['rotation'])))
+    return out
+
+
+def fill_static(tree, reference: list | None = None) -> list[str]:
+    """Add the static edges a bag is missing from the reference; return their children.
+
+    Only edges the bag LACKS are added -- what a bag does carry is never
+    overridden, so a bag that has its own static tree is untouched. Static
+    transforms do not change from bag to bag, and a recorder sometimes joins the
+    latched /tf_static topic before it has discovered every publisher.
+
+    This is the REAL robot's tree. A sim bag carries its own and so gets nothing
+    added; a sim bag that somehow lacked one would wrongly get this one.
+    """
+    reference = static_reference() if reference is None else reference
+    borrowed = []
+    for parent, child, matrix in reference:
+        if child not in tree.parent:
+            tree.add(parent, child, matrix)
+            borrowed.append(child)
+    return borrowed
 
 
 def read(path: pathlib.Path, store='ROS2_HUMBLE', max_frames: int = 5) -> dict:
@@ -149,21 +195,40 @@ def read(path: pathlib.Path, store='ROS2_HUMBLE', max_frames: int = 5) -> dict:
                 out['clouds'].setdefault(msg.header.frame_id, []).append(
                     unpack_cloud(msg))
                 break
+    # Static transforms are rigid mounting; fill in any this bag arrived without.
+    out['borrowed'] = fill_static(out['tree'])
     out['clouds'] = {f: np.concatenate(v) for f, v in out['clouds'].items() if v}
     if yaws:
         out['odom_yaw'] = float(np.median(yaws))
     return out
 
 
-def load_params(package_root: pathlib.Path) -> dict:
+def _merge(base: dict, over: dict) -> dict:
+    """`over` on top of `base`, key by key, as ROS applies an overlay file."""
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def load_params(package_root: pathlib.Path, overlay: str | None = None) -> dict:
     """The flat parameter dict `perception.estimate_pallet` expects.
 
     Mirrors `nodes/perception_node.py::_params()`, so the offline tools run the
     pipeline with exactly the parameters the robot would use. If the two drift
     apart, `test_params.py` catches it.
+
+    `overlay` names a second file in `config/` applied on top, as the launch
+    file does: 'sim_overlay.yaml' for bags recorded in the Gazebo sim, whose
+    camera is mounted exactly as the URDF says and so must not get the real
+    robot's tilt correction.
     """
     import yaml
     raw = yaml.safe_load((package_root / 'config' / 'params.yaml').read_text())
+    if overlay:
+        _merge(raw, yaml.safe_load((package_root / 'config' / overlay).read_text()))
     shared = raw['/**']['ros__parameters']
     block = raw['pallet_perception']['ros__parameters']
     return {
@@ -234,3 +299,78 @@ def flatten_side(side: dict) -> dict:
         'pocket_opening_bottom': side['opening_bottom'],
         'pocket_opening_top': side['opening_top'],
     }
+
+
+def lidar_to_ground(tree, lidar_frame: str, camera_frame: str, shared: dict, mode: str = 'auto') -> np.ndarray:
+    """4x4 ``ground <- lidar`` for a bag, the way the robot's nodes compute it.
+
+    `shared` is the `/**` parameter block (params.yaml, plus any overlay). Old
+    bags carry the LiDAR's URDF frame, so the calibration (D101) is applied here
+    from config/lidar_calibration.yaml rather than read from the bag's tf.
+
+    mode: 'auto' -- whatever params.yaml has in force; 'calibrated', 'd74' or
+    'urdf' to force one, for comparisons.
+    """
+    from pallet_approach.calibration import (correct_lidar_transform, correction_matrix,
+                                             lidar_follows_camera, read_lidar_calibration)
+    frames = shared['frames']
+    if mode == 'auto':
+        mode = ('calibrated' if frames.get('lidar_calibration', {}).get('enabled')
+                else 'd74' if frames.get('lidar_correction', {}).get('enabled') else 'urdf')
+    if mode == 'calibrated':
+        _, _, cam_T_lidar = read_lidar_calibration(CONFIG / 'lidar_calibration.yaml')
+        g_c = tree.lookup(GROUND, camera_frame)
+        ec = frames.get('extrinsic_correction', {})
+        c = (correction_matrix(ec['measured_floor_pitch'], ec['measured_floor_roll'])
+             if ec.get('enabled') else np.eye(3))
+        return lidar_follows_camera(g_c @ cam_T_lidar, g_c, c)
+    to_ground = tree.lookup(GROUND, lidar_frame)
+    if mode == 'd74':
+        lc = frames['lidar_correction']
+        to_ground = correct_lidar_transform(to_ground, lc['measured_floor_pitch'], lc['measured_floor_roll'],
+                                            lc['measured_floor_height'], shared['floor_z'])
+    return to_ground
+
+
+def read_clouds(path: pathlib.Path, count: int) -> list:
+    """The first `count` LiDAR clouds as (frame_id, (N, 3) array)."""
+    from pallet_approach.pointcloud import unpack_cloud
+    out = []
+    with AnyReader([path], default_typestore=typestore()) as reader:
+        conns = [c for c in reader.connections if c.msgtype.endswith('msg/PointCloud2')]
+        for conn, _, raw in reader.messages(connections=conns):
+            msg = reader.deserialize(raw, conn.msgtype)
+            out.append((msg.header.frame_id, unpack_cloud(msg)))
+            if len(out) >= count:
+                break
+    return out
+
+
+def shared_params(overlay: str | None = None) -> dict:
+    """params.yaml's `/**` block, nested as written, with an overlay file merged on top."""
+    import yaml
+    raw = yaml.safe_load((CONFIG / 'params.yaml').read_text())
+    if overlay:
+        _merge(raw, yaml.safe_load((CONFIG / overlay).read_text()))
+    return raw['/**']['ros__parameters']
+
+
+def camera_to_ground(data: dict, correction: dict) -> np.ndarray:
+    """4x4 ground <- camera optical for a bag read by `read`, tilt-corrected if
+    `correction` (an `extrinsic_correction` block) is enabled."""
+    from pallet_approach.calibration import correct_transform, correction_matrix
+    matrix = data['tree'].lookup(GROUND, data['depth_frame'] or CAMERA)
+    if correction.get('enabled'):
+        matrix = correct_transform(matrix, correction_matrix(
+            correction['measured_floor_pitch'], correction['measured_floor_roll']))
+    return matrix
+
+
+def lidar_sweeps(path: pathlib.Path, data: dict, shared: dict, count: int,
+                 mode: str = 'auto') -> list[np.ndarray]:
+    """The first `count` LiDAR sweeps of a bag in the ground frame, LiDAR pose as `lidar_to_ground`."""
+    clouds = read_clouds(path, count)
+    if not clouds:
+        return []
+    to_ground = lidar_to_ground(data['tree'], clouds[0][0], data['depth_frame'] or CAMERA, shared, mode)
+    return [c @ to_ground[:3, :3].T + to_ground[:3, 3] for _, c in clouds]

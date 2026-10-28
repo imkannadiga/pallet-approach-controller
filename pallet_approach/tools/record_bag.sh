@@ -63,7 +63,13 @@ DEPTH_INFO=/zed2/zed_node/depth/camera_info
 IMAGE=/zed2/zed_node/rgb/color/rect/image
 IMAGE_INFO=/zed2/zed_node/rgb/color/rect/camera_info
 EXTRA=(/tf /tf_static /odom /joint_states /scout_status)
-LIDAR=/ouster/points
+# The Jetson's local copy, from lidar_relay. NEVER record the raw /ouster/points
+# from a machine other than the robot PC: a second network subscriber to a
+# 3 MB / 10 Hz cloud throttled the Ouster to 2.6-4.6 Hz (docs/dataset.md) and
+# queued everything else from the robot PC behind it (lidar_relay_node.py).
+# --lidar-only is for the robot PC itself, where the raw topic is local, and
+# switches to it. The stack must be up for the relay to exist.
+LIDAR=/pallet_approach/lidar
 WITH_LIDAR=0
 
 while [ $# -gt 0 ]; do
@@ -74,7 +80,8 @@ while [ $# -gt 0 ]; do
     --full-rate)    FULL_RATE=1; shift ;;
     --with-lidar)   WITH_LIDAR=1; shift ;;
     --no-image)     WITH_IMAGE=0; shift ;;
-    --lidar-only)   LIDAR_ONLY=1; WITH_LIDAR=1; WITH_IMAGE=0; shift ;;
+    --lidar-only)   LIDAR_ONLY=1; WITH_LIDAR=1; WITH_IMAGE=0; LIDAR=/ouster/points; shift ;;
+    --lidar-topic)  LIDAR="$2"; shift 2 ;;
     --compress)     COMPRESS=1; shift ;;
     --mcap)         STORAGE="mcap"; shift ;;
     --dir)          OUT_DIR="$2"; shift 2 ;;
@@ -107,7 +114,13 @@ EST_MB=$(awk -v d="$DURATION" -v r="$EFF_RATE" -v df="$DEPTH_FRAME_MB" -v if_="$
 [ "$WITH_LIDAR" = "1" ] && EST_MB=$(awk -v e="$EST_MB" -v d="$DURATION" \
   -v lf="$LIDAR_FRAME_MB" -v lr="$LIDAR_RATE" 'BEGIN{printf "%.0f", e + d*lr*lf}')
 
-FREE_MB=$(df -Pm "$OUT_DIR" 2>/dev/null | awk 'NR==2{print $4}' || echo 0)
+# df on a directory that does not exist yet fails, which left FREE_MB at 0 and
+# silently switched the "would leave under 1 GB free" refusal off for the first
+# bag of a session. Ask about the nearest directory that does exist.
+CHECK_DIR="$OUT_DIR"
+while [ ! -d "$CHECK_DIR" ] && [ "$CHECK_DIR" != "/" ]; do CHECK_DIR=$(dirname "$CHECK_DIR"); done
+FREE_MB=$(df -Pm "$CHECK_DIR" 2>/dev/null | awk 'NR==2{print $4}') || true
+FREE_MB=${FREE_MB:-0}
 
 if [ "$LIST_ONLY" = "1" ]; then
   echo "would record, for ${DURATION}s at ${EFF_RATE} Hz:"
@@ -177,13 +190,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Captured first, then searched. `ros2 pkg executables ... | grep -q throttle`
+# under `set -o pipefail` reports FAILURE when grep exits at its match and the
+# writer, still printing, gets SIGPIPE (status 141): an installed topic_tools
+# then reads as "not installed", although the same probe without pipefail, in
+# fetch_bag.sh, passed.
+TOPIC_TOOLS_EXES=$(ros2 pkg executables topic_tools 2>/dev/null || true)
+
 if [ "$LIDAR_ONLY" = "1" ]; then
   echo "LiDAR only: no camera topics, no throttling (the Ouster runs at ~10 Hz)"
 elif [ "$FULL_RATE" = "1" ]; then
   echo "WARNING: recording at full rate. Watch the disk."
   TOPICS+=("$DEPTH")
   [ "$WITH_IMAGE" = "1" ] && TOPICS+=("$IMAGE")
-elif ros2 pkg executables topic_tools 2>/dev/null | grep -q throttle; then
+elif grep -q throttle <<<"$TOPIC_TOOLS_EXES"; then
   # A throttle left over from a previous run publishes to the same output topic,
   # so the recorded rate would be a multiple of RATE and the bag unusable for
   # anything rate-sensitive. Clear them out first and say so.
@@ -271,7 +291,7 @@ for name, n, span in c.execute(
     flag = ''
     if 'throttled' in name and hz > 1.5 * float(__import__('os').environ.get('RATE', '10')):
         flag = '   <-- HIGHER THAN ASKED FOR: stray throttle node?'
-    if name == '/ouster/points' and hz < 7:
+    if name in ('/ouster/points', '/pallet_approach/lidar') and hz < 7:
         flag = '   <-- the Ouster is being throttled; see docs/SYSTEM.md'
     print(f'  {name:<58} {n:>5} msgs  {hz:>6.2f} Hz{flag}')
 PY

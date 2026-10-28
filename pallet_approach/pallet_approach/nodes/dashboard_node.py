@@ -1,16 +1,8 @@
 """Composite the fork overlay with a HUD, and publish it for the video stream.
 
-A plain node, like `fork_overlay_node`: it only reads topics and publishes an
-image, so there is nothing to gate and it runs from the moment the container
-starts. It subscribes to six topics -- the overlay image plus five telemetry
-topics -- caches the latest of each with its arrival time, and redraws the
-whole frame on its own timer rather than whenever any one of them happens to
-update. That decoupling is deliberate: it means the HUD keeps refreshing (and
-can show a source going stale) even if one of its inputs stalls, instead of
-the whole picture freezing with the one input that died.
-
-The drawing itself is `dashboard.render`, which is pure and takes everything
-it needs as arguments -- this file's only job is to keep that function fed.
+A plain node (nothing to gate). It caches the latest message of each input
+with its arrival time and redraws on its own timer, so a stalled input shows
+as stale instead of freezing the picture. Drawing is `dashboard.render`.
 """
 
 from __future__ import annotations
@@ -31,7 +23,7 @@ from pallet_approach_interfaces.msg import (
 )
 
 from pallet_approach import dashboard
-from pallet_approach.nodes._common import image_to_array
+from pallet_approach.nodes._common import image_to_array, tracked_topic
 
 RELIABLE = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
 
@@ -51,7 +43,8 @@ class DashboardNode(Node):
         self.create_subscription(CoordinatorStatus, '/coordinator/status',
                                  self._on_coordinator, RELIABLE)
         self.create_subscription(Health, '/health', self._on_health, RELIABLE)
-        self.create_subscription(TrackedPallet, '/pallet_tracker/tracked',
+        self.create_subscription(TrackedPallet,
+                                 tracked_topic(self.get_parameter('perception_source').value),
                                  self._on_tracked, RELIABLE)
         self.create_subscription(DriveStatus, '/approach_controller/status',
                                  self._on_controller, RELIABLE)
@@ -66,6 +59,7 @@ class DashboardNode(Node):
             'with coordinator, health, tracker, controller and fork telemetry')
 
     def _declare(self):
+        self.declare_parameter('perception_source', 'camera')
         self.declare_parameter('publish_rate', 5.0)
         self.declare_parameter('placeholder_size', [640, 360])
         self.declare_parameter('pad', 8)
@@ -77,13 +71,8 @@ class DashboardNode(Node):
             ('stale_after.controller', 0.5), ('stale_after.forks', 1.0),
         ):
             self.declare_parameter(name, default)
-        # The SAME shared `colors` block fork_overlay_node reads (params.yaml
-        # `/**`), not a copy: a node block is only visible to the node it is
-        # named after, so the one way two differently-named nodes can agree on
-        # a palette is to both declare the same key out of the shared block.
-        # Declared one literal name at a time, like fork_overlay_node's own
-        # copy -- see that node's comment on 'colors.inserting' for why an
-        # f-string loop here would be invisible to test_params.py's scraper.
+        # The shared `colors` block (`/**`), one literal name per line, as in
+        # fork_overlay_node.
         for name, default in (
             ('colors.idle', [160, 160, 160]), ('colors.detecting', [160, 160, 160]),
             ('colors.approaching', [0, 200, 255]), ('colors.inserting', [128, 255, 0]),

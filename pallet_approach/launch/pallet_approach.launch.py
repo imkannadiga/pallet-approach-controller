@@ -26,6 +26,18 @@ Arguments:
     video_stream:=false  do not start MediaMTX or the video streamers (no
                          GStreamer/MediaMTX needed then -- useful on a
                          desk/CI box that has neither installed)
+    lidar_calibration:=<path>|none  the camera-LiDAR calibration published on
+                         /tf (D101); default config/lidar_calibration.yaml.
+                         "none" publishes nothing -- then also set
+                         frames.lidar_calibration.enabled: false, or the
+                         relayed clouds carry a frame tf cannot resolve.
+    perception:=fused    run on the fused camera+LiDAR perception (D102, D104):
+                         starts pallet_fusion and points the coordinator,
+                         controller and dashboard at /pallet_fusion/tracked;
+                         the old perception node is never activated.
+                         Default camera.
+    fusion:=true         with perception:=camera, also run pallet_fusion in
+                         SHADOW (nothing reads it) to measure it alongside.
     encoder:=auto        forwarded to video_stream.launch.py: auto | nvenc |
                          x264 | vp8. "auto" probes for the Jetson's hardware
                          encoder at startup and falls back to x264 if it is
@@ -67,11 +79,34 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
+from launch.substitutions import PythonExpression
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import LifecycleNode, Node
+
+
+def lidar_calibration_tf(context, *args, **kwargs):
+    """The camera-LiDAR calibration on /tf, as one static transform (D101).
+
+    Read from the file the calibration tool wrote, so recalibrating is
+    replacing that file; nothing in params.yaml holds a copy of the numbers.
+    """
+    path = LaunchConfiguration('lidar_calibration').perform(context)
+    if path.lower() in ('', 'none', 'false'):
+        return []
+    import yaml
+    with open(path) as f:
+        doc = yaml.safe_load(f)
+    (x, y, z), (qx, qy, qz, qw) = doc['transform']['translation'], doc['transform']['rotation_xyzw']
+    return [Node(
+        package='tf2_ros', executable='static_transform_publisher',
+        name='lidar_calibration_tf', output='screen',
+        arguments=['--x', str(x), '--y', str(y), '--z', str(z),
+                   '--qx', str(qx), '--qy', str(qy), '--qz', str(qz), '--qw', str(qw),
+                   '--frame-id', doc['parent_frame'], '--child-frame-id', doc['child_frame']],
+    )]
 
 
 def generate_launch_description():
@@ -89,6 +124,9 @@ def generate_launch_description():
     encoder = LaunchConfiguration('encoder')
     mux = LaunchConfiguration('twist_mux')
     log_level = LaunchConfiguration('log_level')
+    # D104: one switch for every node that reads the tracked pallet. Passed
+    # last, so it wins over params.yaml's perception_source.
+    source_override = {'perception_source': LaunchConfiguration('perception')}
     arguments = ['--ros-args', '--log-level', log_level]
 
     return LaunchDescription([
@@ -122,6 +160,30 @@ def generate_launch_description():
             description='forwarded to video_stream.launch.py; "auto" probes '
                         'for nvv4l2h264enc and falls back to x264'),
         DeclareLaunchArgument('log_level', default_value='info'),
+        DeclareLaunchArgument('fusion', default_value='false',
+                              description='with perception:=camera, run pallet_fusion in shadow'),
+        DeclareLaunchArgument('perception', default_value='camera',
+                              description='camera | fused (D104)'),
+        Node(
+            package='pallet_approach', executable='pallet_fusion', name='pallet_fusion',
+            output='screen',
+            parameters=[params, overlay_params, source_override],
+            # The file paths as -p, not in `parameters`: params.yaml sets both
+            # empty in pallet_fusion's own block, and a node-specific entry
+            # beats the launch's dict (which arrives as a wildcard) -- so the
+            # node read no overlay and the sim kept the real ZED's D103
+            # correction (+37 mm at 2.8 m). -p overrides every file.
+            arguments=arguments + ['-p', ['params_file:=', params],
+                                   '-p', ['overlay_file:=', overlay_params]],
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('perception'), "' == 'fused' or '",
+                LaunchConfiguration('fusion'), "' == 'true'"])),
+        ),
+        DeclareLaunchArgument(
+            'lidar_calibration',
+            default_value=os.path.join(share, 'config', 'lidar_calibration.yaml'),
+            description='camera-LiDAR calibration file published on /tf (D101); none to skip'),
+        OpaqueFunction(function=lidar_calibration_tf),
 
         # Arbitration: safety stop > pallet controller > Nav2 (D3, D10, D30).
         # twist_mux publishes `cmd_vel_out`, which is remapped onto the topic
@@ -140,7 +202,7 @@ def generate_launch_description():
         # carries each ~3 MB cloud once (see lidar_relay_node.py).
         Node(
             package='pallet_approach', executable='lidar_relay', name='lidar_relay',
-            output='screen', parameters=[params, overlay_params], arguments=arguments,
+            output='screen', parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
 
         # Independent of the coordinator on purpose: it watches the sensors
@@ -148,7 +210,7 @@ def generate_launch_description():
         # that has wedged still leaves a stationary robot.
         Node(
             package='pallet_approach', executable='watchdog', name='watchdog',
-            output='screen', parameters=[params, overlay_params], arguments=arguments,
+            output='screen', parameters=[params, overlay_params, source_override], arguments=arguments,
             condition=IfCondition(watchdog),
         ),
 
@@ -157,7 +219,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='virtual_forks',
             name='virtual_forks', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
 
         # Passive: it publishes a track per estimate and drives nothing. It
@@ -166,7 +228,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='pallet_tracker',
             name='pallet_tracker', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
 
         # Managed by the coordinator. They come up unconfigured, so the
@@ -174,22 +236,22 @@ def generate_launch_description():
         LifecycleNode(
             package='pallet_approach', executable='pallet_perception',
             name='pallet_perception', namespace='', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
         LifecycleNode(
             package='pallet_approach', executable='approach_controller',
             name='approach_controller', namespace='', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
         Node(
             package='pallet_approach', executable='coordinator',
             name='coordinator', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
         Node(
             package='pallet_approach', executable='fork_overlay',
             name='fork_overlay', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
             condition=IfCondition(overlay),
         ),
         # Subscribes to fork_overlay's image, so it has nothing to draw on if
@@ -201,7 +263,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='dashboard',
             name='dashboard', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
             condition=IfCondition(dashboard),
         ),
 

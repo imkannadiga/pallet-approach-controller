@@ -1,37 +1,19 @@
 #!/usr/bin/env python3
 """Measure every publisher's clock against this machine's, and against each other.
 
-Written after an afternoon of guessing at a timestamp problem from its
-symptoms. The symptoms -- "extrapolation into the past", an absurd estimate
-age, a ratio of 1.2458 derived by hand from two diagnostics messages -- each
-narrowed it a little and none of them settled it. This settles it, by measuring
-the one thing that matters directly: for every topic, how its header stamps
-advance relative to wall time, and where they sit relative to the system clock.
-
-Run it inside the container on the machine you care about:
+For each topic: how its header stamps advance relative to wall time (slope)
+and where they sit relative to the system clock (offset). Needs ROS; run it in
+the container on the machine in question.
 
     python3 tools/clock_audit.py                       # the usual suspects
     python3 tools/clock_audit.py --seconds 30
     python3 tools/clock_audit.py --topics /a /b /tf
     python3 tools/clock_audit.py --all                 # everything with a header
 
-What to look for, in the slope column:
+    slope   1.000 healthy; != 1 the stamps are computed, not read from a clock
+    offset  ~0 same epoch; large a different epoch (uptime clock, sim time)
 
-    1.000   healthy: that publisher's clock runs at the same rate as ours
-    != 1    its clock runs at a different RATE -- not an offset, not drift.
-            Nothing physical does this; it means the stamps are computed
-            rather than read from a clock.
-
-and in the offset column:
-
-    ~0      same clock, same epoch
-    large   different epoch (a steady/uptime clock, or sim time)
-
-Two publishers can only be compared in a stamped tf lookup if BOTH columns
-agree. A tf chain that mixes them cannot be resolved at any requested time,
-which is exactly the failure this was written for.
-
-ROS is needed, so this runs on the robot, not on a laptop.
+Two publishers can be combined in a stamped tf lookup only if both agree.
 """
 
 from __future__ import annotations
@@ -58,7 +40,11 @@ DEFAULT_TOPICS = [
     '/tf',
     '/tf_static',
     '/odom',
-    '/ouster/points',
+    # The relay's local copy. On the Jetson never subscribe to the raw
+    # /ouster/points: it is a second network copy and throttles the Ouster
+    # (lidar_relay_node.py). On the robot PC, where the driver is local, ask
+    # for it with --topics /ouster/points.
+    '/pallet_approach/lidar',
 ]
 
 
@@ -94,17 +80,33 @@ def fit(xs, ys):
 
 class ClockAudit(Node):
 
-    def __init__(self, topics, per_frame):
+    def __init__(self, topics, per_frame, wait=10.0):
         super().__init__('clock_audit')
         self.samples = defaultdict(list)           # key -> [(wall, stamp)]
         self.per_frame = per_frame
         self.start = time.time()
-        available = dict(self.get_topic_names_and_types())
+        # Discovery is per node: a node starts with an empty view of the graph,
+        # and the one that asks must be the one that has been waiting. The first
+        # version made a probe node, slept, destroyed it, and asked a NEW node
+        # at once -- so on a network where discovery takes longer than an
+        # instant (the Jetson is multi-homed) every topic read "not advertised",
+        # while `ros2 topic hz` on the same topics worked. Poll, spinning, until
+        # everything asked for is visible or `wait` seconds have passed.
+        deadline = time.time() + wait
+        while True:
+            available = dict(self.get_topic_names_and_types())
+            if topics is None:                     # --all: settle, then take what is there
+                if time.time() > self.start + min(wait, 3.0):
+                    topics = sorted(available)
+                    break
+            elif all(available.get(t) for t in topics) or time.time() > deadline:
+                break
+            rclpy.spin_once(self, timeout_sec=0.2)
         self.subs = []
         for topic in topics:
             types = available.get(topic)
             if not types:
-                print(f'  {topic}: not advertised, skipping')
+                print(f'  {topic}: not advertised after {wait:g} s, skipping')
                 continue
             try:
                 msg_type = get_message(types[0])
@@ -199,19 +201,15 @@ def main() -> int:
                     help='every advertised topic, not just the usual suspects')
     ap.add_argument('--per-frame', action='store_true',
                     help='split /tf by parent->child, to see which broadcaster is which')
+    ap.add_argument('--wait', type=float, default=10.0,
+                    help='seconds to wait for the topics to be discovered')
     args = ap.parse_args()
 
     rclpy.init()
-    probe = Node('clock_audit_probe')
-    time.sleep(1.0)                                # let discovery settle
-    if args.all:
-        topics = sorted(t for t, _ in probe.get_topic_names_and_types())
-    else:
-        topics = args.topics or DEFAULT_TOPICS
-    probe.destroy_node()
+    topics = None if args.all else (args.topics or DEFAULT_TOPICS)
 
-    print('subscribing:')
-    node = ClockAudit(topics, args.per_frame)
+    print(f'waiting up to {args.wait:g} s for discovery, then subscribing:')
+    node = ClockAudit(topics, args.per_frame, args.wait)
     if not node.subs:
         print('\nnothing to listen to')
         return 1
