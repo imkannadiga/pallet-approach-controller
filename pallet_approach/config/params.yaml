@@ -398,6 +398,33 @@
       min_pocket_score: 0.30         # blocks minus pockets occupancy: below this, no pockets found
       working_range: [1.5, 3.0]      # [D97] face distance from base_footprint, m
 
+    # [measured 2026-10-28, D103] The ZED's stereo depth reads short by a
+    # constant disparity offset: 1/z_measured = 1/z_true + beta, so the error
+    # grows with the square of the distance (-10 mm at 1.5 m, -19 at 2.5, -47
+    # at 3.5 on the flat-board bags). One number corrects it:
+    # z_true = z_measured / (1 - beta z_measured). Fitted with
+    # tools/fit_depth_bias.py on deck_80..deck_305: 0.00454 against the tape,
+    # 0.00510 against the calibrated LiDAR; residual 3-4 mm rms, max 7 mm.
+    # Used where the camera's range is compared with the LiDAR's (D102 item 6);
+    # the old camera-only pipeline (perception.py) does not use it.
+    camera_depth:
+      disparity_bias: 0.0048         # 1/m
+
+    # The camera's part (D102 step b, pallet_approach/camera_pockets.py): the
+    # pockets' position along the LiDAR's face line, from depth sampled at
+    # pocket height on that line. No image-wide search.
+    camera_pockets:
+      step: 0.005                    # m between samples along the face, and between template shifts
+      margin: 0.10                   # m sampled beyond each end of the face
+      rows: 5                        # heights sampled across the side's pocket band
+      wood_tolerance: 0.05           # m: depth this close to the face is wood (camera reads +1..+13 mm far to 3 m)
+      hole_depth: 0.08               # m deeper than the face: looking into a pocket
+      beyond: -0.3                   # template value past the face ends
+      search: 0.10                   # m: the LiDAR's pocket estimate is good to a few cm
+      open_below: -0.3               # a pocket's mean profile at or below this reads open
+      min_score: 0.30                # template match (1 = perfect) below which: no pockets
+      min_contrast: 0.80             # blocks minus pockets, of an ideal 2
+
     pallet:
       pallet_height: 0.145           # [measured] same from either side
 

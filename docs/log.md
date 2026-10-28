@@ -1098,3 +1098,20 @@ and 3.5 m found 6/6 too (+9 / +31 mm), pockets 6/6. Lateral reads 6-30 mm to
 the right on bags whose lateral was set, not taped; the camera reads the same
 direction on the same bags, so it is most likely the setup. Cost 20-27 ms per
 sweep, 70-124 ms for five, on the laptop: over the 100 ms budget, to be cut.
+
+**D102 step (b): the camera's pockets along the LiDAR's face line**
+(`pallet_approach/camera_pockets.py`, `tools/evaluate_camera_pockets.py`). The
+camera samples depth only where the LiDAR's face plane crosses pocket height
+(5 mm apart, 5 heights), classifies wood / hole / unknown, and slides the
+block-pocket layout along the profile. On every short- and long-face tape bag
+from 0.8 to 3.5 m: both pockets found in 20/20 frames, 0.9-1.5 ms per frame on
+the laptop (budget 10 ms), frame-to-frame scatter 0.1-1.7 mm, sideways error
+-9 and 0 mm on the two bags whose lateral was taped. Acquisition sped up
+(grouping by 2 cm cells, floor fit on every 4th return): 45 ms for five pooled
+sweeps, from 70-124.
+**The camera reads the face 7-26 mm nearer than the LiDAR.** The flat-board
+bags explain it: the calibrated LiDAR is within +-5 mm of tape from 1.26 to
+3.51 m, while the ZED's stereo depth reads short by about 1 % of the distance
+(-10 mm at 1.5 m, -19 at 2.5, -32 at 3.0, -47 at 3.5). D102 item 6 (no GO
+beyond 20 mm camera-LiDAR disagreement) would trip on that alone; to be
+decided before step (c).

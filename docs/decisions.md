@@ -1495,6 +1495,21 @@ Build order: (a) LiDAR pallet-height acquisition, scored on the existing tape
 bags; (b) camera pocket strip along the LiDAR line; (c) the filter and the
 disagreement rule; (d) integration and Jetson timing. (Athreya, 2026-10-28)
 
+**D103. The ZED's depth is corrected for its disparity offset before the
+camera's range is compared with the LiDAR's** (D102 item 6; option 1 of three,
+chosen by Athreya). The ZED reads short by an error growing with the square of
+the distance -- one constant disparity offset: 1/z_measured = 1/z_true + beta.
+Fitted on the flat-board bags deck_80..deck_305 with tools/fit_depth_bias.py:
+beta = 0.00454 1/m against the tape, 0.00510 against the calibrated LiDAR;
+0.0048 used. Before: -1 to -47 mm from 0.9 to 3.1 m; after: within +-7 mm,
+3-4 mm rms. *Held-out check* (pallet bags, never in the fit): camera-vs-LiDAR
+range on the block fronts went from -2..-26 mm to -5..+4 mm (one bag +10 mm),
+so the 20 mm disagreement rule stands as decided. *Cost:* at 3.5 m, outside the
+working range, the camera's pocket match fell just below its threshold (0.78
+against 0.80). *To confirm* with the calibration runs' checkerboard distances
+(PnP, no stereo) when the Jetson is reachable. The old camera-only pipeline
+(perception.py) is unchanged. (Athreya, 2026-10-28)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
