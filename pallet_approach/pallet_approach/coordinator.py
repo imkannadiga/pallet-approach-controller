@@ -135,6 +135,7 @@ class TrackInfo:
     heading: float
     reason: str = ''
     pallet_odom: tuple | None = None     # this frame's pocket midpoint in odom (D89)
+    disagreeing: bool = False            # fused perception: camera and LiDAR disagree (D104 item 3)
 
 
 @dataclass(frozen=True)
@@ -390,6 +391,13 @@ class Coordinator:
             if not track.confirmed:
                 return self._stay(track.reason or 'confirming')
             return self._classify(now)
+
+        # D104 item 3: once the approach has begun, camera and LiDAR telling
+        # different stories ends the run. Only the fused perception reports
+        # this; it has already waited the 5 frames.
+        if track.disagreeing and self.state in (State.CLOSING, State.CHECKING):
+            return self._finish(now, Outcome.NO_GO,
+                                f'camera and LiDAR disagree about the pallet: {track.reason}')
 
         if self.state is State.BACKING_OFF and self._backed_up_enough():
             return self._classify(now)

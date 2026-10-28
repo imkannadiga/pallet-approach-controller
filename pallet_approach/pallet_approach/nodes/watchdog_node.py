@@ -50,8 +50,8 @@ from sensor_msgs.msg import CameraInfo, PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformListener
 
-from pallet_approach.nodes._common import lookup_waiting
-from pallet_approach_interfaces.msg import Health
+from pallet_approach.nodes._common import lookup_waiting, tracked_topic
+from pallet_approach_interfaces.msg import Health, TrackedPallet
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach.health import (
@@ -108,8 +108,16 @@ class WatchdogNode(Node):
         self.create_subscription(CameraInfo,
                                  self.get_parameter('topics.depth_camera_info').value,
                                  lambda _: self._seen('camera_info'), RELIABLE)
-        self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
-                                 lambda _: self._seen('estimate'), RELIABLE)
+        # `estimate` = perception is alive and producing during the run. With
+        # the fused perception (D104) that is pallet_fusion's tracked pallet:
+        # the old perception node is never activated, and requiring its
+        # estimate aborted the first fused sim run at once.
+        if self.get_parameter('perception_source').value == 'fused':
+            self.create_subscription(TrackedPallet, tracked_topic('fused'),
+                                     lambda _: self._seen('estimate'), RELIABLE)
+        else:
+            self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
+                                     lambda _: self._seen('estimate'), RELIABLE)
         self.create_subscription(Odometry, self.get_parameter('topics.odom').value,
                                  lambda _: self._seen('odom'), RELIABLE)
         # raw=True: only the arrival is timed, so the ~1.6 MB cloud is never
@@ -132,6 +140,7 @@ class WatchdogNode(Node):
     # ------------------------------------------------------------- params
 
     def _declare(self):
+        self.declare_parameter('perception_source', 'camera')
         self.declare_parameter('topics.depth_camera_info',
                                '/zed2/zed_node/depth/camera_info')
         self.declare_parameter('topics.odom', '/odom')

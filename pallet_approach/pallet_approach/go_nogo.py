@@ -61,6 +61,7 @@ __all__ = [
     'check_pocket_clearance',
     'check_stability',
     'evaluate',
+    'evaluate_fused',
 ]
 
 
@@ -464,6 +465,37 @@ def evaluate(
     if 'pocket_clearance' not in checks:
         reason += '; pocket clearance NOT checked (D63)'
     return Decision(go=True, reason=reason, checks=checks)
+
+
+def evaluate_fused(estimate: PalletEstimate | None, robot: Pose2D, track_ready: bool,
+                   track_reason: str, params: dict) -> Decision:
+    """GO/NO-GO with fused perception (D104): the end of a decision tree.
+
+    Earlier stages have already answered face quality (LiDAR), pocket layout
+    (camera) and stability and the camera-LiDAR cross-check (the filter's
+    `track_ready`). What is left is alignment. Same shape as `evaluate`;
+    overhang and clearance stay off (D61, D63) and the reason says so on GO.
+    """
+    checks: dict[str, bool | None] = {}
+    reasons: dict[str, str] = {}
+    if estimate is None:
+        return Decision(go=False, reason='no pallet estimate', checks={})
+
+    def run(name, result):
+        ok, why = result
+        checks[name] = bool(ok)
+        reasons[name] = why
+
+    run('track_ready', (bool(track_ready),
+                        'camera and LiDAR agree on a healthy track' if track_ready
+                        else f'track not ready: {track_reason}'))
+    run('yaw', check_yaw(estimate, robot, params['max_yaw_error']))
+    run('lateral_offset', check_lateral_offset(estimate, robot, params['max_lateral_offset']))
+    for name in ('track_ready', 'yaw', 'lateral_offset'):
+        if checks[name] is False:
+            return Decision(go=False, reason=f'{name}: {reasons[name]}', checks=checks)
+    return Decision(go=True, reason=('all checks passed (fused, D104); overhang NOT checked (D61); '
+                                     'pocket clearance NOT checked (D63)'), checks=checks)
 
 
 def _nominal_opening(estimate: PalletEstimate, params: dict):

@@ -31,8 +31,13 @@ Arguments:
                          "none" publishes nothing -- then also set
                          frames.lidar_calibration.enabled: false, or the
                          relayed clouds carry a frame tf cannot resolve.
-    fusion:=true         also run pallet_fusion, the fused camera+LiDAR
-                         perception (D102), in SHADOW: nothing reads it.
+    perception:=fused    run on the fused camera+LiDAR perception (D102, D104):
+                         starts pallet_fusion and points the coordinator,
+                         controller and dashboard at /pallet_fusion/tracked;
+                         the old perception node is never activated.
+                         Default camera.
+    fusion:=true         with perception:=camera, also run pallet_fusion in
+                         SHADOW (nothing reads it) to measure it alongside.
     encoder:=auto        forwarded to video_stream.launch.py: auto | nvenc |
                          x264 | vp8. "auto" probes for the Jetson's hardware
                          encoder at startup and falls back to x264 if it is
@@ -119,6 +124,9 @@ def generate_launch_description():
     encoder = LaunchConfiguration('encoder')
     mux = LaunchConfiguration('twist_mux')
     log_level = LaunchConfiguration('log_level')
+    # D104: one switch for every node that reads the tracked pallet. Passed
+    # last, so it wins over params.yaml's perception_source.
+    source_override = {'perception_source': LaunchConfiguration('perception')}
     arguments = ['--ros-args', '--log-level', log_level]
 
     return LaunchDescription([
@@ -153,14 +161,18 @@ def generate_launch_description():
                         'for nvv4l2h264enc and falls back to x264'),
         DeclareLaunchArgument('log_level', default_value='info'),
         DeclareLaunchArgument('fusion', default_value='false',
-                              description='run pallet_fusion in shadow'),
+                              description='with perception:=camera, run pallet_fusion in shadow'),
+        DeclareLaunchArgument('perception', default_value='camera',
+                              description='camera | fused (D104)'),
         Node(
             package='pallet_approach', executable='pallet_fusion', name='pallet_fusion',
             output='screen',
-            parameters=[params, overlay_params,
+            parameters=[params, overlay_params, source_override,
                         {'params_file': params, 'overlay_file': overlay_params}],
             arguments=arguments,
-            condition=IfCondition(LaunchConfiguration('fusion')),
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('perception'), "' == 'fused' or '",
+                LaunchConfiguration('fusion'), "' == 'true'"])),
         ),
         DeclareLaunchArgument(
             'lidar_calibration',
@@ -185,7 +197,7 @@ def generate_launch_description():
         # carries each ~3 MB cloud once (see lidar_relay_node.py).
         Node(
             package='pallet_approach', executable='lidar_relay', name='lidar_relay',
-            output='screen', parameters=[params, overlay_params], arguments=arguments,
+            output='screen', parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
 
         # Independent of the coordinator on purpose: it watches the sensors
@@ -193,7 +205,7 @@ def generate_launch_description():
         # that has wedged still leaves a stationary robot.
         Node(
             package='pallet_approach', executable='watchdog', name='watchdog',
-            output='screen', parameters=[params, overlay_params], arguments=arguments,
+            output='screen', parameters=[params, overlay_params, source_override], arguments=arguments,
             condition=IfCondition(watchdog),
         ),
 
@@ -202,7 +214,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='virtual_forks',
             name='virtual_forks', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
 
         # Passive: it publishes a track per estimate and drives nothing. It
@@ -211,7 +223,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='pallet_tracker',
             name='pallet_tracker', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
 
         # Managed by the coordinator. They come up unconfigured, so the
@@ -219,22 +231,22 @@ def generate_launch_description():
         LifecycleNode(
             package='pallet_approach', executable='pallet_perception',
             name='pallet_perception', namespace='', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
         LifecycleNode(
             package='pallet_approach', executable='approach_controller',
             name='approach_controller', namespace='', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
         Node(
             package='pallet_approach', executable='coordinator',
             name='coordinator', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
         ),
         Node(
             package='pallet_approach', executable='fork_overlay',
             name='fork_overlay', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
             condition=IfCondition(overlay),
         ),
         # Subscribes to fork_overlay's image, so it has nothing to draw on if
@@ -246,7 +258,7 @@ def generate_launch_description():
         Node(
             package='pallet_approach', executable='dashboard',
             name='dashboard', output='screen',
-            parameters=[params, overlay_params], arguments=arguments,
+            parameters=[params, overlay_params, source_override], arguments=arguments,
             condition=IfCondition(dashboard),
         ),
 

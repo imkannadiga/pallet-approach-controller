@@ -297,3 +297,10 @@ class CameraTransformListener:
         self._executor.shutdown()
         self._thread.join(timeout=2.0)
         self._node.destroy_node()
+
+
+def tracked_topic(source: str) -> str:
+    """The TrackedPallet topic for a perception source (D104)."""
+    if source not in ('camera', 'fused'):
+        raise ValueError(f'perception_source must be camera or fused, not {source!r}')
+    return '/pallet_fusion/tracked' if source == 'fused' else '/pallet_tracker/tracked'

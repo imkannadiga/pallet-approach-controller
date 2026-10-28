@@ -1510,6 +1510,38 @@ against 0.80). *To confirm* with the calibration runs' checkerboard distances
 (PnP, no stereo) when the Jetson is reachable. The old camera-only pipeline
 (perception.py) is unchanged. (Athreya, 2026-10-28)
 
+**D104. With the fused perception, GO/NO-GO is a decision tree along the
+pipeline; GO itself checks only alignment, now 3 deg and 30 mm.** Decided by
+Athreya on 2026-10-28, from a 15-rule draft he judged too many. Each stage of
+the fused pipeline answers one question before the next runs:
+1. *Acquire* (LiDAR): a vertical face of a pallet's width -- else NO_PALLET.
+   Which side, and is it insertable (D20) -- else NO_GO. **A pallet found
+   beyond the working range is approached, not refused** (supersedes D97's
+   "refused outside" for the far side): CLOSING already drives in from wherever
+   Nav2 left the robot (D89), so the drive-up is the closing drive; the limit
+   is the LiDAR's search, ~3.6 m. Nearer than the standoff stays a NO_GO (D89).
+2. *Pockets* (camera along the LiDAR face): the side's block/pocket layout
+   matches with both pockets open -- else NO_GO. This also stands in for the
+   pocket width and height rules: the layout uses the measured widths, and a
+   narrower, shifted or half-blocked pocket breaks the match or reads closed.
+3. *Track* (filter): camera and LiDAR disagree by more than 20 mm or 3 deg for
+   5 frames, or either goes quiet -- NO_GO (D102 items 6, 7; measured: no
+   tape-bag frame exceeds either, while 10 mm / 0.3 deg would trip on 5 % /
+   67 % of frames, the angle mostly as a steady per-bag offset of up to 2.4
+   deg between the sensors). "Stable" means a healthy track: both sensors
+   accepted for the last 5 frames, nothing rejected. Losing the pallet while
+   closing aborts, as before.
+4. *At the standoff*: yaw within **3 deg** (was 5) and sideways within
+   **30 mm** (was 50) -- the only checks left at GO. Retryable once (D50).
+   *Why 30 and not 20 mm:* the closing servo sizes its run-up to arrive within
+   20 mm and ignores errors under 15 mm; 30 mm leaves it a margin. These two
+   limits apply in both perception modes.
+Overhang and pocket clearance stay off (D61, D63). *Switching:* one launch
+setting, `perception:=camera|fused`; `camera` until the fused mode passes the
+sim acceptance (9/10, D96), an offline replay of the tape bags and a dry run
+on the robot. In fused mode the old perception node is not activated.
+(Athreya, 2026-10-28)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

@@ -53,7 +53,7 @@ from pallet_approach.approach import points_then_to_now
 from pallet_approach.controller import ZERO, Command, RateLimiter
 from pallet_approach.drive import MODES, DriveExecutor, Request, Result, executor_params
 from pallet_approach.nodes._common import (LatestRaw, declare_lidar_params, lidar_in_ground,
-                                           logged_transition)
+                                           logged_transition, tracked_topic)
 from pallet_approach.pointcloud import transform_points, unpack_cloud
 from pallet_approach.ros_conversions import (
     command_to_twist,
@@ -101,6 +101,7 @@ class ControllerNode(LifecycleNode):
     def _declare(self):
         self.declare_parameter('topics.cmd_vel_pallet', '/cmd_vel_pallet')
         self.declare_parameter('topics.odom', '/odom')
+        self.declare_parameter('perception_source', 'camera')
         self.declare_parameter('topics.lidar', '/pallet_approach/lidar')
         self.declare_parameter('frames.ground', 'base_footprint')
         self.declare_parameter('frames.tf_timeout', 0.15)
@@ -182,7 +183,7 @@ class ControllerNode(LifecycleNode):
         self.create_subscription(Odometry, self._get('topics.odom'),
                                  self._on_odom, RELIABLE)
         self.create_subscription(DriveCommand, '~/drive', self._on_drive, RELIABLE)
-        self.create_subscription(TrackedPallet, '/pallet_tracker/tracked',
+        self.create_subscription(TrackedPallet, tracked_topic(self._get('perception_source')),
                                  self._on_tracked, RELIABLE)
         self.create_subscription(PointCloud2, self._get('topics.lidar'),
                                  self._on_cloud, BEST_EFFORT, raw=True)

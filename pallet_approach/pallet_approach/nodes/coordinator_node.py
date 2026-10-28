@@ -85,6 +85,7 @@ from pallet_approach_interfaces.msg import (
 )
 
 from pallet_approach import go_nogo
+from pallet_approach.nodes._common import tracked_topic
 from pallet_approach.approach import pocket_center
 from pallet_approach.closing import geometry_of
 from pallet_approach.coordinator import (
@@ -210,9 +211,11 @@ class CoordinatorNode(Node):
         self.create_subscription(Odometry, self._get('topics.odom'),
                                  self._on_odom, RELIABLE,
                                  callback_group=self._group)
-        self.create_subscription(TrackedPallet, '/pallet_tracker/tracked',
+        self._source = self._get('perception_source')
+        self.create_subscription(TrackedPallet, tracked_topic(self._source),
                                  self._on_tracked, RELIABLE,
                                  callback_group=self._group)
+        self.get_logger().info(f'perception: {self._source} ({tracked_topic(self._source)})')
         self.create_subscription(DriveStatus, '/approach_controller/status',
                                  self._on_drive_status, RELIABLE,
                                  callback_group=self._group)
@@ -257,6 +260,7 @@ class CoordinatorNode(Node):
     def _declare(self):
         self.declare_parameter('action_name', 'pallet_task')
         self.declare_parameter('topics.odom', '/odom')
+        self.declare_parameter('perception_source', 'camera')
         self.declare_parameter('topics.nav_lock', '/pallet_approach/nav_lock')
         self.declare_parameter('frames.odom', 'odom')
         self.declare_parameter('frames.ground', 'base_footprint')
@@ -430,7 +434,10 @@ class CoordinatorNode(Node):
             self.get_logger().info(
                 f'{transition.state.value}'
                 + (f': {transition.reason}' if transition.reason else ''))
-            self._set_active('pallet_perception', transition.perception_active)
+            # Fused mode (D104): pallet_fusion runs on its own; the old
+            # camera pipeline stays inactive and costs nothing.
+            self._set_active('pallet_perception',
+                             transition.perception_active and self._source == 'camera')
             self._set_active('approach_controller',
                              transition.drive is not None)
             if transition.fork is not None:
@@ -568,7 +575,8 @@ class CoordinatorNode(Node):
                       offset=float(geometry.offset),
                       heading=float(geometry.heading),
                       reason=msg.reason,
-                      pallet_odom=self._in_odom(estimate)),
+                      pallet_odom=self._in_odom(estimate),
+                      disagreeing=(self._source == 'fused' and msg.status == 'DISAGREE')),
             self._now()))
 
     @_serialised
@@ -638,6 +646,13 @@ class CoordinatorNode(Node):
             'pocket_clearance_depth',
             'stability_frames', 'max_position_spread', 'max_yaw_spread'))
         params['sides'] = self._sides()
+        if self._source == 'fused':
+            # D104: the end of the decision tree -- a ready track, then alignment.
+            tracked = self._tracked
+            return go_nogo.evaluate_fused(
+                self._estimate, Pose2D(0.0, 0.0, 0.0),
+                bool(tracked is not None and tracked.lidar_agrees),
+                tracked.reason if tracked is not None else 'no track', params)
         try:
             # The rules work in the estimate's own frame, so the robot is at
             # the origin: perception publishes in base_footprint and the

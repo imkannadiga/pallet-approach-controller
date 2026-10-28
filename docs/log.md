@@ -1165,3 +1165,23 @@ range, 1 mm sideways, 0.1 deg: (3.514, +0.131, -3.2 deg) vs (3.519, +0.132,
 -3.3 deg) in odom, GO allowed, "both sensors agree". Lost during the blind
 insertion (expected), reacquired after backing out. Sim timing on the laptop:
 14-30 ms per sweep, 2-9 ms per camera frame.
+
+**D104 built; first fused-mode sim runs.** `perception:=fused` at launch (sim:
+`SIM_PERCEPTION=fused`) points coordinator, controller, dashboard and watchdog
+at /pallet_fusion/tracked, keeps the old perception node inactive, and makes
+GO = ready track + yaw <= 3 deg + lateral <= 30 mm (`go_nogo.evaluate_fused`);
+a camera-LiDAR disagreement while CLOSING/CHECKING ends the run NO_GO. Both
+modes now use 3 deg / 30 mm. Fixed on the way: the watchdog required the old
+perception's estimate (aborted the first fused run at once); the fusion node
+ignored the sim overlay (it reads params.yaml itself, now merges the overlay);
+the sim overlay sets the D103 disparity correction to 0 (the sim's depth has
+no such bias).
+Runs: default pallet at 3.5 m -> NO_PALLET (the sim's LiDAR cannot acquire at
+3.5 m standing still; the real one did, 6/6). Pallet at 3.2 m -> acquired out
+of range, the drive-up started (CLOSING), then NO_GO: camera and LiDAR
+disagree. **The sim's camera reads +36 mm against its LiDAR at 3.2 m**: D80's
+depth model is a random warp whose spread grows with range (10 mm at 1.75 m,
+29 mm at 2.5 m, ~79 mm at 3.2 m extrapolated), fitted on FLOOR bags. On the
+flat-board bags the real ZED, after D103, is within +-7 mm to 3.1 m, and
+camera-vs-LiDAR on the pallet bags is -5..+4 mm. Stopped to ask (hard rule 1):
+the sim's model or the rule.

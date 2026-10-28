@@ -10,6 +10,14 @@
 
     use_sim_time: false
 
+    # [D104] Which perception the run uses: `camera` (pallet_perception +
+    # pallet_tracker) or `fused` (pallet_fusion, D102). Chooses the tracked
+    # topic the coordinator, controller and dashboard read, the GO/NO-GO
+    # evaluation, and whether the old perception node is activated. Set it with
+    # the launch argument perception:=fused, which also starts pallet_fusion.
+    # `camera` until fused passes the sim acceptance, a replay and a dry run.
+    perception_source: camera
+
     # [measured 2026-10-14] Where the real floor is in frames.ground. NOT zero:
     # the URDF's base_footprint joint is 25 mm out (its wheel geometry is right
     # to 0.2 mm). Shared, because three nodes need the same number -- the
@@ -926,8 +934,8 @@ coordinator:
       # the evaluation shows thin fits passing.
       min_face_inliers: 60
 
-      max_yaw_error: 0.087        # rad, 5 deg at the standoff
-      max_lateral_offset: 0.050   # m from the pocket centre line
+      max_yaw_error: 0.052        # rad, 3 deg at the standoff (D104; was 5 deg)
+      max_lateral_offset: 0.030   # m from the pocket centre line (D104; was 50 mm; the servo aims within 20)
       pocket_width_tolerance: 0.040
       pocket_height_tolerance: 0.030
       min_pocket_count: 2

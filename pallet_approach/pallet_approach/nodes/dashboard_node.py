@@ -31,7 +31,7 @@ from pallet_approach_interfaces.msg import (
 )
 
 from pallet_approach import dashboard
-from pallet_approach.nodes._common import image_to_array
+from pallet_approach.nodes._common import image_to_array, tracked_topic
 
 RELIABLE = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
 
@@ -51,7 +51,8 @@ class DashboardNode(Node):
         self.create_subscription(CoordinatorStatus, '/coordinator/status',
                                  self._on_coordinator, RELIABLE)
         self.create_subscription(Health, '/health', self._on_health, RELIABLE)
-        self.create_subscription(TrackedPallet, '/pallet_tracker/tracked',
+        self.create_subscription(TrackedPallet,
+                                 tracked_topic(self.get_parameter('perception_source').value),
                                  self._on_tracked, RELIABLE)
         self.create_subscription(DriveStatus, '/approach_controller/status',
                                  self._on_controller, RELIABLE)
@@ -66,6 +67,7 @@ class DashboardNode(Node):
             'with coordinator, health, tracker, controller and fork telemetry')
 
     def _declare(self):
+        self.declare_parameter('perception_source', 'camera')
         self.declare_parameter('publish_rate', 5.0)
         self.declare_parameter('placeholder_size', [640, 360])
         self.declare_parameter('pad', 8)
