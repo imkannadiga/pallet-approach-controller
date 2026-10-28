@@ -1185,3 +1185,12 @@ depth model is a random warp whose spread grows with range (10 mm at 1.75 m,
 flat-board bags the real ZED, after D103, is within +-7 mm to 3.1 m, and
 camera-vs-LiDAR on the pallet bags is -5..+4 mm. Stopped to ask (hard rule 1):
 the sim's model or the rule.
+
+**D105 and a launch fix, not yet verified in a run.** The sim's depth model
+now gives vertical faces a 4 mm warp and keeps D80's on the floor (D105).
+The overlay fix above did not take effect: params.yaml sets `params_file` and
+`overlay_file` empty in pallet_fusion's own block, and a node-specific entry
+beats the launch file's parameter dict, so the node still read no overlay and
+the sim kept the real ZED's D103 correction. The launch now passes both paths
+with `-p`, which overrides every file. The next sim run, and the robot, will
+say whether fused mode reaches GO.

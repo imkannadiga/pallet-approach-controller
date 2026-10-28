@@ -1542,6 +1542,20 @@ sim acceptance (9/10, D96), an offline replay of the tape bags and a dry run
 on the robot. In fused mode the old perception node is not activated.
 (Athreya, 2026-10-28)
 
+**D105. The sim's depth error depends on the surface: vertical faces get the
+board-measured error, the floor keeps D80's.** D80's warp (sd 10 mm at
+1.75 m, 29 mm at 2.5 m, ~79 mm at 3.2 m extrapolated) was fitted on floor
+bags, a grazing surface and stereo's hard case. On the flat-board bags the
+real ZED, after D103, is within 3-4 mm rms (max 7 mm) on a vertical face, flat
+from 0.9 to 3.1 m, and camera-vs-LiDAR on the pallet bags is -5..+4 mm. With
+D80 everywhere, the first fused-mode sim run ended NO_GO on a camera-LiDAR
+disagreement of +36 mm at 3.2 m that the real sensors never show. Now
+`zed_depth_model` classifies each pixel by its surface normal (from the depth
+alone): floor-like surfaces keep D80's warp, vertical ones get a 4 mm warp
+constant with range. Edge smearing and cavity filling, measured on the real
+pallet, are unchanged. Option 1 of three, chosen by Athreya; D104's 20 mm /
+3 deg rule stands. (Athreya, 2026-10-28)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

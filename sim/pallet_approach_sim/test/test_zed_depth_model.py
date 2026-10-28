@@ -70,3 +70,27 @@ def test_apply_keeps_the_scene_and_adds_bounded_error():
     face = out[50:150, 50:200]
     assert abs(np.median(face) - 2.5) < 0.1
     assert np.all(np.isfinite(out))
+
+
+def test_d105_vertical_faces_get_the_board_measured_error_the_floor_keeps_d80():
+    """A level camera 0.4 m up, looking at a floor and at a wall 2.5 m away."""
+    import numpy as np
+    from pallet_approach_sim.zed_depth_model import DepthModel, ZedParams, warp_sd
+    h, w, fx = 360, 640, 475.0
+    v, u = np.mgrid[0:h, 0:w].astype(float)
+    ray_y = (v - h / 2) / fx                               # optical y, down
+    with np.errstate(divide='ignore'):
+        floor_z = np.where(ray_y > 0, 0.4 / ray_y, np.inf)  # where each ray meets the floor
+    depth = np.minimum(floor_z, 2.5).astype(np.float32)     # a wall at 2.5 m
+    model = DepthModel(ZedParams(), seed=3)
+    flat = model.horizontal(depth, fx)
+    assert flat[(floor_z < 2.0) & (np.abs(u - w / 2) < 200)].mean() > 0.95
+    assert not flat[(depth == 2.5) & (v < h / 2 - 20)].any()
+    errors = []
+    for seed in range(40):                                   # many warp draws
+        m = DepthModel(ZedParams(flicker=0.0), seed=seed)
+        out = m.apply(depth, fx, progress=0.0)
+        errors.append(float(np.median((out - depth)[(depth == 2.5) & (v < h / 2 - 40)])))
+    sd = float(np.std(errors))
+    assert sd < 0.008, sd                                    # board-like, not D80's 29 mm at 2.5 m
+    assert warp_sd(np.array([2.5]), ZedParams())[0] > 0.02   # the floor's model is unchanged
