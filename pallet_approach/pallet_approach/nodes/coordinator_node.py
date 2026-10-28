@@ -1,56 +1,17 @@
-"""Action server and owner of the sequence.
+"""Action server and owner of the sequence: the ROS shell around `coordinator.py`
+(state machine) and `go_nogo.py` (rules). It makes each Transition true:
+lifecycle activation, drive commands, fork commands, feedback. Outcomes:
+INSERTED, NO_GO, NO_PALLET, ABORTED.
 
-The only node that decides anything. It activates and deactivates the managed
-nodes, holds the `twist_mux` lock for the length of a run, commands the
-controller and the forks, and returns INSERTED / GO / NO_GO / NO_PALLET /
-ABORTED.
+Also owns the health gate (D12: a run is refused while the stack is
+unhealthy) and the navigation lock (D30: published for the length of a run so
+twist_mux blocks Nav2; it lapses 0.5 s after this node stops).
 
-The decisions live in `coordinator.py` (the pure state machine) and `go_nogo.py`
-(the rules); this file is the ROS shell around them. Every transition it gets
-back carries `stop_robot`, `drive`, `fork` and `perception_active`, and this
-node's whole job is to make those true -- which is why the safety properties
-can be tested without ROS at all.
-
-Two things it owns that the machine cannot:
-
-**The health gate (D12).** A run is refused if the stack is unhealthy when the
-trigger arrives, with the failing source named. A run that starts unhealthy
-fails later and more expensively, next to a pallet.
-
-**The navigation lock (D30).** Published at 10 Hz for the length of a run, so
-`twist_mux` blocks Nav2 while we drive. It expires 0.5 s after this node stops
-publishing it, so a coordinator that dies hands navigation back rather than
-locking the robot out.
-
-## Two ways to start a run, and why both exist
-
-The operational flow is sequential (D55): Nav2 drives the robot in front of a
-pallet and **finishes**, and only then is this pipeline triggered. So the
-trigger is a topic, because the thing doing the triggering is a script or a
-behaviour tree that has just finished a navigation goal and has nothing to wait
-for:
-
-    ros2 topic pub --once /pallet_approach/start std_msgs/String "{data: pickup}"
-    ros2 topic pub --once /pallet_approach/cancel std_msgs/Empty "{}"
-
-A topic trigger is fire-and-forget, which means two things have to exist
-alongside it that an action gives for free:
-
-* **`/pallet_approach/cancel`.** "The robot must stop on cancel" has no
-  exceptions, and a run started from a topic has no action goal to cancel. This
-  is not a convenience.
-* **`/pallet_approach/result`.** The outcome has to go somewhere. It carries
-  the action's own Result message, so there is exactly one definition of what a
-  result is and the topic and the action cannot drift apart.
-
-The action server stays, and is the better way to run one by hand: it streams
-feedback, it reports the result to the caller, and Ctrl-C on `send_goal`
-cancels. Both paths go through `_start_run`, so there is one code path for
-"begin a run" and the health gate cannot apply to only one of them.
-
-The start subscription is deliberately **VOLATILE, depth 1**. A latched
-trigger would start a run the moment this node came up, from a message
-published before it existed.
+A run starts from /pallet_approach/start (std_msgs/String, the mode; VOLATILE
+depth 1, so nothing latched can start one) or from the /pallet_task action
+(D55). A topic-started run is stopped by /pallet_approach/cancel and reports on
+/pallet_approach/result (the action's Result type). Both go through
+`_start_run`.
 """
 
 from __future__ import annotations
@@ -121,13 +82,8 @@ MANAGED = ('pallet_perception', 'approach_controller')
 
 
 def _serialised(method):
-    """Run a callback under the machine lock.
-
-    The machine's own callbacks are already one-at-a-time (a mutually
-    exclusive group), but the action server's are not and cannot be: `_execute`
-    blocks for a whole run. So everything that reads or changes the machine
-    takes this lock, and the action path takes it around exactly the steps that
-    touch the machine, never around its wait.
+    """Run a callback under the machine lock. The action's `_execute` blocks for a
+    whole run, so it takes the lock only around the steps that touch the machine.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
@@ -141,22 +97,11 @@ class CoordinatorNode(Node):
     def __init__(self):
         super().__init__('coordinator')
         self._declare()
-        # Three groups, because the coordinator both IS a state machine and
-        # WAITS inside it.
-        #
-        # Everything that reads or changes the machine -- the tick, the
-        # trigger, every subscription -- is mutually exclusive, so one of them
-        # runs at a time. With one reentrant group (the earlier version) a new
-        # `_tick` started every 50 ms while an older one was still waiting on a
-        # lifecycle call, the overlapping ticks each issued the same transition,
-        # and the duplicate timed out (measured 2026-10-20 in the Gazebo sim:
-        # "pallet_perception transition 4 timed out" after perception had
-        # already reported itself inactive).
-        #
-        # The lifecycle clients get their own reentrant group, so a response is
-        # delivered on another thread while the machine's thread waits for it.
-        # The action server gets another, because `_execute` blocks for the
-        # whole run and must not hold the machine's group while it does.
+        # Machine callbacks (tick, trigger, subscriptions) are mutually
+        # exclusive: overlapping ticks once issued duplicate lifecycle
+        # transitions. Lifecycle clients and the action server get their own
+        # reentrant groups, so responses arrive while the machine waits and
+        # `_execute` can block for a whole run.
         self._group = MutuallyExclusiveCallbackGroup()
         self._machine_lock = threading.RLock()
         self._service_group = ReentrantCallbackGroup()
@@ -290,12 +235,7 @@ class CoordinatorNode(Node):
             ('reverse.max_unverified', 0.50),
             ('forks.bottom_height', 0.040), ('forks.tine_thickness', 0.040),
             ('forks.lift_travel', 0.070),
-            # Written out one per line, not built from an f-string over
-            # ('short', 'long') x (keys). test_params.py reads this method with
-            # a regex, and a name it cannot see is a name it cannot check --
-            # which is exactly how `seed`, `cluster.size_tolerance` and
-            # `face.max_facing_angle` reached the robot undeclared and killed
-            # the perception node on its first frame.
+            # One literal name per line, so test_params.py's scraper sees each.
             ('pallet.sides.short.pocket_width', 0.230),
             ('pallet.sides.short.opening_top', 0.100),
             ('pallet.sides.short.opening_bottom', 0.000),
@@ -341,17 +281,9 @@ class CoordinatorNode(Node):
         request = ChangeState.Request()
         request.transition.id = transition_id
         future = client.call_async(request)
-        # WAIT, do not spin. This node runs in a MultiThreadedExecutor with a
-        # reentrant callback group, so the response is delivered on another
-        # thread while this one waits. An earlier version called
-        # rclpy.spin_once(self) here, which hands the node to the GLOBAL
-        # executor -- and rclpy moves a node to whichever executor last added
-        # it, so after the first configure the MultiThreadedExecutor in main()
-        # was spinning nothing: no ticks, no status, no subscriptions, and the
-        # run sat in CONFIRMING forever with a confirmed track waiting.
-        # Measured 2026-10-20 in the Gazebo sim (py-spy: main thread idle in
-        # executor.spin()). Wall time for the deadline, so it holds even if
-        # the clock is the thing that has stopped.
+        # Wait, do not spin: spin_once would move this node to the global
+        # executor and leave main()'s executor spinning nothing (sim,
+        # 2026-10-20). Wall-time deadline, so it holds if the clock stops.
         deadline = time.monotonic() + 5.0
         while not future.done() and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -667,16 +599,8 @@ class CoordinatorNode(Node):
             return Decision(go=False, reason=f'go_nogo raised {type(error).__name__}')
 
     def _estimate_history(self):
-        """The estimates taken since CHECKING began, oldest first.
-
-        Kept here rather than in the state machine because the machine holds
-        `TrackInfo`, which is deliberately small, and widening it would carry a
-        perception type into a module that has no ROS and no perception in it.
-
-        An earlier version repeated the latest estimate `stability_frames`
-        times, which made the stability rule measure one frame against itself
-        and therefore unable to fail -- a safety rule that cannot fail is worse
-        than one that is absent, because it reports a pass.
+        """The estimates taken since CHECKING began, oldest first, for the stability
+        rule (never one frame repeated, which could not fail).
         """
         return list(self._checking_estimates)
 

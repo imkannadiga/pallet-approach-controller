@@ -1,36 +1,18 @@
 """Lifecycle node: the only thing in this stack that moves the robot.
 
-It executes one of four behaviours at a time, chosen by the coordinator over
-`~/drive`, and nothing else:
+Executes one behaviour at a time, chosen by the coordinator over `~/drive`:
+CLOSE (servo onto the pocket centre line, D38), REVERSE (straight back with the
+rear LiDAR check, D42), INSERT (stop on the earlier of odometry and LiDAR,
+abort if they disagree, D18), BACKOUT. The coordinator says which and how far;
+this node owns how.
 
-    CLOSE     servo onto the pocket centre line, stop at the standoff (D38)
-    REVERSE   straight back, with the rear LiDAR check and the travelled-ground
-              allowance (D42)
-    INSERT    straight forward, stopping on the earlier of odometry and the
-              LiDAR, aborting if they disagree (D18)
-    BACKOUT   straight back out of the pallet
-
-The division of labour is deliberate: the coordinator says WHICH behaviour and
-how far, and this node owns HOW -- the gains, the limits and the stop rules. So
-the sequencing can be tested without a controller and the control laws without
-a state machine, which is why `closing.py`, `insertion.py` and `coordinator.py`
-have no ROS in them at all.
-
-Five safety properties live here and must not be weakened:
-
-1. **No publishing unless activated.** The publisher exists from `configure`,
-   but `_active` gates every write and only the lifecycle state sets it.
-2. **Fixed rate, explicit zeros.** The base driver has no command timeout, so a
-   command it already has keeps it moving. The timer publishes every tick while
-   active, and deactivating sends several explicit zeros.
-3. **Stale input means stop.** A drive command older than `target_timeout`, or
-   a pallet estimate older than it during CLOSE, stops the robot rather than
-   acting on a measurement that may no longer be true.
-4. **Somebody is listening.** At configure it checks something subscribes to
-   its command topic and refuses otherwise, because with twist_mux absent every
-   command would vanish and the stack would report that it was driving (D31).
-5. **It never invents a mode.** An unknown mode string stops the robot and says
-   so. There is no default behaviour.
+Safety properties:
+1. No publishing unless activated (`_active`, set only by the lifecycle).
+2. Fixed rate and explicit zeros: the base has no command timeout.
+3. A drive command, or during CLOSE an estimate, older than `target_timeout`
+   stops the robot.
+4. Configure refuses if nothing subscribes to the command topic (D31).
+5. An unknown mode stops the robot; there is no default.
 """
 
 from __future__ import annotations
@@ -159,18 +141,10 @@ class ControllerNode(LifecycleNode):
     def on_configure(self, state: State) -> TransitionCallbackReturn:
         topic = self._get('topics.cmd_vel_pallet')
 
-        # Everything a subscription callback can touch is built FIRST, before
-        # any subscription exists to call one. This is not just tidiness:
-        # `_wait_for_a_subscriber` below spins this node's own executor while
-        # it waits, and a subscription created earlier is live during that
-        # spin -- so if DriveCommand had been subscribed before `self._executor`
-        # existed, a message arriving during the wait (the coordinator
-        # publishes a STOP heartbeat at 20 Hz even while idle, so there is
-        # always one queued) would call `_on_drive` with `self._executor` still
-        # `None`. Measured 2026-10-19: exactly that, an AttributeError that
-        # killed the node, which then made the coordinator's NEXT configure
-        # attempt fail too ("could not configure the managed nodes") because
-        # the service was no longer there to answer it.
+        # Everything a callback touches is built before any subscription:
+        # `_wait_for_a_subscriber` spins this node, and the coordinator's 20 Hz
+        # STOP heartbeat would otherwise reach `_on_drive` with no executor
+        # (an AttributeError that killed the node, 2026-10-19).
         self._limiter = RateLimiter(self._get('limits.max_linear_accel'),
                                     self._get('limits.max_angular_accel'))
         self._executor = DriveExecutor(executor_params(self._get))
@@ -308,12 +282,7 @@ class ControllerNode(LifecycleNode):
 
     def _on_drive(self, msg: DriveCommand):
         if self._executor is None:
-            # Belt and suspenders alongside the construction order in
-            # on_configure: this subscription must not be live before
-            # self._executor exists, and now it never is -- but a callback
-            # assuming its own node's state just because it was called is the
-            # exact class of bug that put a None here before, so it costs one
-            # guard to make sure it cannot happen a second way.
+            # Also guarded here, besides the construction order in on_configure.
             return
         self._command_at = self._now()
         if msg.mode == self._executor.mode and self._command is not None:

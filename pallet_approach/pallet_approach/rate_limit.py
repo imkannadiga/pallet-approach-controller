@@ -1,26 +1,9 @@
 """Deciding which frames to process when they arrive faster than they can be.
 
-Depth arrives from the ZED at about 37 Hz. One frame through the perception
-pipeline costs about 90 ms on a laptop and more on the Jetson, so roughly four
-frames in five cannot be looked at. That is not a problem to solve, it is a
-situation to handle correctly, and there are two ways to get it wrong:
-
-* **Queue them.** Nothing is discarded, and the backlog grows about 26 frames a
-  second. Within ten seconds the estimate being published describes where the
-  pallet was seven seconds ago -- while the robot drives on it. The staleness
-  watchdog would fire constantly and be right to.
-* **Process whatever arrives next.** The estimate is fresh, but the rate is
-  whatever the pipeline happens to manage, which drifts with scene complexity
-  and with whatever else the Jetson is doing.
-
-What this does instead: keep only the newest frame, and start work at most
-`max_rate` times a second. The published estimate is then never older than one
-processing period, and the rate is a number that was chosen rather than one
-that emerged.
-
-The gate is here rather than inline in the node so that the offline harness
-(`tools/live.py`) can exercise the real policy against a recorded bag, instead
-of a reimplementation of it that might drift.
+Depth arrives at ~37 Hz and perception takes ~90 ms or more. Queueing makes
+the estimate ever older; processing whatever comes next gives an unplanned
+rate. So: keep only the newest frame and start work at most `max_rate` times a
+second. Kept outside the node so `tools/live.py` runs the same policy.
 """
 
 from __future__ import annotations
@@ -32,18 +15,11 @@ from dataclasses import dataclass
 class FrameGate:
     """Rate limiter with counters, for a producer faster than its consumer.
 
-    Usage is `offer()` per arriving frame; it returns True at most `max_rate`
-    times a second and False otherwise, counting the refusals.
-
-        gate = FrameGate(max_rate=5.0)
-        ...
         if gate.offer(now):
             result = expensive(frame)
             gate.finished(now_after)
 
-    `offer` takes the time rather than reading a clock so that the caller's
-    clock is the one that counts -- the ROS clock in the node, which may be
-    simulated, and wall time in the offline harness.
+    Takes the time as an argument, so the caller's clock (ROS or wall) counts.
     """
 
     max_rate: float
@@ -81,23 +57,15 @@ class FrameGate:
             # frames at once would make `frame_seconds` meaningless.
             self.dropped += 1
             return False
-        # A hair under the interval still counts as "due". Without this, a
-        # source whose period is close to `interval` drops about half its
-        # frames to floating-point noise: set max_rate to the camera's own
-        # 37 Hz and arrivals land 27.027 ms apart against a 27.027 ms interval,
-        # where the comparison goes either way on the last bit and the achieved
-        # rate silently halves. The tolerance is a thousandth of the interval,
-        # far below any real jitter.
+        # A thousandth of an interval early still counts as due, or a source at
+        # exactly max_rate loses half its frames to floating-point noise.
         if (self.next_due is not None
                 and now < self.next_due - self.interval * 0.001):
             self.dropped += 1
             return False
-        # Advance the due time by one interval from the previous DUE time, not
-        # from this frame, so the average comes out at max_rate. "At least one
-        # interval since the last frame" rounds up to a whole number of input
-        # periods: from 10 Hz input a 3.3 Hz gate gave 2.5 Hz -- exactly the
-        # watchdog's floor -- in the Gazebo sim (2026-10-23). After a pause, or
-        # when processing overran, it restarts from this frame, so no burst.
+        # Advance from the previous due time, not this frame, so the average is
+        # max_rate (otherwise 10 Hz in, 3.3 Hz gate gave 2.5 Hz). After a pause
+        # or an overrun, restart from this frame, so no burst.
         start = self.next_due
         if start is None or now - start > self.interval:
             start = now

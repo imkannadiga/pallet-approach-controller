@@ -1,64 +1,18 @@
-"""Closing in on the pallet, and the reverse that makes room to do it.
+"""Closing in on the pallet (D38), and the reverse that makes room to do it.
 
-This replaces the two-leg rotate-drive-rotate approach (D6) with a servo that
-runs continuously while the robot closes (D38). The picture, looking down:
+A continuous servo onto the pocket centre line (C + t n; C = pocket midpoint,
+n = outward face normal) while the robot drives in:
 
-        pallet face
-    ════════════════════
-            |
-            C                  C  = midpoint between the pocket centres
-            |                  n  = outward face normal, pointing at the robot
-            |  the pocket centre line, C + t*n
-            |
-            | .  theta         aim this far towards the line...
-            o  robot, `offset` to one side of the line
+* outer loop: aim theta_desired = -k_cross * offset, capped at
+  `max_approach_angle` so the pallet stays in view;
+* inner loop: omega = k_heading * (theta_desired - theta).
 
-The robot drives forward slowly, and steers with two nested loops:
-
-* the **outer loop** looks at the lateral offset and decides which way to aim:
-  `theta_desired = -k_cross * offset`, capped at `max_approach_angle` so the
-  robot never crabs so far across that the pallet leaves the camera's view;
-* the **inner loop** turns the robot until it is aiming that way:
-  `omega = k_heading * (theta_desired - theta_actual)`.
-
-Two gains, each meaning one thing. `k_cross` is the reciprocal of a distance:
-heading towards the line at `k_cross * offset` radians makes the offset decay
-exponentially with a length of `1 / k_cross` metres, which is the number
-`required_run_up` is built on. `k_heading` is how hard the robot chases the
-aim it has chosen.
-
-This replaced a pure-pursuit law chasing a carrot on the line. Pure pursuit is
-the same algebra with the two gains locked together at `k_cross = k_heading /
-lookahead`, and locking them is what made it unusable here: a lookahead short
-enough to converge in 1.25 m implied an approach angle of nearly 60 deg, so the
-robot dog-legged -- turn in place, drive, turn back -- and arrived square-ish
-by luck. Separating the gains lets the decay length and the approach angle be
-chosen independently, which is what they are.
-
-There is no separate yaw stage and no final rotation: the line's direction *is*
-the face normal, so a robot on the line pointing along it is aligned by
-construction.
-
-Why a servo rather than aligning once and driving straight: the measurement
-improves as the robot closes, so correcting continuously means every correction
-is made with better information than the one before. Aligning at 3 m and
-driving blind would freeze in the error that the 3 m measurement had.
-
-**The run-up matters more than the gain.** A servo can only take out as much
-lateral error as the distance it has to work in. At the 1.75 m standoff the
-pockets leave only 65 mm of slack around a 100 mm tine, so the loop has to
-arrive inside that, and `required_run_up` is what says how far back the robot
-must start. The floor was set at 3.0 m on 2026-10-19 after a simulation
-showed 1.75 m and 2.25 m both finishing outside the slack.
-
-**The commit point is a hard stop in the command, not a state.** Once the face
-is closer than the virtual tine tips can reach (`carriage_x + tine_length` =
-1.6125 m), the tines are inside the pallet and steering would break them
-against the blocks. `closing_command` refuses to move at all there, whatever
-the state machine thinks. The standoff sits 0.1375 m outside it, so in a
-correct run this never fires -- which is the point of having it.
-
-Pure functions. The node owns the clock, the odometry and the publisher.
+The offset decays with length 1 / k_cross (what `required_run_up` uses). The
+line's direction is the face normal, so arriving on it is arriving aligned.
+The run-up length, not the gain, limits the lateral error (65 mm of pocket
+slack at the standoff). `closing_command` refuses to move once the virtual
+tine tips would be inside the pallet (commit point), whatever the state.
+Pure functions; the node owns the clock, odometry and publisher.
 """
 
 from __future__ import annotations
@@ -80,15 +34,9 @@ __all__ = ['Geometry', 'Phase', 'geometry_of', 'required_run_up',
 
 
 class Phase(Enum):
-    """Where the closing loop is. Held by the caller, like `controller.Phase`.
-
-    SQUARING exists because of the base's minimum turn rate. The loop can be
-    caught mid-correction when it reaches the standoff -- one 0.2 s frame at
-    the 0.30 rad/s limit is 3.4 deg -- and arriving 4 deg out of square spends
-    most of the 5 deg GO/NO-GO yaw budget on nothing. Turning in place at the
-    standoff costs a second and fixes it, and it does not disturb the lateral
-    offset at all, because turning about `base_footprint` does not move
-    `base_footprint`.
+    """Where the closing loop is. SQUARING turns in place at the standoff (D41):
+    arriving mid-correction can cost 3-4 deg of yaw, and turning about
+    `base_footprint` does not change the lateral offset.
     """
 
     CLOSING = 'CLOSING'
@@ -98,17 +46,9 @@ class Phase(Enum):
 
 @dataclass(frozen=True)
 class Geometry:
-    """Where the robot stands relative to the pocket centre line.
-
-    All three are measured in the estimate's own frame, which is
-    `base_footprint` -- so the robot is at the origin facing +x and these are
-    read off one frame with no odometry involved.
-
-    Since D59 (2026-10-20) the closing loop no longer uses that one-frame
-    version: it takes `geometry_from_track`, the tracker's averaged pallet
-    line placed against the robot's pose now. One frame's normal was too noisy
-    to steer by. `geometry_of` is still what everything that judges a single
-    frame uses (GO/NO-GO, the run-up decision, the harness's ground truth).
+    """Where the robot stands relative to the pocket centre line, in the
+    estimate's frame (`base_footprint`). The closing loop uses
+    `geometry_from_track` (D59); single-frame judgements use `geometry_of`.
     """
 
     range: float
@@ -134,16 +74,9 @@ class Geometry:
 
 
 def geometry_of(estimate: PalletEstimate) -> Geometry:
-    """Reduce one estimate to the three numbers the servo needs.
-
-    The sign conventions are the fiddly part and the tests state them case by
-    case; the shape of the algebra is:
-
-    * `n` is the outward normal, flipped if necessary to point at the robot, so
-      the robot sits at face-distance `-C . n` in front of the face;
-    * the direction of travel is `-n`, and the robot's own left is
-      `(n_y, -n_x)` in the estimate's frame, which is what `offset` is
-      measured along.
+    """One estimate reduced to (range, offset, heading). `n` is the normal flipped
+    to face the robot; travel is along -n; offset is measured along the robot's
+    left, (n_y, -n_x). Sign conventions are stated case by case in the tests.
     """
     center = pocket_center(estimate.pockets, fallback=estimate.position)
     normal = outward_normal(estimate.normal, face_point=center)
@@ -151,19 +84,9 @@ def geometry_of(estimate: PalletEstimate) -> Geometry:
 
 
 def geometry_from_track(center_odom, yaw_odom: float, robot) -> Geometry:
-    """The same three numbers from the FUSED pallet line and the robot's pose
-    now, both in `odom` (D59).
-
-    `geometry_of` reads one frame. Its normal wobbles by about +-0.04 rad from
-    frame to frame (measured 2026-10-20 in the Gazebo sim), and at 3 m that
-    swings the pocket centre line sideways by +-120 mm five times a second --
-    the robot then steers after noise. The pallet does not move, so the
-    tracker averages its pose in `odom`, and this places that averaged line
-    relative to wherever odometry says the robot is now. That also gives a
-    fresh geometry on every control tick rather than only when a frame lands.
-
-    `robot` is a Pose2D of `base_footprint` in `odom` (x, y and yaw are the
-    same as base_link's, see params.yaml frames.ground).
+    """(range, offset, heading) from the tracker's averaged pallet line in odom and
+    the robot's pose now (D59): one frame's normal wobbles +-0.04 rad, +-120 mm
+    at 3 m. `robot` is base_footprint's Pose2D in odom.
     """
     dx = float(center_odom[0]) - robot.x
     dy = float(center_odom[1]) - robot.y
@@ -197,35 +120,12 @@ def commit_range(params: dict) -> float:
 
 
 def required_run_up(offset: float, params: dict) -> float:
-    """Face distance the robot needs before closing in, metres.
-
-    Two terms, and the larger wins:
-
-    * a floor of `min_run_up` (2.5 m, D39 lowered by D75);
-    * the standoff plus however far this servo needs to bring the lateral error
-      it currently has down to `residual_target`.
-
-    The second term is why the standoff is "variable with a minimum" rather
-    than fixed: a robot that Nav2 left half a metre off the centre line
-    needs more run-up than one left on it, and the amount is geometry rather
-    than a guess.
-
-    The servo has **two regimes** and the distance is the sum of both, which
-    is the correction that matters most here:
-
-    * while the aim is pinned at `max_approach_angle`, the offset falls at a
-      constant `sin(max_approach_angle)` metres per metre travelled -- a large
-      offset is taken out linearly, not exponentially;
-    * once the offset drops below `max_approach_angle / k_cross` the
-      proportional term is asking for less than the cap, and
-      `d(offset)/d(distance) = -k_cross * offset` gives exponential decay with
-      a length of `1 / k_cross` metres.
-
-    Leaving out the first term is what the first version of this function did,
-    and a simulation caught it: it claimed 3.04 m was enough to take out
-    0.50 m of offset, and the run finished 250 mm off the line with 11 deg of
-    yaw. The honest figure is just over 4 m. `test_closing.py` measures both
-    regimes against this formula rather than taking it on trust.
+    """Face distance needed before closing in: the larger of `min_run_up` (D75)
+    and the standoff plus the distance the servo needs to bring the current
+    offset down to `residual_target`. Two regimes add up: at the angle cap the
+    offset falls by sin(max_approach_angle) per metre; below
+    max_approach_angle / k_cross it decays exponentially with length 1/k_cross.
+    `test_closing.py` checks both against simulation.
     """
     reach = max(abs(float(offset)), 1e-4)
     residual = max(float(params['residual_target']), 1e-4)
@@ -254,18 +154,11 @@ def closing_command(
     params: dict,
     limits: dict,
 ) -> tuple[Command, Phase, str]:
-    """One step of the closing servo. Returns (command, next phase, reason).
+    """One step of the closing servo: (command, next phase, reason).
 
-    Gates before any motion, in order:
-
-    1. **Past the commit point** -- refuse entirely, in every phase. The tines
-       are through the face and the robot has no business moving there.
-    2. **ARRIVED** -- zero, every time it is called.
-    3. **At the standoff** -- stop driving and square up.
-    4. **Not facing the aim** -- if the inner loop's error is more than
-       `max_turn_in_place` off, turn without driving. A robot that has to swing
-       20 degrees should do it where it is rather than describe that arc at a
-       pallet.
+    Gates, in order: past the commit point -> refuse in every phase; ARRIVED ->
+    zero; at the standoff -> stop and square up; aim error over
+    `max_turn_in_place` -> turn without driving.
     """
     target = float(params['target_range'])
     tolerance = float(params['range_tolerance'])
@@ -328,26 +221,11 @@ def _closing_step(geometry: Geometry, params: dict, limits: dict):
 
 
 def desired_heading(offset: float, params: dict) -> float:
-    """The outer loop: which way to aim, given the lateral offset, radians.
+    """The outer loop's aim (radians, + = left of the line's direction).
 
-    Positive means "head to the left of the line's direction". Two shaping
-    rules on top of the proportional term:
-
-    **A cap.** `max_approach_angle` is the furthest the robot will crab across.
-    Without it a large offset asks for an aim the base would reach by turning
-    most of the way sideways, and then the pallet leaves the camera's view --
-    the servo would blind itself. With it, a large offset is taken out at a
-    constant angle until it is small enough for the proportional term to take
-    over, which is also the shortest sensible path.
-
-    **A deadzone.** Inside `straighten_offset` the aim is exactly zero, so the
-    robot straightens up and arrives square instead of still cutting across.
-    This matters because the arrival yaw is otherwise *determined* by the
-    arrival offset: aiming `k_cross * offset` at the line means arriving at
-    that angle, and at `k_cross = 2.5` a 35 mm residual is already 5 deg --
-    the whole GO/NO-GO yaw budget spent on being almost in the right place.
-    Below the deadzone the offset is left alone, which costs the drift of a
-    nearly-straight robot over the last half metre: a couple of millimetres.
+    Capped at `max_approach_angle` (keeps the pallet in view) and zero inside
+    `straighten_offset`, so the robot arrives square rather than still cutting
+    across (at k_cross 2.5 a 35 mm residual would otherwise mean 5 deg).
     """
     magnitude = abs(float(offset))
     if magnitude < float(params['straighten_offset']):
@@ -379,17 +257,9 @@ def straight_command(
     limits: dict,
     tolerance: float = 0.010,
 ) -> tuple[Command, bool, str]:
-    """Drive straight by `distance` on odometry, forward or back.
-
-    Used for the three phases where there is nothing to servo on: backing off
-    to make room, the blind part of the insertion, and backing out afterwards.
-    `travelled` is the distance covered so far, always positive; `distance` is
-    the target, and its sign is the direction.
-
-    Angular is exactly zero, never a small correction. During insertion that is
-    D7 -- the tines are inside the pallet and steering would drag them through
-    the blocks -- and during the reverse it is because the only thing worth
-    steering by is behind the robot where nothing can see it.
+    """Drive straight by `distance` (signed) on odometry; `travelled` is positive.
+    For backing off, the blind insertion (D7) and backing out: angular is
+    exactly zero.
     """
     remaining = abs(distance) - travelled
     if remaining <= tolerance:
@@ -401,27 +271,9 @@ def straight_command(
 
 
 def _finish(command: Command, limits: dict) -> Command:
-    """Clamp, then handle the two deadbands differently. This is not the same
-    as `controller._finish`, and the difference is the whole behaviour of the
-    servo near the line.
-
-    **Linear** is raised to `min_linear`, as everywhere else: below it a skid
-    steer does not move at all, so a command reduced below it has to be raised
-    back or the robot sits still believing it is closing the error.
-
-    **Angular is ZEROED instead of raised.** The base cannot turn more slowly
-    than `min_angular`, so for a correction finer than that the choice is to
-    turn too much or not to turn, and not turning is the stable one. Raising it
-    instead -- which is what `apply_deadband` does, and what this function did
-    first -- makes every command either hard over or hard back, and the servo
-    becomes bang-bang with no fine control at all: measured in simulation, the
-    residual then scaled with the lookahead and ignored the gain completely,
-    which is the signature of a saturated loop.
-
-    The cost is a deadzone on the heading: with `k_heading` at 4.0 and
-    `min_angular` at 0.10, an aim error under 1.4 deg produces no command. That
-    granularity, and not the gain, is what sets the achievable accuracy
-    (D40).
+    """Clamp, then the deadbands: linear is raised to `min_linear` (below it the
+    base does not move); angular below `min_angular` is ZEROED, not raised --
+    raising made the servo bang-bang. That granularity sets the accuracy (D40).
     """
     command = clamp_command(command, limits['max_linear'], limits['max_angular'])
     command = apply_deadband(command, limits['min_linear'], 0.0)
@@ -431,45 +283,14 @@ def _finish(command: Command, limits: dict) -> Command:
 
 
 class DivergenceDetector:
-    """Is the error growing instead of shrinking?
+    """Is the lateral error growing instead of shrinking?
 
-    "Abort after N consecutive growing frames" was chosen on 2026-10-19 over
-    a threshold on the error itself, because a large error
-    at 3 m is normal and shrinking, while a small error that keeps growing is
-    a controller fighting its own sign error or a pallet estimate walking away.
-    The first is safe and the second is not, and only the trend tells them
-    apart.
-
-    Three conditions have to hold, and the third was added after the offline
-    harness measured the first two aborting runs that were working perfectly.
-
-    Monotone growth is a fragile statistic under measurement noise. Five
-    strictly increasing samples happen by chance once in 120 windows of white
-    noise, and a converged robot driving a long run-up produces hundreds of
-    windows of near-constant offset for the noise to work on. Measured in
-    `test_sequence.py` at 10 mm of position noise: from a 9 m run-up the
-    detector aborted **3 runs in 12** at five frames, and none at eight.
-    `min_growth` barely helped, because the growth accumulates over the window.
-
-    So: eight frames rather than five, and **nothing is judged while the error
-    is inside `min_offset`** -- a 15 mm error wobbling by 5 mm is measurement
-    scatter whichever direction it wobbles, and the closing loop deliberately
-    stops correcting down there anyway (`straighten_offset`).
-
-    The cost is latency: eight frames at 5 Hz is 1.6 s rather than 1.0 s, which
-    at the 0.10 m/s closing speed is 160 mm of extra travel before a real
-    divergence is caught. Worth it against a one-in-four chance of aborting a
-    good run.
-
-    **Since D94 it judges a time window, not a frame count, when `window` is
-    set**: frames are averaged over steps of `window / frames` seconds, and
-    each step's mean counts as one frame of the rule above. At 5 Hz with a
-    1.6 s window that is the old eight-frame rule; at 30 Hz it still means
-    1.6 s rather than a quarter of a second. And the threshold grows with range like
-    stereo depth error (`min_growth * (range / reference_range)^2`, never
-    below `min_growth`): a re-measured pallet line at 3.5 m moves 9-13 cm in
-    the sim while the robot turns, which is noise there and divergence at the
-    standoff.
+    Abort when the error has grown for `frames` consecutive steps by at least
+    `min_growth` in total, ignoring errors inside `min_offset`. Eight frames, not
+    five: under 10 mm of noise five aborted 3 good runs in 12 (test_sequence.py).
+    With `window` set (D94) a step is the mean over window / frames seconds, so
+    the rule means the same at any frame rate; the growth threshold scales with
+    (range / reference_range)^2, like stereo depth error.
     """
 
     def __init__(self, frames: int, min_growth: float, min_offset: float = 0.0,
@@ -556,22 +377,10 @@ class DivergenceDetector:
 
 
 def rear_clearance(points: np.ndarray | None, params: dict) -> tuple[float | None, str]:
-    """Nearest obstacle behind the rear bumper, metres from the bumper.
-
-    Returns (distance, detail), with None when the LiDAR found nothing in the
-    corridor -- which is NOT the same as "it is clear". Reversing is the one
-    thing this robot does that it cannot see, and the honest statement of what
-    this function provides is:
-
-    * beyond `blind_radius` behind the bumper it is a real measurement;
-    * inside it there is nothing to measure, and the only reason the reverse is
-      acceptable is that the robot's own body occupied that ground seconds ago
-      (see `reverse_allowance`, which turns that argument into a limit).
-
-    The corridor is the robot's width plus a margin, from the rear bumper
-    backwards, and only returns between `min_height` and `max_height` above the
-    floor count -- the floor itself is not an obstacle and neither is the
-    ceiling.
+    """Nearest obstacle behind the rear bumper: (distance from the bumper, detail),
+    or None if the corridor (robot width plus margin, `min_height`..`max_height`
+    above the floor) is empty. Inside `blind_radius` nothing can be measured; see
+    `reverse_allowance`.
     """
     if points is None or len(points) == 0:
         return None, 'no LiDAR data'
@@ -595,18 +404,7 @@ def rear_clearance(points: np.ndarray | None, params: dict) -> tuple[float | Non
 
 
 def reverse_allowance(travelled_forward: float, params: dict) -> float:
-    """How far back the robot may be driven, metres.
-
-    The ground immediately behind the robot cannot be checked, so the limit is
-    an argument rather than a measurement: `travelled_forward` is ground the
-    robot's own body was standing on a few seconds ago, and is therefore known
-    to have been clear, plus `max_unverified` metres of ground that nothing has
-    checked at all.
-
-    Our own reverse controller with a LiDAR check was chosen over handing the
-    reverse to Nav2 on 2026-10-19 (D42). The limit this function states is what
-    that choice costs: Nav2 would have had the costmap, which remembers what
-    the LiDAR saw while the robot drove past. We do not, so the allowance is
-    small and deliberate.
+    """How far back the robot may drive: the ground it drove forward over (its own
+    body was just there) plus `max_unverified` metres nothing has checked (D42).
     """
     return float(travelled_forward) + float(params['max_unverified'])

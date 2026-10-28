@@ -1,44 +1,17 @@
-"""Depth image -> pallet pose and fork pockets.
+"""Depth image -> pallet pose and fork pockets (the camera pipeline).
 
-Each stage is a small function that can be tested on its own, and
-`test/test_perception.py` has a test per function using synthetic pallet clouds
-with known answers. Run them with:
+`estimate_pallet` runs the stages in order:
 
-    cd pallet_approach && python -m pytest test/test_perception.py -x -v
+    depth_to_points -> transform_points (optical -> base_footprint)
+    -> crop_to_roi -> voxel_downsample -> fit_plane_ransac (floor)
+    -> remove_floor -> cluster_points -> select_pallet_cluster
+    -> fit_front_face -> find_pockets -> PalletEstimate
 
-The pipeline, which is just `estimate_pallet` calling the others in order:
-
-    depth image (32FC1, metres)
-      -> depth_to_points        back-projection with the camera intrinsics
-      -> transform_points       camera optical frame -> base_footprint
-      -> crop_to_roi            throw away everything that cannot be the pallet
-      -> voxel_downsample       one point per 2 cm cube, for speed
-      -> fit_plane_ransac       find the floor
-      -> remove_floor           keep what stands on it
-      -> cluster_points         separate objects from each other
-      -> select_pallet_cluster  pick the one that looks like a pallet
-      -> fit_front_face         the vertical plane facing the robot
-      -> find_pockets           the two gaps in that face
-      -> PalletEstimate
-
-Conventions, which are the single most common source of bugs here:
-
-* The camera optical frame has **z forward, x right, y down**.
-* The working frame is **`base_footprint`**: x forward, y left, z up. Not
-  `base_link` -- that is the chassis body frame 0.235 m up, where every height
-  would be a large negative offset. At ground level the numbers read as what
-  they are: pocket centre 0.050 above the floor, fork underside 0.030.
-* **base_footprint is not exactly on the floor.** Measured 2026-10-14, the real
-  floor is at z = -0.025 there: the URDF's base_footprint joint is 25 mm out
-  (its wheel geometry is right to 0.2 mm). So do not write `z > 0` anywhere and
-  call it "above the floor" -- fit the floor, then work relative to the fit.
-  That is why `remove_floor` and `find_pockets` both take the floor as an
-  argument rather than assuming it.
-* The measured transform is in docs/SYSTEM.md (`[0.390, 0.060, 0.373]` from
-  base_footprint, zero pitch). Never hard-code it: look it up from tf at the
-  image timestamp, because one link in the chain is republished at 58 Hz.
-* Intrinsics come from the camera_info message, not from a constant. The ZED
-  publishes rectified images with D = 0, so there is no undistortion step.
+Frames: camera optical is z forward, x right, y down; the working frame is
+`base_footprint` (x forward, y left, z up). The floor there is at about
+z = -0.025 (docs/SYSTEM.md), so heights are always measured from the fitted
+floor plane, never from z = 0. The camera transform comes from tf at the image
+stamp; intrinsics from camera_info (rectified, D = 0).
 """
 
 from __future__ import annotations
@@ -76,29 +49,9 @@ def depth_to_points(
     min_range: float = 0.4,
     max_range: float = 4.0,
 ) -> np.ndarray:
-    """Back-project a depth image into 3D points in the camera optical frame.
-
-    Concept: a depth image stores, for every pixel, how far away the surface it
-    sees is. A pixel on its own is just a direction; the depth value says how
-    far along that direction the surface sits. Undo the projection and you get
-    the 3D point.
-
-    Maths, for a rectified image (ours is, so no distortion terms):
-
-        Z = depth[v, u]
-        X = (u - cx) * Z / fx
-        Y = (v - cy) * Z / fy
-
-    Args:
-        depth: (H, W) float32 array of metres. Invalid pixels are NaN or inf.
-        fx, fy, cx, cy: intrinsics from the camera_info message.
-        stride: keep every Nth pixel in both directions. 1280x720 is 921k
-            points; stride 2 gives 230k, which is plenty and four times cheaper.
-        min_range, max_range: drop points outside this depth band.
-
-    Returns:
-        (N, 3) float array in the camera optical frame, finite values only.
-
+    """Back-project a depth image to (N, 3) points in the camera optical frame:
+    Z = depth[v, u], X = (u - cx) Z / fx, Y = (v - cy) Z / fy. Every `stride`th
+    pixel, finite depths within [min_range, max_range] only.
     """
 
     z = depth[::stride, ::stride].astype(np.float64)
@@ -120,27 +73,7 @@ def depth_to_points(
 
 
 def transform_points(points: np.ndarray, transform: np.ndarray) -> np.ndarray:
-    """Apply a 4x4 homogeneous transform to (N, 3) points.
-
-    Concept: a 4x4 transform packs a rotation and a translation together:
-
-        T = [ R  t ]      R is 3x3, t is 3x1
-            [ 0  1 ]
-
-    Applying it to a point is `R @ p + t`. The 4x4 form exists so that chaining
-    transforms is just matrix multiplication.
-
-    Here it carries points from the camera optical frame to `base_footprint`,
-    so `transform` is the one tf gives for base_footprint <- camera_optical.
-
-    Args:
-        points: (N, 3).
-        transform: (4, 4).
-
-    Returns:
-        (N, 3) in the target frame.
-
-    """
+    """Apply a 4x4 transform to (N, 3) points: R p + t."""
     rotation = transform[:3, :3]
     translation = transform[:3, 3]
     
@@ -156,15 +89,8 @@ def crop_to_roi(
     z_min: float,
     z_max: float,
 ) -> np.ndarray:
-    """Keep only the points inside an axis-aligned box in `base_footprint`.
-
-    Why first: it is the cheapest stage and it removes the ceiling, the walls,
-    the robot's own sensor box and anything behind the robot. Everything
-    downstream then runs on a fraction of the data. The defaults are in
-    params.yaml under `pallet_perception.roi`.
-
-    Returns:
-        (M, 3) subset of `points`.
+    """Keep the points inside an axis-aligned box in `base_footprint`
+    (`pallet_perception.roi`): the cheapest stage, so it runs first.
     """
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
 
@@ -177,19 +103,8 @@ def crop_to_roi(
 
 
 def voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
-    """Reduce to roughly one point per `voxel_size` cube.
-
-    Concept: divide space into a grid of cubes and keep one representative point
-    per occupied cube. Depth images oversample near surfaces, so this costs
-    almost no information while cutting the point count a lot -- and it makes
-    RANSAC and DBSCAN behave consistently regardless of how close the pallet is.
-
-    Keep the voxel well below the smallest thing you need to measure: the pocket
-    tolerance is 4 cm, so 2 cm is a reasonable choice.
-
-    Returns:
-        (M, 3), M <= N.
-
+    """About one point per `voxel_size` cube (2 cm, below the 4 cm pocket
+    tolerance), so RANSAC and clustering behave the same at any range.
     """
     if len(points) == 0:
         return points
@@ -199,20 +114,9 @@ def voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
     # merge the two cubes either side of zero into one.
     cube_index = np.floor(points / voxel_size).astype(np.int64)
 
-    # Flatten the three cube indices into ONE number per point, the way a 3D
-    # array is addressed in memory: (ix * ny + iy) * nz + iz. Two points get
-    # the same number exactly when they are in the same cube, so finding the
-    # distinct cubes becomes finding the distinct numbers in a plain 1D array.
-    #
-    # Why bother: `np.unique(cube_index, axis=0)` has to sort an (N, 3) array
-    # row by row, which NumPy does by viewing it as a structured dtype and
-    # falling back to a slow comparison sort. On a real frame -- 160k points --
-    # that version of this function took 110 ms, half the entire pipeline.
-    # Sorting one integer array instead takes 14 ms for the same answer, and
-    # the results are identical, not merely close (there is a test).
-    #
-    # Shifting by the minimum keeps the numbers small and positive; the span is
-    # the pipeline's ROI, a few metres, so a few hundred cubes per axis.
+    # One integer per cube, (ix * ny + iy) * nz + iz, so finding distinct cubes
+    # is a 1D unique: 14 ms on a real frame against 110 ms for
+    # np.unique(axis=0), with identical results (tested).
     base = cube_index.min(axis=0)
     span = (cube_index.max(axis=0) - base + 1).astype(np.int64)
     relative = cube_index - base
@@ -262,35 +166,10 @@ def fit_plane_ransac(
     rng: np.random.Generator | None = None,
     score_points: int | None = None,
 ) -> tuple[np.ndarray, float, np.ndarray]:
-    """Fit a plane with RANSAC and return (normal, offset, inlier_mask).
+    """RANSAC plane fit: (normal, offset, inlier_mask), with n . p + offset = 0.
 
-    Concept: least squares fits every point, so a single bad cluster drags the
-    answer off. RANSAC instead guesses: pick 3 random points, build the plane
-    through them, count how many other points lie within `distance_threshold`
-    of it, and keep the guess with the most supporters. Outliers never get a
-    vote because they never agree with each other.
-
-    Math: a plane is `n . p + d = 0` with `|n| = 1`. From three points,
-    `n = normalise(cross(p2 - p1, p3 - p1))` and `d = -n . p1`. The distance
-    from any point to the plane is then `|n . p + d|`.
-
-    Args:
-        points: (N, 3).
-        distance_threshold: how close counts as an inlier, metres. Set it near
-            the sensor noise at the working range.
-        iterations: how many random guesses.
-        rng: pass a seeded `np.random.default_rng(0)` in tests so results repeat.
-
-    Returns:
-        normal: (3,) unit vector.
-        offset: d, such that `normal . p + d = 0` on the plane.
-        inlier_mask: (N,) bool.
-
-        `Plane(normal, offset)` wraps the first two, and that is what the rest
-        of the pipeline wants -- `estimate_pallet` should build one here and
-        pass it on rather than reducing the floor to a single height.
-
-    
+    Planes through random point triples; the one with most points within
+    `distance_threshold` wins. Pass a seeded `rng` in tests.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -356,27 +235,9 @@ def remove_floor(
     floor: Plane,
     margin: float,
 ) -> np.ndarray:
-    """Drop every point within `margin` of the floor plane, and below it.
-
-    Note the plane is fitted, not assumed: in `base_footprint` the floor is at
-    about z = -0.025, not 0, and it moves with tyre compression and load. The
-    fit is what makes every height downstream correct regardless.
-
-    Why a margin rather than exactly the plane: the floor is not perfectly flat,
-    the depth has noise, and flying pixels at the pallet's bottom edge sit just
-    above the ground. A 3 cm margin removes those without eating into the
-    pocket openings, whose lower lip is 2.2 cm above the floor.
-
-    Careful: that margin is a real trade-off and you should be able to defend
-    it. Too small and the floor survives into the clustering stage and welds the
-    pallet to the ground; too large and you start deleting the bottom boards.
-
-    Takes the fitted `Plane`, not a height, and tests `floor.height_of(points)`
-    -- the perpendicular distance. See `Plane` for why that matters.
-
-    Returns:
-        (M, 3) points above the floor.
-
+    """Drop every point within `margin` of the fitted floor plane, or below it.
+    Heights are perpendicular distances to the fit (`Plane.height_of`); the margin
+    removes floor noise and edge pixels without eating into the pockets.
     """
     heights = floor.height_of(points)
     return points[heights > margin]
@@ -387,33 +248,9 @@ def cluster_points(
     eps: float,
     min_samples: int,
 ) -> np.ndarray:
-    """Group points into objects with DBSCAN. Returns a label per point.
-
-    Concept: DBSCAN grows a cluster from any point that has at least
-    `min_samples` neighbours within `eps`, then keeps absorbing the neighbours'
-    neighbours. Points with too few neighbours are labelled noise (-1). Unlike
-    k-means it does not need the number of clusters in advance, which is the
-    whole point here: we do not know how many objects are in front of the robot.
-
-    Once the floor is gone, objects standing on it are physically separated, so
-    this cleanly splits the pallet from boxes and walls.
-
-    Args:
-        points: (N, 3).
-        eps: neighbourhood radius, metres.
-        min_samples: minimum neighbours to be a core point.
-
-    Returns:
-        (N,) int array of labels; -1 is noise.
-
-    DBSCAN written on SciPy's C KD-tree (SciPy comes with scikit-learn, which
-    this used before): all neighbour pairs within eps in one call, core points
-    by counting, clusters as connected components of the core points, then
-    each border point joins a cluster it touches. Same clusters as
-    scikit-learn's DBSCAN; a border point touching two clusters may be given
-    to the other one, which DBSCAN's definition leaves open. 2x faster on real
-    frames (16 k points: 32 -> 16 ms, 2026-10-23). Open3D is deliberately not a
-    dependency on the Jetson (see docker/Dockerfile.jetson).
+    """DBSCAN labels per point (-1 = noise): neighbours within `eps`, core points
+    with at least `min_samples`. Built on SciPy's KD-tree (same clusters as
+    scikit-learn's, a border point touching two may go to either; twice as fast).
     """
     if len(points) == 0:
         return np.empty(0, dtype=int)
@@ -474,24 +311,9 @@ def pallet_candidates(
     widths: tuple[float, ...] = (),
     max_height: float | None = None,
 ) -> list[np.ndarray]:
-    """Every cluster that could be a pallet, nearest first.
-
-    This is the gate that stops the system hallucinating pallets out of boxes
-    and table legs. Judge each cluster on geometry only -- no learned model, as
-    the whole project insists:
-
-    * its height above the floor should be close to `pallet_height` (0.145 m):
-      no lower than `size_tolerance` allows, and no higher than `max_height`
-      when one is given (D76: empty pallets only, for now);
-    * its footprint should be close to `pallet_width` x pallet length;
-    * it should be the nearest such cluster to the robot;
-    * it needs enough points to fit a face to.
-
-    Returns:
-        a list of (M, 3) clusters, nearest first; empty if nothing qualifies.
-        Nothing is a perfectly good answer -- it becomes NO_PALLET.
-
-    TODO: implement.
+    """Every cluster that could be a pallet, nearest first: height near
+    `pallet_height` (and under `max_height` when given, D76), footprint near the
+    pallet's, enough points for a face. Empty means NO_PALLET.
     """
     candidates = []
  
@@ -504,12 +326,8 @@ def pallet_candidates(
         if len(cluster) < min_points:
             continue
  
-        # Check 2: the height of a pallet. At least ~pallet height, and -- D76
-        # -- not much more. Without the upper bound "taller is fine (it may
-        # carry a load)" let anything tall with one pallet-length side
-        # through: measured 2026-10-23, a partition panel standing edge-on
-        # (top 0.82 m, 0.76 m long) was nearer than the pallet (top 0.14 m)
-        # and won every frame. Loaded pallets need their own rule.
+        # Check 2: pallet height, and not much more (D76: an edge-on partition
+        # panel won every frame without the upper bound).
         if floor is not None:
             height = floor.height_of(cluster).max()
         else:
@@ -519,24 +337,15 @@ def pallet_candidates(
         if max_height is not None and height > max_height:
             continue
  
-        # Check 3: the right width. The pallet may be turned, so measuring the
-        # plain y-extent would be wrong. Instead find the cluster's own two
-        # horizontal directions (SVD on x, y, as in the plane fit) and measure
-        # its size along each. Depending on what the camera sees, that is
-        # (front face width, small) or (deck length, front face width), so it
-        # is enough that ONE of the two sizes matches the pallet width.
+        # Check 3: width along the cluster's own horizontal axes (yaw-
+        # invariant); it is enough that one of the two matches.
         xy = cluster[:, :2]
         centred = xy - xy.mean(axis=0)
         _, _, vt = np.linalg.svd(centred, full_matrices=False)
         along_axes = centred @ vt.T                     # coordinates along both axes
         extents = along_axes.max(axis=0) - along_axes.min(axis=0)
-        # Match against EVERY face the pallet could be presenting, not just the
-        # one we expect. This gate runs before the side is known -- it has to,
-        # since classification needs a cluster to work on -- so gating on the
-        # expected side's width alone throws away pallets that are merely
-        # turned. Measured on pallet_s_129_45: a pallet at 45 deg gives extents
-        # that match neither nominal cleanly and was rejected outright, so the
-        # AMBIGUOUS path it exists to test could never be reached.
+        # Against every face the pallet could present: the side is not known
+        # yet, and a turned pallet must still reach classification.
         possible_widths = widths if widths else (pallet_width,)
         width_ok = any(
             np.any(np.abs(extents - possible) <= possible * size_tolerance)
@@ -563,22 +372,10 @@ def fit_front_face(
     max_facing_angle: float = np.radians(60),
     min_inliers: int = 20,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Fit the pallet's front face: the vertical plane facing the robot.
-
-    Concept: of the pallet's surfaces, the one we care about is the face the
-    forks enter. Reuse `fit_plane_ransac` on the cluster, then check the plane
-    is nearly vertical (its normal nearly horizontal) and nearly facing the
-    robot. A fit that comes back tilted is usually the top deck, or the floor
-    leaking through the margin.
-
-    Returns:
-        normal: (3,) unit normal, flattened later by `approach.outward_normal`.
-        centroid: (3,) centre of the inlier points.
-        inlier_mask: (N,) bool over `points`.
-        Or None if no acceptable face was found.
-
-    "Nearly vertical" means `abs(normal[2])` is small: the normal has almost
-    no z component, bounded by `max_tilt_from_vertical`.
+    """The pallet's front face: an upright plane facing the robot, from RANSAC on
+    the cluster (two points define an upright plane, so the top deck cannot win).
+    Returns (normal, centroid, inlier_mask) or None. Upright = |normal z| within
+    `max_tilt_from_vertical`.
     """
     if rng is None:
         rng = np.random.default_rng()
@@ -639,20 +436,7 @@ def fit_front_face(
 
 
 def face_yaw(normal: np.ndarray) -> float:
-    """The face's heading: the angle of its normal in the ground plane.
-
-    Maths: project the normal onto the ground plane and take
-    `atan2(normal[1], normal[0])`. That is the whole conversion from "a plane
-    in 3D" to "the one angle the controller needs".
-
-    A plane normal is enough to recover yaw; pitch and roll are not
-    recoverable from a single vertical plane.
-
-    Returns:
-        radians.
-
-    TODO: implement.
-    """
+    """The face normal's heading in the ground plane: atan2(n_y, n_x), radians."""
     return float(np.arctan2(normal[1], normal[0]))
 
 
@@ -670,36 +454,14 @@ def find_pockets(
     opening_bottom: float = 0.0,
     frame_margin: float = 0.05,
 ) -> tuple[Pocket, ...]:
-    """Find the fork pockets as gaps in the face, left to right.
+    """The fork pockets as gaps in the face, left to right as the robot sees them.
 
-    Concept: the pockets are the places where the face is *missing*. On a EUR
-    pallet seen from the 800 mm side, at pocket height you see block, gap,
-    block, gap, block. So:
-
-    1. Take the face points in a band around `pocket_center_height` (0.072 m
-       above the floor), selected with `floor.height_of(points)` -- the
-       perpendicular distance to the fitted floor, not a z-coordinate. That is
-       what makes the measurement immune to the camera's extrinsic error; see
-       `Plane`. It also means the band follows a sloping floor instead of
-       drifting off the pockets at one end of the pallet.
-    2. Express them in a 2D frame on the face: one axis along the face, one up.
-       Along-face coordinate for a point p is `dot(p - centroid, along)` where
-       `along = cross(up, normal)`.
-    3. Histogram the along-face coordinate. Occupied bins are blocks; runs of
-       empty bins between blocks are pockets.
-    4. Keep runs whose width is between `min_gap_width` and `max_gap_width`,
-       and measure each one's centre, width and vertical extent.
-
-    The nominal answers for an EPAL 1 pallet are in params.yaml: two pockets,
-    0.2275 m wide, 0.100 m high, centres 0.3725 m apart. Those are what to
-    compare against -- not what to assume. If your gap analysis has to be told
-    the answer to find it, it will not survive a damaged pallet.
-
-    Returns:
-        pockets ordered left to right as the robot sees them. Fewer than two is
-        a valid outcome and becomes a NO-GO with a reason.
-
-    TODO: implement.
+    Points in a band around `pocket_center_height` above the fitted floor
+    (perpendicular distance), projected along the face and histogrammed: occupied
+    bins are blocks, runs of empty bins between `min_gap_width` and
+    `max_gap_width` are pockets, each with its centre, width and height. Fewer
+    than two is a valid result (a NO-GO with a reason). Nominals are in
+    params.yaml's `pallet.sides`; they are compared against, never assumed.
     """
     if len(face_points) == 0:
         return ()
@@ -770,23 +532,9 @@ def find_pockets(
         above = gap_heights[gap_heights > pocket_center_height]
         top = above.min() if len(above) else np.nan    # nothing above: unknown
 
-        # The opening's LOWER edge is not observable on this pallet, from
-        # either face, so it is taken from the known geometry rather than from
-        # the points:
-        #
-        #   - short face: the opening starts at the floor. There is no lower
-        #     edge to see -- the floor runs continuously into the pocket.
-        #   - long face: the opening starts on a 20 mm bottom board, and
-        #     `remove_floor` has already deleted everything within the 0.03 m
-        #     floor margin, so the board's top edge went with it.
-        #
-        # So `opening_bottom` is the side's nominal (0.000 short, 0.020 long)
-        # and the measured quantity is the opening's TOP edge. Measuring down
-        # from the top to a known floor is the honest version of what the old
-        # `bottom = 0.0` fallback was doing by accident -- right for the short
-        # face, 20 mm short for the long one. If the lower edge ever has to be
-        # measured, the floor margin has to come down first (2.4 mm of floor
-        # RMS would allow ~0.015), and that is a change to argue for with data.
+        # The opening's lower edge is not observable (the floor on the short
+        # face; a 20 mm board inside remove_floor's margin on the long one), so
+        # it is the side's nominal and the measured quantity is the TOP edge.
         bottom = below.max() if len(below) else opening_bottom
         pocket_height = top - bottom
         center_height = (0.5 * (top + bottom) if np.isfinite(top)
@@ -798,14 +546,9 @@ def find_pockets(
                   + s_center * along
                   + (center_height - floor.height_of(face_centroid)) * up)
 
-        # D62 (Athreya, 2026-10-22): each pocket gets its OWN depth -- the
-        # median distance from the fitted plane of the wood framing it (the
-        # blocks either side and the deck above, within `frame_margin` of the
-        # opening; the opening itself is empty). Without this both centres sit
-        # on the one fitted plane and the line through them is just that
-        # plane's direction, which RANSAC re-draws every frame (+-2.3 deg in
-        # the sim). With it, the line through the two pockets is measured from
-        # the pallet's own structure, and that line is the pallet's direction.
+        # D62: each pocket gets its own depth, the median distance from the
+        # plane of the wood framing it, so the line through the two pockets
+        # measures the pallet's direction instead of the RANSAC plane's.
         near = np.abs(s - s_center) <= width / 2 + frame_margin
         if np.count_nonzero(near) >= 10:
             depth = float(np.median((face_points[near] - face_centroid) @ face_normal))
@@ -834,16 +577,9 @@ def face_axis(face_normal: np.ndarray, floor: Plane) -> np.ndarray:
 
 def face_extent(face_points: np.ndarray, face_normal: np.ndarray,
                 face_centroid: np.ndarray, floor: Plane) -> float:
-    """How wide the visible face is, measured along the face itself.
-
-    Along the face, not along y: a turned pallet's y-extent is its true width
-    times cos(yaw), which would read a square-on long face and a turned long
-    face as different objects.
-
-    This is a LOWER BOUND on the real width, never an upper one. Occlusion, the
-    ROI crop and the image edge can all cut a face short, and nothing can make
-    it look wider than it is. That asymmetry is why `classify_side` treats it as
-    confirmation only (D22).
+    """The visible face's width, measured along the face (so it does not shrink
+    with yaw). A lower bound only: occlusion and the image edge shorten it,
+    which is why `classify_side` uses it as confirmation (D22).
     """
     if len(face_points) == 0:
         return 0.0
@@ -898,45 +634,12 @@ def classify_side(
     sides: dict,
     classify: dict,
 ) -> tuple[str, dict]:
-    """Which face of the pallet is the robot looking at?
+    """Which face the robot is looking at: (side name or AMBIGUOUS, detail).
 
-    Concept: the two faces of this pallet are different structures, not two
-    sizes of one thing (D19), so four things differ between them. Two of them
-    the pipeline already measures:
-
-        =================  ==========  =========  ======
-                            short       long       ratio
-        face width          0.795       1.195      1.50
-        pocket spacing      0.365       0.525      1.44
-        =================  ==========  =========  ======
-
-    **Pocket spacing decides; face width only confirms.** That is the opposite
-    of the obvious choice, and the reason is that the two signals fail
-    differently. Width is a lower bound -- occlusion, the ROI crop and the image
-    edge all shorten it, nothing lengthens it -- so a 0.9 m reading could be a
-    complete short face or a clipped long one, and there is no way to tell from
-    the number. Spacing is a difference between two centres, so a clipped face
-    either yields both pockets or fewer than two, and fewer than two is a case
-    this function is told about rather than one it can be fooled by. Spacing
-    also separates the faces by 160 mm against a measured error of about 13 mm.
-
-    Both signals must agree. Disagreement means something is wrong with the
-    scene -- a damaged pallet, a load overhanging the face, two pallets pushed
-    together -- and guessing between two sets of nominals that differ by 160 mm
-    is how forks end up driven at the wrong geometry.
-
-    Args:
-        pocket_spacing: distance between the two pocket centres along the face,
-            or None if fewer than two pockets were found.
-        face_width: the visible face width from `face_extent`.
-        sides: {name: geometry}, as params.yaml's `pallet.sides`.
-        classify: tolerances, as params.yaml's `pallet.classify`.
-
-    Returns:
-        (name, detail). `name` is a key of `sides`, or `AMBIGUOUS`. `detail`
-        carries the evidence -- what each signal picked, and how far each side
-        was from each measurement -- so a refusal can be explained after the
-        run instead of being a bare "no".
+    Pocket spacing decides (0.365 vs 0.525 m, ~13 mm measured error) and face
+    width (0.795 vs 1.195 m, a lower bound) only confirms (D19, D22). If they
+    disagree the answer is AMBIGUOUS: guessing between nominals 160 mm apart is
+    how forks are driven at the wrong geometry. `detail` carries the evidence.
     """
     spacing_tol = classify['spacing_tolerance']
     width_tol = classify['width_tolerance']
@@ -1009,30 +712,11 @@ def estimate_pallet(
     stamp: float = 0.0,
     decision_points: dict | None = None,
 ) -> PalletEstimate | None:
-    """Run the whole pipeline on one depth frame. None means "no pallet here".
+    """The whole pipeline on one depth frame; None means no pallet.
 
-    This is the only function the ROS node calls. Keep it as a straight
-    sequence of the stages above with no cleverness of its own: when something
-    goes wrong on the robot you want to be able to log and plot every
-    intermediate result, and that is much easier if this function is boring.
-
-    Args:
-        depth: (H, W) float32 metres.
-        intrinsics: {'fx', 'fy', 'cx', 'cy'} from camera_info.
-        camera_to_base: (4, 4) base_footprint <- camera_optical, from tf at
-            `stamp`. Note the target frame: ground level, not the body frame.
-        params: the `pallet_perception` block of params.yaml, as a dict.
-        decision_points: optional dict, filled in with `cluster` (the selected
-            pallet cluster) and `scene` (floor-removed points in a box around
-            the face). Two GO/NO-GO rules need points rather than an estimate
-            -- `check_overhang` and `check_pocket_clearance` -- and both treat
-            missing data as a NO-GO rather than a pass, so without this the
-            coordinator refuses every run. The node publishes what lands here;
-            the coordinator passes it to the rules.
-        stamp: image timestamp in seconds, copied into the estimate.
-
-    Returns:
-        PalletEstimate, or None.
+    `camera_to_base` is base_footprint <- camera optical from tf at `stamp`;
+    `params` the `pallet_perception` block. `decision_points`, if given, is
+    filled with `cluster` and `scene` for the GO/NO-GO point rules (D61, D63).
     """
     rng = np.random.default_rng(params.get('seed'))
  
@@ -1067,12 +751,8 @@ def estimate_pallet(
  
     # 6-8. Delete the floor, group into objects, pick the pallet.
     points = remove_floor(points, floor, params['floor_margin'])
-    # Only points that could belong to an accepted cluster are clustered. A
-    # cluster whose top is above pallet_height + max_height_above_pallet is
-    # rejected (D76), and cutting 0.10 m above that still leaves any taller
-    # object with a top above the ceiling, so it is rejected exactly as before
-    # -- while walls, panels and furniture mostly drop out of the costliest
-    # step. `points` itself stays whole: the GO/NO-GO scene below uses it.
+    # Cluster only below the D76 ceiling (+0.10 m): taller objects are still
+    # rejected, and walls mostly drop out of the costliest step.
     ceiling = params['pallet_height'] + params['max_height_above_pallet'] + 0.10
     low = floor.height_of(points) < ceiling
     labels = np.full(len(points), -1, dtype=int)
@@ -1123,12 +803,8 @@ def _estimate_from_cluster(pallet, points, floor, params, rng, stamp, decision_p
     yaw = face_yaw(face_normal)
 
     if decision_points is not None:
-        # The cluster, for the overhang rule, and a BOX AROUND THE FACE for the
-        # pocket clearance rule -- not the whole scene. The clearance boxes are
-        # `pocket_clearance_depth` deep and no wider than a pocket, so points
-        # outside this box cannot affect either rule, and publishing the whole
-        # ROI instead would be hundreds of kilobytes a second for information
-        # nothing reads.
+        # The cluster for the overhang rule, and a box around the face for the
+        # clearance rule; nothing outside it affects either.
         decision_points['cluster'] = pallet
         lateral = max([cfg['face_width'] for cfg in params.get('sides', {}).values()]
                       or [params['pallet_width']]) / 2.0 + 0.20
@@ -1139,15 +815,9 @@ def _estimate_from_cluster(pallet, points, floor, params, rng, stamp, decision_p
                      & (floor.height_of(points) < 0.60))
         decision_points['scene'] = points[near_face]
  
-    # 11. The holes. Fewer than two is NOT "no pallet": the estimate is still
-    # returned, and go_nogo turns it into a NO-GO with a reason.
-    #
-    # find_pockets works on a SLAB around the face plane, not on the plane's
-    # RANSAC inliers. The real pallet's front surface spans 26 mm from the deck
-    # boards to the lower blocks, so a 15 mm inlier band samples mostly deck and
-    # starves the gap analysis -- it found one pocket instead of two on the
-    # first real bag (D5). The pockets stay empty inside the slab because they
-    # are deep.
+    # 11. The holes. Fewer than two still returns the estimate (go_nogo says
+    # NO-GO). Searched in a slab around the face, not the plane's inliers: the
+    # front surface spans 26 mm, so the inliers are mostly deck (D5).
     distance_from_face = (pallet - face_centroid) @ face_normal
     face_slice = pallet[np.abs(distance_from_face) < params['pocket_slab_half_depth']]
 

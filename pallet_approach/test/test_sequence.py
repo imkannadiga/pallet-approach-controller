@@ -21,7 +21,6 @@ Passing here is the offline replay required before anything drives;
 it is not a substitute for lab session B.
 """
 
-import math
 import pathlib
 import sys
 

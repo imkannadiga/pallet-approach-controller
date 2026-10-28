@@ -1,19 +1,9 @@
 """Executing one drive request: the controller's logic, without ROS.
 
-`closing.py` and `insertion.py` hold the control laws; this holds the small
-amount of state that running them needs -- which mode is in progress, how far
-it has travelled, which phase the servo is in, the insertion plan -- and
-decides, each frame, what the base should be told.
-
-It is a separate file from `nodes/controller_node.py` for the same reason
-`coordinator.py` is separate from `nodes/coordinator_node.py`: the join between
-the sequence and the control laws is where the interesting mistakes live, and
-testing it through a ROS node means testing it on a robot. With this split, the
-whole virtual pickup runs at a desk against `test/simulate.py`, and the node is
-a shell that subscribes, publishes and calls `step`.
-
-Everything comes in as arguments: the geometry for this frame, the LiDAR cloud
-in `base_footprint`, the odometry travel. Nothing is read from a clock.
+Holds the state running the control laws needs (mode, travel, servo phase,
+insertion plan) and decides each frame what the base is told. Everything
+comes in as arguments, nothing from a clock, so the whole pickup runs at a
+desk; `nodes/controller_node.py` subscribes, publishes and calls `step`.
 """
 
 from __future__ import annotations
@@ -61,18 +51,11 @@ class Result:
 
 
 def executor_params(get) -> dict:
-    """Everything `DriveExecutor` reads, from parameter names.
+    """Everything `DriveExecutor` reads, by params.yaml name via `get(name)`.
 
-    `get(name)` returns one parameter by its params.yaml name, such as
-    'closing.k_cross'. The controller node passes its own get_parameter; the
-    tests pass a lookup into params.yaml and build a real DriveExecutor from the
-    result, so a key the executor reads and this function forgets fails at a
-    desk instead of inside a lifecycle callback. That is not hypothetical: on
-    2026-10-20 the Gazebo sim found `divergence_frames` and
-    `min_divergence_growth` declared, set in params.yaml, and never passed on,
-    so the controller raised KeyError on every configure -- which rclpy's
-    lifecycle swallows, leaving only "could not configure the managed nodes"
-    on the coordinator.
+    The tests build a real executor from params.yaml through this, so a key it
+    forgets fails at a desk rather than as a KeyError swallowed by an rclpy
+    lifecycle callback (which the sim found on 2026-10-20).
     """
     def group(prefix, keys):
         return {key: get(f'{prefix}.{key}') for key in keys}

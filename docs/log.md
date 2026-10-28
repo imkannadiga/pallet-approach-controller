@@ -1194,3 +1194,7 @@ beats the launch file's parameter dict, so the node still read no overlay and
 the sim kept the real ZED's D103 correction. The launch now passes both paths
 with `-p`, which overrides every file. The next sim run, and the robot, will
 say whether fused mode reaches GO.
+
+**Clean-up.** Docstrings and comments across the package and tools cut to
+what the code does and why (decision refs, one-line measured facts); stale
+EPAL numbers and the old `GO` outcome removed from them. No behaviour change.

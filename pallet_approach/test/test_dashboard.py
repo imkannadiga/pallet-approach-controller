@@ -7,7 +7,6 @@ module docstring says they mean. `cv2` is imported lazily inside `render`, as
 `fork_overlay.py` does, so these skip cleanly where it is absent.
 """
 
-import math
 
 import numpy as np
 import pytest

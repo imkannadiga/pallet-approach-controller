@@ -1,28 +1,17 @@
 #!/usr/bin/env python3
-"""Pull frames out of a rosbag without needing ROS installed.
+"""Pull frames out of a rosbag without ROS (reads it with `rosbags`).
 
-Images are just arrays, and this tool stays useful for the whole project: every offline debugging session starts by getting one frame
-out of a bag and looking at it.
-
-It uses the `rosbags` library, which reads bag files directly, so it runs on
-your laptop in a plain virtualenv with no ROS and no ZED SDK.
-
-    python3 -m venv ~/.venvs/pallet && . ~/.venvs/pallet/bin/activate
-    pip install rosbags numpy pyyaml opencv-python matplotlib open3d
     python3 tools/bag_to_frames.py ~/bags/pallet_2m_0deg --out /tmp/frames
+    python3 tools/bag_to_frames.py ~/bags/pallet_2m_0deg --list
 
-Use a venv, not the system python: your workstation has ROS Iron on the path and
-a conda python 3.13, and importing cv_bridge in that mix fails with a NumPy ABI
-error (docs/SYSTEM.md).
+Run in a venv (rosbags numpy pyyaml opencv-python), not the workstation's
+system Python, where ROS Iron and conda break cv_bridge (docs/SYSTEM.md).
 
 Outputs, per frame index:
     depth_000000.npy    (H, W) float32 metres, exactly as recorded
     image_000000.png    the rectified left image
     camera_info.yaml    fx, fy, cx, cy, distortion, frame_id -- written once
     index.csv           frame index, topic, timestamp, shape
-
-Listing what is in a bag:
-    python3 tools/bag_to_frames.py ~/bags/pallet_2m_0deg --list
 """
 
 from __future__ import annotations

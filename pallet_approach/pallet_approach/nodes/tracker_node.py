@@ -1,29 +1,11 @@
-"""Pallet tracker: the memory perception does not have.
+"""Pallet tracker: one-frame estimates in, a track with a confidence and a LiDAR
+cross-check out. The coordinator reads this, not perception.
 
-Subscribes to one-frame estimates and publishes a track with a confidence and a
-LiDAR cross-check. The coordinator reads this node, not perception, so the
-"several consistent frames before anything moves" rule is enforced in one
-place instead of being re-implemented in the state machine.
-
-Two things are deliberate about the plumbing.
-
-**The LiDAR cloud is decoded lazily.** The raw message is kept and unpacked
-only when an estimate arrives, so a 65 536-point cloud is decoded at
-perception's 5 Hz rather than the Ouster's 10 Hz, and the cross-check compares
-the cloud with the estimate closest to it in time. A cloud older than
-`lidar.max_cloud_age` is treated as no LiDAR at all rather than compared
-anyway.
-
-**Odometry is looked up at the estimate's stamp**, not taken as the latest.
-At 50 Hz and 0.10 m/s the difference is a couple of millimetres, which does not
-matter -- but the tracker's whole argument for comparing positions in `odom` is
-that the robot's motion has been taken out, and taking out the motion at the
-wrong instant quietly undoes it. If no odometry sample is close enough to the
-stamp, the frame is rejected with that as the reason.
-
-The LiDAR subscription is BEST_EFFORT: `/ouster/points` publishes BEST_EFFORT
-and a RELIABLE subscriber receives nothing at all from it (measured
-2026-10-15).
+The LiDAR cloud is kept raw and decoded only when an estimate arrives; a
+cloud older than `lidar.max_cloud_age` counts as no LiDAR. Odometry is looked
+up at the estimate's stamp (otherwise the robot's motion is removed at the
+wrong instant); with no sample close enough the frame is rejected. The LiDAR
+subscription is BEST_EFFORT: a RELIABLE one receives nothing from the Ouster.
 """
 
 from __future__ import annotations

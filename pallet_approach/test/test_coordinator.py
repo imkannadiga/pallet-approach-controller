@@ -45,7 +45,6 @@ def params(yaml_params):
     it needs carried through as sub-dicts."""
     shared = yaml_params['/**']['ros__parameters']
     block = yaml_params['coordinator']['ros__parameters']
-    controller = yaml_params['approach_controller']['ros__parameters']
     closing = dict(shared['closing'])
     # The scenarios below are written in metres against a 3.0 m run-up floor
     # (2.7 m "too close", 3.2 m "far enough"). They test the machine's logic,

@@ -1,34 +1,12 @@
 """Draw the virtual forks and detected pockets on the rectified left image.
 
-A plain node, not a lifecycle one: it publishes an image topic and nothing it
-does can move the robot, so there is no reason to gate it. It also runs while
-idle, which is what makes it usable as a calibration check -- point the robot at
-a pallet with nothing else running and look at whether the forks line up.
+A plain node: it cannot move the robot, and running while idle makes it a
+calibration check. The fork height comes from the virtual fork simulator.
 
-The drawing itself is in `fork_overlay.py`.
-
-**The published image is 640x360 at 5 Hz, and that is not a preference.**
-Measured 2026-10-13: one subscriber to a raw ZED image topic from the main PC
-dropped the whole ZED node to about 0.2 Hz, and even compressed full-rate
-images were unusable remotely. So anything meant to be looked at from another
-machine is a separate, downscaled, low-rate topic (docs/SYSTEM.md, the
-network rule). This is that topic, and it is the only image this stack publishes.
-
-It renders at FULL resolution and downscales afterwards, rather than drawing on
-a downscaled image. Drawing small would mean scaling the intrinsics, which is
-one more place to get a factor of two wrong -- in the one tool whose whole job
-is to make a millimetre-scale error visible. A 16.8 px fork-to-pocket gap is
-still 8.4 px after halving, which is plenty to see.
-
-The fork height comes from the virtual fork simulator, so the lowering and the
-lift are visible on the image rather than only in a log line.
-
-This was "the only image this stack publishes" until 2026-10-19. It no longer
-is: `dashboard_node.py` subscribes to this one, adds a HUD of everything that
-is NOT face geometry (health, the tracker, the controller, the forks, why),
-and republishes a second, taller image on `/dashboard/image`. That one, not
-this one, is what `video_stream.launch.py` points a browser at by default --
-see `docs/SYSTEM.md`. This node's own job is unchanged.
+Publishes 640x360 at 5 Hz, per the network rule (docs/SYSTEM.md). It renders
+at full resolution and downscales afterwards, so the intrinsics are never
+rescaled. `dashboard_node.py` adds the HUD on top and is what the browser
+stream shows by default.
 """
 
 from __future__ import annotations
@@ -58,24 +36,9 @@ from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matr
 
 SENSOR_QOS = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
 
-# Same constant and the same detection perception_node uses (D-clock, 2026-
-# 10-15): a frame stamped more than this many seconds from our own clock is on
-# a different clock entirely, and a STAMPED tf lookup against it fails as
-# "extrapolation into the past" with a plausible-looking requested time -- an
-# error that names tf rather than the clock. Reproduced here 2026-10-19:
-# fork_overlay asked for base_footprint <- zed2_left_camera_frame_optical at
-# 972.7 s (an uptime-looking stamp) while the tf buffer's earliest data was at
-# 1.79e9 (Unix epoch), ~1.79 billion seconds apart.
+# As in perception_node: a stamp this far from our clock is on another clock,
+# and a stamped tf lookup against it fails as "extrapolation into the past".
 CLOCK_MISMATCH_SECONDS = 5.0
-
-# Coordinator state -> the key in the fork_overlay.colors parameter block.
-# Grouped by what the robot is doing rather than one colour per state: looking
-# (grey), driving towards the pallet (amber), committed with the forks in or
-# going in (green), and stopped because something was wrong (red). Moved to
-# dashboard.py (STATE_COLOR_KEYS) on 2026-10-19, imported back here under the
-# old name, so the HUD panel on /dashboard/image can use the exact same
-# mapping for its own state text without this file changing anything it
-# draws.
 
 
 class ForkOverlayNode(Node):
@@ -156,18 +119,7 @@ class ForkOverlayNode(Node):
         for name, default in (
             ('colors.idle', [160, 160, 160]), ('colors.detecting', [160, 160, 160]),
             ('colors.approaching', [0, 200, 255]),
-            # 'inserting' was missing here until 2026-10-19: get(f'colors.
-            # inserting') in _params() below reads it on every INSERTING or
-            # LIFTING frame, and since that read used an f-string the static
-            # declared/read scraper (test_params.py) could not see it either --
-            # so the bug was invisible to the one test built to catch exactly
-            # this. It raised ParameterNotDeclaredException, caught by this
-            # node's own "an overlay bug must not take the node down" guard,
-            # which means the overlay silently stopped updating for the two
-            # states where its colour change matters most. Fixed two ways:
-            # the missing declaration, and switching _params() to one
-            # explicit get() call per key so the scraper can never miss this
-            # again.
+            # One literal get() per key in _params(), so test_params sees every read.
             ('colors.inserting', [128, 255, 0]),
             ('colors.go', [0, 200, 0]), ('colors.no_go', [0, 0, 220]),
         ):
@@ -237,28 +189,11 @@ class ForkOverlayNode(Node):
             'frames.camera_optical').value
         ground_frame = self.get_parameter('frames.ground').value
 
-        # A gross epoch mismatch (camera and /tf on different clocks
-        # entirely -- measured 2026-10-15, a 1.79e9 s gap) and ordinary
-        # processing lag (measured 2026-10-19, a steady ~0.4 s gap once the
-        # video streamers were added, well inside frames.tf_timeout's 0.15 s
-        # budget to wait it out) look identical from here: both end with a
-        # STAMPED lookup_transform raising "extrapolation into the
-        # past"/"into the future". So this does not try to pre-classify which
-        # one happened from the size of the gap -- it tries the stamped
-        # lookup, which is the accurate one, and only falls back to the
-        # latest available transform if that specific lookup actually fails,
-        # for whatever reason.
-        #
-        # Unconditional, unlike perception_node's frames.tf_fallback_to_latest
-        # (params.yaml: "a BENCH workaround... must stay false for anything
-        # that drives"): this node cannot drive anything, it only publishes an
-        # image, so a stale-by-a-fraction-of-a-second overlay is a worse
-        # picture, never an unsafe one -- there is no reason to make the
-        # operator opt in. It is still worth KNOWING when this happens, and
-        # worth knowing separately whether it is a one-off bit of lag or a
-        # genuine clock-epoch split, since only the second one matters to
-        # perception and the closing loop -- hence the two different log
-        # lines below rather than one.
+        # Try the stamped lookup; if it fails (lag or a clock-epoch split, which
+        # look alike here), fall back to the latest transform. Unconditional,
+        # unlike perception's bench-only fallback: this node only draws. The
+        # two causes are logged separately, since only the epoch split matters
+        # to perception.
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         # NO wait (2026-10-22). This node only draws, and it already falls back
         # to the latest transform; waiting up to frames.tf_timeout per frame

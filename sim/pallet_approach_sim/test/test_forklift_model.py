@@ -2,7 +2,6 @@
 what Gazebo needs to drive and lift it."""
 
 import json
-import math
 import pathlib
 import xml.etree.ElementTree as ET
 

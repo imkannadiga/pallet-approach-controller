@@ -1,23 +1,10 @@
-"""What a velocity command is, and the three things every command passes through.
+"""Velocity commands and what every one of them passes through.
 
-This was the rotate-drive-rotate pose controller. Its control law
-(`compute_command`, `Phase`) went with the two-leg approach that used it, on
-2026-10-19 (D38): the robot no longer drives to a pose and turns, it servos
-onto the pocket centre line (`closing.py`) and drives straight on odometry for
-the reverse and the insertion (`insertion.py`). What remains here is what every
-one of those shares, and it is shared precisely so the safety properties are
-enforced in one place:
+1. `clamp_command`: nothing above the limits in params.yaml reaches the base.
+2. `ZERO` is a real, published command: the base has no command timeout.
+3. `RateLimiter` bounds acceleration.
 
-1. Every command passes through `clamp_command`, so nothing above the limits in
-   params.yaml can ever reach the base.
-2. `ZERO` is a real command that gets published, not an absence of commands.
-   The base driver has no watchdog -- `ros2 param dump /scout` has no timeout
-   parameter at all -- so a stale non-zero command would keep the robot moving.
-3. `RateLimiter` bounds acceleration, so a jump in the estimate cannot become a
-   jerk at the wheels.
-
-No ROS: the node wrapper owns the clock, the odometry subscription and the
-publisher.
+The control laws live in `closing.py` and `insertion.py` (D38). No ROS.
 """
 
 from __future__ import annotations

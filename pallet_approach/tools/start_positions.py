@@ -1,24 +1,13 @@
 """The shared starting positions for the acceptance test (D96).
 
-One seed gives the same N starting poses for the Gazebo sim and for the real
-robot. Each pose is written two ways:
+One seed gives the same N poses for the sim (`face_x face_y face_yaw`, for
+`batch_runs.sh`) and for the real robot (tape `dL`, `dR`, `lat` in
+docs/bag_truth.yaml's convention). Seed 7 gives the ten poses
+`batch_runs.sh --random` always did.
 
-* the sim's `face_x face_y face_yaw` launch arguments, for `batch_runs.sh`;
-* the tape readings for the real pallet: `dL`, `dR` and `lat`, in
-  `docs/bag_truth.yaml`'s convention (metres, bumper to front corner, positive
-  lat = pallet to the left).
+base_footprint, robot at the origin; the face yaw is `-psi`, where `psi > 0`
+turns the pallet's left edge away (dL > dR).
 
-The formula is the one `batch_runs.sh --random` used before D96, so seed 7
-gives the same ten poses it always did.
-
-Geometry, base_footprint frame (x forward, y left). The robot sits at the
-origin. The face centre is at `(fx, fy)` and the face's normal points back at
-the robot. Its yaw `fyaw` is the rotation of the face, so `fyaw = -psi`, where
-`psi` is the heading error: the pallet appears turned by `psi`. `psi > 0`
-turns the pallet's left edge away from the robot, so `dL > dR`, the dataset's
-sign convention.
-
-Usage:
     python3 tools/start_positions.py --seed 7 --count 10
     python3 tools/start_positions.py --seed 7 --csv docs/starts_seed7.csv
 """

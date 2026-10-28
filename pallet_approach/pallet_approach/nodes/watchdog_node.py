@@ -1,39 +1,13 @@
-"""The watchdog: measures whether the stack is healthy, and stops the robot.
+"""The watchdog: reports whether the stack is healthy, and stops the robot.
 
-Two jobs, and they are deliberately in one node:
+1. Publishes `/health`, so the coordinator refuses (D12) or aborts (D9) runs.
+2. While a run is in progress, publishes zeros on twist_mux's safety input,
+   which outranks the controller and Nav2. This depends on neither the
+   coordinator being alive nor correct; the overlap is deliberate.
 
-1. **Report.** Publish `/health` at a steady rate so the coordinator can refuse
-   a goal when something is already wrong (D12) and abort a run when something
-   goes wrong partway through (D9).
-2. **Act.** While a run is in progress, publish a zero command on the safety
-   input of `twist_mux`, which outranks both the pallet controller and Nav2.
-
-Job 2 is the one that matters. The coordinator aborting a run is the normal
-path, and it depends on the coordinator being alive and correct. This node
-depends on neither: it watches the same sensors and drives the highest-priority
-input directly, so a coordinator that has wedged or died still ends up with a
-stationary robot. The two mechanisms overlap on purpose.
-
-Three design points worth defending:
-
-**It never subscribes to depth.** The camera's liveness is taken from
-`depth/camera_info`, which the ZED publishes in the same callback as the depth
-image and which is a few dozen bytes. Watching the 3.7 MB/frame image topic to
-read its timestamp would cost real memory bandwidth on the Jetson for
-information that arrives free next door. It also means this node obeys the
-network rule (docs/SYSTEM.md) by construction, wherever it
-runs.
-
-**The LiDAR subscription is BEST_EFFORT.** `/ouster/points` publishes
-BEST_EFFORT, and a RELIABLE subscriber receives *nothing at all* from it --
-measured 2026-10-15, which is how `tools/lidar_coverage.py` came to report an
-empty bag. A watchdog that silently sees no LiDAR would latch a stop on every
-run.
-
-**The stop latches.** A sensor that flickers in and out would otherwise produce
-a stutter of stop and go, which is worse than either. Once the stop fires it
-holds until the run ends, and the reason reaches the operator through
-`/health`.
+Camera liveness comes from `depth/camera_info`, never the depth image. The
+LiDAR subscription is BEST_EFFORT (a RELIABLE one receives nothing). The stop
+latches until the run ends, so a flickering sensor cannot stutter the robot.
 """
 
 from __future__ import annotations

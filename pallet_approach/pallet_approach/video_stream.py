@@ -1,29 +1,12 @@
 """Low-latency H.264 streaming of camera frames to MediaMTX (-> WebRTC in a browser).
 
-How it fits together:
+    VideoStreamer.push() -> appsrc -> scale/convert -> encoder -> RTSP
+        -> MediaMTX on the Jetson -> http://<jetson-ip>:8889/<path> (WebRTC)
 
-    ZED node --(local ROS topic, never over the network)--> VideoStreamer.push()
-        --> GStreamer: appsrc -> scale/convert -> H.264 encoder -> RTSP publish
-        --> MediaMTX on the Jetson (rtsp://localhost:8554/<path>)
-        --> browser on the laptop: http://<jetson-ip>:8889/<path>   (WebRTC)
-
-No ROS here: this module only turns numpy frames into a video stream, so it
-can be tested without a robot. The ROS node (nodes/video_streamer.py) feeds it.
-
-Encoders:
-* "nvenc": the Jetson's hardware H.264 encoder (AGX Orin has one). Almost no
-  CPU. Needs the NVIDIA GStreamer plugins inside the container.
-* "x264": software encoder. Works everywhere; fine for 720p at 15 fps.
-* "vp8": software VP8, only for viewer browsers that cannot decode H.264.
-* "auto": nvenc if its GStreamer element exists, otherwise x264.
-
-Latency choices, all deliberate:
-* a leaky queue of 1 frame after appsrc: if encoding falls behind, old frames
-  are dropped instead of piling up (a backlog is the main source of delay);
-* no B-frames, baseline profile: browsers decode it, and no frame waits for a
-  later one;
-* a keyframe every second: a viewer that joins, or loses a packet, recovers
-  within a second.
+No ROS; `nodes/video_streamer.py` feeds it. Encoders: "nvenc" (Jetson
+hardware), "x264", "vp8" (browsers without H.264), "auto" (nvenc if present).
+For latency: a leaky one-frame queue, no B-frames, baseline profile, a
+keyframe every second.
 """
 
 from __future__ import annotations
@@ -62,20 +45,10 @@ def nvenc_available() -> bool:
 def nvenc_properties(bitrate_kbps: int, keyframe_interval: int) -> dict:
     """The hardware encoder's tunable properties, as {name: value}.
 
-    Deliberately NOT baked into the gst-launch string the way the x264 and
-    vp8 properties are. `nvv4l2h264enc` wraps a V4L2 stateful encoder whose
-    exposed property set has changed across L4T releases -- measured
-    2026-10-19 on an AGX Orin, JetPack 6.2.2: `preset-level`, present and
-    required on older L4T (r32 / JetPack 4), does not exist on this element
-    build at all, and `gst_parse_launch` fails the WHOLE pipeline on the
-    first property name it does not recognise, crash-looping the node.
-    `VideoStreamer._start` applies these one at a time with a property-exists
-    check instead, after the pipeline is built, so a property this L4T build
-    does not have is skipped and logged rather than taking the stream down.
-
-    `control-rate=1` is CBR and `profile=0` is Baseline -- both int-coded
-    enums on this element rather than strings, which is a second thing worth
-    confirming per L4T build; logged, not asserted, for the same reason.
+    Applied one at a time with an exists-check after the pipeline is built, not
+    in the launch string: the property set changes across L4T releases
+    (`preset-level` is gone on JetPack 6.2.2) and an unknown name fails the
+    whole pipeline. `control-rate=1` is CBR, `profile=0` Baseline.
     """
     return {
         'bitrate': bitrate_kbps * 1000,

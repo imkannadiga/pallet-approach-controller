@@ -1,37 +1,19 @@
 #!/usr/bin/env python3
 """Measure every publisher's clock against this machine's, and against each other.
 
-Written after an afternoon of guessing at a timestamp problem from its
-symptoms. The symptoms -- "extrapolation into the past", an absurd estimate
-age, a ratio of 1.2458 derived by hand from two diagnostics messages -- each
-narrowed it a little and none of them settled it. This settles it, by measuring
-the one thing that matters directly: for every topic, how its header stamps
-advance relative to wall time, and where they sit relative to the system clock.
-
-Run it inside the container on the machine you care about:
+For each topic: how its header stamps advance relative to wall time (slope)
+and where they sit relative to the system clock (offset). Needs ROS; run it in
+the container on the machine in question.
 
     python3 tools/clock_audit.py                       # the usual suspects
     python3 tools/clock_audit.py --seconds 30
     python3 tools/clock_audit.py --topics /a /b /tf
     python3 tools/clock_audit.py --all                 # everything with a header
 
-What to look for, in the slope column:
+    slope   1.000 healthy; != 1 the stamps are computed, not read from a clock
+    offset  ~0 same epoch; large a different epoch (uptime clock, sim time)
 
-    1.000   healthy: that publisher's clock runs at the same rate as ours
-    != 1    its clock runs at a different RATE -- not an offset, not drift.
-            Nothing physical does this; it means the stamps are computed
-            rather than read from a clock.
-
-and in the offset column:
-
-    ~0      same clock, same epoch
-    large   different epoch (a steady/uptime clock, or sim time)
-
-Two publishers can only be compared in a stamped tf lookup if BOTH columns
-agree. A tf chain that mixes them cannot be resolved at any requested time,
-which is exactly the failure this was written for.
-
-ROS is needed, so this runs on the robot, not on a laptop.
+Two publishers can be combined in a stamped tf lookup only if both agree.
 """
 
 from __future__ import annotations

@@ -1,26 +1,10 @@
 """Safety rules: is it safe to insert the forks?
 
-This is the most important file in the project and the easiest one to get
-quietly wrong, because a bug here does not crash: it returns GO when it should
-not. The whole design follows from one asymmetry:
-
-    A false GO drives steel into a load. A false NO-GO wastes ten seconds.
-
-So every rule is written to fail closed. Missing data is a NO-GO. An estimate
-that disagrees with itself across frames is a NO-GO. A measurement outside
-tolerance is a NO-GO. The only way to reach GO is for every check to pass on
-evidence that is actually present.
-
-Each rule is a small function returning `(passed, reason)`. The reason is what
-the operator reads in the action result, so make it specific and quantitative:
-
-    "yaw 7.2 deg exceeds 5.0 deg limit"        good
-    "pallet misaligned"                        useless
-
-`evaluate` runs the rules in order and stops at the first failure, so put the
-cheap structural checks first and the expensive geometric ones last.
-
-Thresholds live in the `go_nogo` block of params.yaml. Never hard-code one here.
+A false GO drives steel into a load; a false NO-GO wastes ten seconds. So every
+rule fails closed: missing data, frames that disagree, or a measurement out of
+tolerance is a NO-GO. Each rule returns `(passed, reason)`, with a specific,
+quantitative reason ("yaw 7.2 deg exceeds 5.0 deg limit"), since that is what
+the operator reads. Thresholds live in the `go_nogo` block of params.yaml.
 """
 
 from __future__ import annotations
@@ -131,15 +115,9 @@ def check_yaw(
     robot: Pose2D,
     max_yaw_error: float,
 ) -> tuple[bool, str]:
-    """Is the robot square-on to the face?
+    """Is the robot square-on to the face? Reported in degrees.
 
-    Use `approach.yaw_misalignment`, which already handles the normal's sign and
-    wraps the angle. Report degrees in the reason -- nobody reads radians off a
-    terminal and immediately pictures the geometry.
-
-    Why it matters physically: enter a 0.2275 m pocket with a 0.100 m fork at an
-    angle and the usable width shrinks as the fork sweeps across the opening.
-    A few degrees is fine; ten is a collision with a block.
+    An angled fork sweeps across the pocket opening and uses up its width.
     """
     error = yaw_misalignment(robot.yaw, estimate.normal)
     if abs(error) > max_yaw_error:
@@ -175,15 +153,8 @@ def check_overhang(
     load_points: np.ndarray | None,
     margin: float,
 ) -> tuple[bool, str]:
-    """Does the load stick out in front of the pallet face?
-
-    Concept: the fitted face is where the forks expect to meet the pallet. If
-    the load on top overhangs that plane, the forks or the mast hit the load
-    first. Test the cluster's points against the face plane: anything more than
-    `margin` in front of it, above deck height, is overhang.
-
-    `load_points` is the pallet cluster from perception. If it is None, you
-    cannot check -- and an uncheckable safety rule is a NO-GO, not a pass.
+    """Does the load stick out in front of the face, above deck height, by more
+    than `margin`? No `load_points` means the rule cannot be checked: NO-GO.
     """
     if load_points is None or len(load_points) == 0:
         return False, 'no points to check the load against'
@@ -221,14 +192,9 @@ def check_pocket_clearance(
     scene_points: np.ndarray | None,
     clearance_depth: float,
 ) -> tuple[bool, str]:
-    """Is the approach into each pocket clear?
-
-    Concept: build a small box in front of each pocket -- pocket width and
-    height, `clearance_depth` deep, along the face normal -- and require it to
-    be empty. That catches shrink wrap, a fallen board, a stray box, or a
-    second pallet pushed up against this one.
-
-    Same rule as above: no data means NO-GO.
+    """Is a box in front of each pocket (pocket width and height, `clearance_depth`
+    deep along the normal) empty? Catches wrap, a fallen board, a second pallet.
+    No data means NO-GO.
     """
     if scene_points is None or len(scene_points) == 0:
         return False, 'no points to check the pocket approaches against'
@@ -245,12 +211,8 @@ def check_pocket_clearance(
     sideways = (points - position) @ along
     heights = _heights_of(estimate, points)
 
-    # The face itself sits at ahead == 0, so the box starts just in front of it;
-    # and the floor runs through the bottom of a short-side opening, which
-    # reaches the ground, so the box starts just above the floor too. Both
-    # insets are about excluding the pallet and the ground it stands on, not
-    # about being lenient: FACE_INSET is a millimetre or two of depth noise and
-    # FLOOR_INSET matches the floor-removal margin the pipeline already uses.
+    # Start the box just in front of the face and just above the floor (the
+    # short-side opening reaches the ground), to exclude the pallet itself.
     in_depth = (ahead > FACE_INSET) & (ahead < clearance_depth)
 
     for index, pocket in enumerate(estimate.pockets):
@@ -270,14 +232,11 @@ def check_pocket_clearance(
 
 
 def pocket_line_yaw(estimate: PalletEstimate) -> float:
-    """Heading of the line through the two pocket centres, radians in the
-    estimate's frame, in (-pi/2, pi/2].
+    """Heading of the line through the two pocket centres, in (-pi/2, pi/2].
 
-    The line has no front or back, so it is always taken pointing to the
-    robot's left (+y), which makes two frames comparable whichever order
-    perception listed the pockets in. With fewer than two pockets there is no
-    line; the face normal's along-face direction stands in, and a frame like
-    that is unusual enough at the standoff to be worth the noise.
+    Always taken pointing to +y, so frames compare whatever order the pockets
+    were listed in. With fewer than two pockets, the face's along-face direction
+    stands in.
     """
     if len(estimate.pockets) >= 2:
         a = np.asarray(estimate.pockets[0].center, dtype=float)[:2]
@@ -297,35 +256,20 @@ def check_stability(
     max_position_spread: float,
     max_yaw_spread: float,
 ) -> tuple[bool, str]:
-    """Do the last few estimates agree with each other?
+    """Do the last `required_frames` estimates agree?
 
-    Concept: a single frame can be wrong in a way that looks perfectly
-    plausible -- a reflection, a flying-pixel edge, a cluster that merged two
-    objects. Agreement across consecutive frames is the cheapest available
-    defence, and it costs only a fraction of a second at 37 Hz.
-
-    Measure spread as the max-minus-min (or the standard deviation; the
-    docstring of the implementation says which) of the position and yaw over the last
-    `required_frames` estimates. Fewer than that many estimates is a NO-GO:
-    not enough evidence yet.
-
-    Spread here is **max minus min** over the last `required_frames`
-    estimates: for position, the length of the bounding box's diagonal, so a
-    wobble split across two axes counts for what it is; for yaw, the angular
-    range after wrapping.
+    A single frame can be plausibly wrong (a reflection, a flying-pixel edge, a
+    merged cluster). Spread is max minus min: for position the bounding box's
+    diagonal, for yaw the wrapped range. Fewer frames than required is a NO-GO.
     """
     if len(history) < required_frames:
         return False, (f'only {len(history)} estimate(s), needs '
                        f'{required_frames} to judge stability')
 
     recent = list(history)[-required_frames:]
-    # D60 (Athreya, 2026-10-22): the POCKET MIDPOINT, not the face centre.
-    # The face centre is the middle of whichever points RANSAC took as the
-    # plane, and that set changes every frame: with the robot parked at the
-    # standoff in the Gazebo sim it wandered 56 mm over 20 frames while the
-    # pocket centres held to +-2 mm, so every run was refused. The midpoint is
-    # also what the forks aim at. A frame without two pockets falls back to
-    # the face centre, which then counts against it.
+    # D60: measured at the pocket midpoint, which the forks aim at; the face
+    # centre wanders with RANSAC's inliers (56 mm parked, in the sim). Without
+    # two pockets, the face centre stands in and counts against the frame.
     positions = np.array([
         np.asarray(pocket_center(e.pockets, fallback=e.position), dtype=float)
         for e in recent])
@@ -362,28 +306,11 @@ def evaluate(
     load_points: np.ndarray | None = None,
     scene_points: np.ndarray | None = None,
 ) -> Decision:
-    """Run every rule and return the decision.
+    """Run every rule and return Decision(go, reason, checks).
 
-    Structure it so that:
-
-    * `estimate is None` returns NO-GO immediately with a clear reason;
-    * the rules run in a fixed, documented order;
-    * the first failure decides the outcome and gives the reason;
-    * `Decision.checks` records every rule that ran, so the evaluation tables
-      can count *which* rule caught each unsafe scenario. That table is the
-      evidence behind any false-GO count, so it has to come out of the code,
-      not out of a recollection of the run.
-
-    Args:
-        estimate: the latest accepted estimate, or None.
-        robot: the robot's pose in the same frame as `estimate`.
-        history: recent estimates, oldest first.
-        params: the `go_nogo` block of params.yaml.
-        load_points, scene_points: optional point sets for the overhang and
-            clearance checks.
-
-    Returns:
-        Decision(go, reason, checks).
+    `estimate is None` is an immediate NO-GO. The rules run in a fixed order;
+    the first failure gives the reason, and `checks` records every rule that
+    ran, so evaluation tables can count which rule caught each case.
     """
     checks: dict[str, bool] = {}
     reasons: dict[str, str] = {}

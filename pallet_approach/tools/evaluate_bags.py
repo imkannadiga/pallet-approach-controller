@@ -4,22 +4,10 @@
     python3 tools/evaluate_bags.py ~/bags/pallet_s_129 ~/bags/pallet_s_205 ...
     python3 tools/evaluate_bags.py ~/bags/*  --truth ../docs/bag_truth.yaml --csv out.csv
 
-`replay.py` draws one frame's stages; this answers the question the robot runs
-into instead: over all the frames of a bag, how often are both pockets found,
-how far are their centres from where the tape says they are, and how much do
-they move from one frame to the next while nothing moves at all.
-
-The pipeline is `perception.estimate_pallet` with `config/params.yaml` and the
-same extrinsic correction the robot uses, so a number here is a number about
-the robot's perception. No ROS.
-
-**Truth** comes from `docs/bag_truth.yaml`: the tape readings of
-`docs/dataset.md` (bumper to the left and right front corners, and the lateral
-offset), from which the face centre, its angle and both pocket centres follow
-with the measured pallet geometry. A bag without truth still gets the detection
-rate and the frame-to-frame scatter -- the scatter needs no tape -- but no
-accuracy. A truth marked `measured: false` (a target distance, not a tape
-reading) is reported, and flagged, but must not be quoted as accuracy.
+Runs `perception.estimate_pallet` with config/params.yaml and the robot's
+extrinsic correction. No ROS. Truth is the tape in docs/bag_truth.yaml; a bag
+without it gets detection rate and scatter only, and a `measured: false` row
+is flagged and must not be quoted as accuracy.
 
 Columns, per bag:
 

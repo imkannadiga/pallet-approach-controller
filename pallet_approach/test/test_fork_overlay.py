@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from pallet_approach import fork_overlay as FO
-from pallet_approach.model import Plane, Pocket
+from pallet_approach.model import Plane
 
 FORKS = dict(tine_length=1.150, tine_width=0.100, tine_thickness=0.040,
              spacing=0.365, bottom_height=0.040, carriage_x=0.4625)
@@ -92,12 +92,12 @@ def test_projection_is_the_inverse_of_back_projection():
     pinhole model used in opposite directions; a point put through both must
     come back where it started, or one of them has a sign or an axis wrong."""
     from pallet_approach.perception import depth_to_points
-    fx = fy, cx, cy = 900.0, 640.0, 360.0
+    f, cx, cy = 900.0, 640.0, 360.0
     depth = np.full((720, 1280), np.nan, dtype=np.float32)
     depth[400, 700] = 2.5
-    points = depth_to_points(depth, 900.0, 900.0, cx, cy, 1, 0.1, 5.0)
+    points = depth_to_points(depth, f, f, cx, cy, 1, 0.1, 5.0)
     assert len(points) == 1
-    pixels, visible = FO.project_points(points, 900.0, 900.0, cx, cy)
+    pixels, visible = FO.project_points(points, f, f, cx, cy)
     assert visible.all()
     assert pixels[0] == pytest.approx([700.0, 400.0], abs=1e-6)
 

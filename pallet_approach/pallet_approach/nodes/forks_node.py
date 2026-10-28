@@ -1,20 +1,12 @@
 """The virtual fork carriage, as a node.
 
-There is no hardware, so this node's only job is to be honest about a thing
-that does not exist: it holds a height, moves it at a finite speed, and
-publishes what it is doing. The coordinator waits for it exactly as it would
-wait for a real carriage, which is the point -- if the sequence can be driven
-by this, it can be driven by a carriage.
-
-Commands arrive on `~/command` as plain strings so they can also be given by
-hand from a terminal, which is useful on the robot:
+Holds a height, moves it at a finite speed, publishes what it is doing.
+Commands on `~/command` are plain strings, so they can be given by hand:
 
     ros2 topic pub --once /virtual_forks/command std_msgs/String "{data: LOWER}"
 
-An unknown command is refused loudly rather than ignored. `LIFT` is refused
-unless the forks are at the insertion height, because lifting from travel
-height would raise a carriage that is nowhere near a pallet and would still
-hand the sequence a `loaded` flag.
+An unknown command is refused loudly; `LIFT` is refused unless the forks are
+at the insertion height.
 """
 
 from __future__ import annotations
