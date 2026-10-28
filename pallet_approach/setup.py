@@ -39,6 +39,7 @@ setup(
             'dashboard = pallet_approach.nodes.dashboard_node:main',
             'video_streamer = pallet_approach.nodes.video_streamer:main',
             'lidar_relay = pallet_approach.nodes.lidar_relay_node:main',
+            'pallet_fusion = pallet_approach.nodes.fusion_node:main',
         ],
     },
 )

@@ -31,6 +31,8 @@ Arguments:
                          "none" publishes nothing -- then also set
                          frames.lidar_calibration.enabled: false, or the
                          relayed clouds carry a frame tf cannot resolve.
+    fusion:=true         also run pallet_fusion, the fused camera+LiDAR
+                         perception (D102), in SHADOW: nothing reads it.
     encoder:=auto        forwarded to video_stream.launch.py: auto | nvenc |
                          x264 | vp8. "auto" probes for the Jetson's hardware
                          encoder at startup and falls back to x264 if it is
@@ -150,6 +152,16 @@ def generate_launch_description():
             description='forwarded to video_stream.launch.py; "auto" probes '
                         'for nvv4l2h264enc and falls back to x264'),
         DeclareLaunchArgument('log_level', default_value='info'),
+        DeclareLaunchArgument('fusion', default_value='false',
+                              description='run pallet_fusion in shadow'),
+        Node(
+            package='pallet_approach', executable='pallet_fusion', name='pallet_fusion',
+            output='screen',
+            parameters=[params, overlay_params,
+                        {'params_file': params, 'overlay_file': overlay_params}],
+            arguments=arguments,
+            condition=IfCondition(LaunchConfiguration('fusion')),
+        ),
         DeclareLaunchArgument(
             'lidar_calibration',
             default_value=os.path.join(share, 'config', 'lidar_calibration.yaml'),

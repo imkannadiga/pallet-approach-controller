@@ -25,7 +25,8 @@
 # The stack container is the SAME image the Jetson runs, built for amd64 from
 # docker/Dockerfile.jetson, started with the same launch file. Two things are
 # added: overlay_params:=config/sim_overlay.yaml (sim time, no camera tilt
-# correction) and encoder:=x264 (no Jetson encoder here).
+# correction) and encoder:=x264 (no Jetson encoder here). The fused perception
+# (D102) runs in shadow too, fusion:=true; SIM_FUSION=false to leave it out.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -134,9 +135,9 @@ case "${1:-}" in
     docker run -d --name "$STACK" --network host --ipc host "${ROS_ENV[@]}" \
       -e MTX_WEBRTCLOCALTCPADDRESS=:8189 -e MTX_WEBRTCADDITIONALHOSTS=127.0.0.1 \
       "$STACK_IMAGE" bash -lc \
-      'source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py \
+      "source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py \
          overlay_params:=/ros2_ws/install/pallet_approach/share/pallet_approach/config/sim_overlay.yaml \
-         encoder:=x264'
+         lidar_calibration:=none encoder:=x264 fusion:=${SIM_FUSION:-true}"
     echo "started $GAZEBO and $STACK on domain $DOMAIN (localhost only)."
     echo "  give Gazebo ~20 s to spawn the robot, then:"
     echo "  ./sim/run_sim.sh status"

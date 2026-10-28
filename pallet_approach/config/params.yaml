@@ -410,6 +410,14 @@
     camera_depth:
       disparity_bias: 0.0048         # 1/m
 
+    # The fused perception, wired together (D102 step d,
+    # pallet_approach/fused_pipeline.py; the pallet_fusion node runs it).
+    fused_pipeline:
+      acquisition_sweeps: 5          # pooled while standing still (step a: 6/6 at 3.0-3.5 m this way)
+      still_distance: 0.01           # m of odometry motion that restarts the pool
+      still_angle_deg: 0.5
+      reacquire_after: 2.0           # s with no accepted LiDAR sweep: drop the track, acquire again
+
     # Camera and LiDAR in one estimate (D102 step c, pallet_approach/fusion.py):
     # a Kalman filter on the pallet's pose in odom. Measurement errors are the
     # measured ones (tape bags, 2026-10-27/28); process noise is odometry drift.
@@ -1123,6 +1131,21 @@ watchdog:
 # Perception has no memory; this node is the memory, and the coordinator will
 # not move the robot until it says CONFIRMED.
 # ---------------------------------------------------------------------------
+pallet_fusion:
+  ros__parameters:
+    use_sim_time: false
+    # The fused perception (D102) in SHADOW: nothing reads its output yet.
+    # `always` processes even when no run is active -- what a measurement
+    # session wants; `running` only during runs.
+    run_when: always
+    max_rate: 15.0                   # depth frames per second, D102 item 10
+    odom_match_tolerance: 0.05       # s: odometry this close to a stamp is the robot's pose then
+    # The file the fused blocks (/** lidar_acquisition, camera_pockets, ...) are
+    # read from. The launch file passes the params file it used; empty means
+    # the installed config/params.yaml.
+    params_file: ''
+    overlay_file: ''                 # merged over params_file's /** (the launch passes overlay_params)
+
 pallet_tracker:
   ros__parameters:
 

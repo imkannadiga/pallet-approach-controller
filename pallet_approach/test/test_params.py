@@ -34,6 +34,7 @@ NODE_NAMES = {
     'forks_node.py': 'virtual_forks',
     'dashboard_node.py': 'dashboard',
     'lidar_relay_node.py': 'lidar_relay',
+    'fusion_node.py': 'pallet_fusion',
 }
 
 DECLARE = re.compile(r"""declare_parameter\(\s*['"]([\w.]+)['"]""")

@@ -34,6 +34,9 @@
       #    the frames that would have succeeded anyway.
       tf_timeout: 0.5
 
+pallet_fusion:
+  ros__parameters:
+    use_sim_time: true
 pallet_perception:
   ros__parameters:
     use_sim_time: true

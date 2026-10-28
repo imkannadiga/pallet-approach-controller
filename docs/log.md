@@ -1131,3 +1131,37 @@ pockets); empty floor, nothing. **Caveat:** sideways the filter claims +-2 mm
 but the two bags with taped lateral read -12 and -3 mm: the camera's sideways
 sigma, or a small sideways bias (the calibration's?), is not yet known. More
 taped-lateral bags needed before trusting sigma_lateral in a GO rule.
+
+**D102 step (d): `pallet_fusion`, the fused perception as a node, in SHADOW.**
+`pallet_approach/fused_pipeline.py` (pure: acquire standing still, then track;
+drop the track after 2 s without an accepted sweep) and
+`nodes/fusion_node.py`, launched with `fusion:=true` (off by default).
+Publishes /pallet_fusion/tracked (the tracker's TrackedPallet type; pocket
+SIZES are nominal, flagged) and ~/stats. Nothing reads it: the GO/NO-GO rules'
+inputs need deciding first (docs/TODO.md). Replayed a real bag (pallet_s_129)
+through the real nodes under ROS Iron -- relay re-stamping, the calibration's
+static tf, pallet_fusion: acquired, short side, in range, GO allowed, camera
+within 3 mm of the LiDAR. The replay found what the unit tests could not: with
+the Jetson's NumPy 1.21 / SciPy 1.8 a sweep took 90-760 ms, mostly the floor
+RANSAC looping in Python; vectorised, 32 ms per sweep in the node (camera 7.5
+ms, acquisition 113 ms) on the laptop. The replay processed ~1 sweep in 3 --
+3 MB clouds through two extra local hops with default socket buffers; the
+robot's rate is to be read from ~/stats.
+
+**Sim run with the fused perception in shadow** (`./sim/run_sim.sh up`, which
+now launches `fusion:=true`; `SIM_FUSION=false` to leave it out). Two fixes the
+sim found:
+- The nearest-surface test needs two beams on a face. The sim's LiDAR sits at
+  the URDF height, 46 mm above the real one, and put only one beam inside the
+  0.02-0.145 slice (the other on the deck edge at ~0.145). The test may now
+  also use 6 cm above the slice; only slice points become the face. No
+  regression on the tape bags (205_p20 13 -> 15 of 20).
+- Acquisition only pooled sweeps standing still, so a run starting out of range
+  (the sim's default pallet is at 3.5 m) never acquired while driving in. Moving,
+  each sweep is now searched on its own.
+Then a full pickup (old pipeline driving): INSERTED 1.053 m. The shadow
+acquired while CLOSING, and at CHECKING agreed with the old tracker to 5 mm in
+range, 1 mm sideways, 0.1 deg: (3.514, +0.131, -3.2 deg) vs (3.519, +0.132,
+-3.3 deg) in odom, GO allowed, "both sensors agree". Lost during the blind
+insertion (expected), reacquired after backing out. Sim timing on the laptop:
+14-30 ms per sweep, 2-9 ms per camera frame.
