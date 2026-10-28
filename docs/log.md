@@ -1076,3 +1076,25 @@ depth is a model fitted to real bags at 1.2-2.4 m and extrapolates beyond):
   wheels 0.5 cm and the rear 2.3 cm to one side (~2 deg). Not the calibration's
   problem (each stop is a snapshot), but blind insertion runs on odometry with
   angular zero; the forward-only drift over 1.05 m is still to be measured.
+
+**D102 step (a): LiDAR-first acquisition** (`pallet_approach/lidar_pallet.py`,
+scored by `tools/evaluate_lidar_acquisition.py` against the tape bags, with the
+D101 calibration). Four fixes found by the bags, each a property of the real
+pallet or sensor rather than tuning:
+- The 0.02-0.145 m slice also holds the top deck and, through the pockets, the
+  middle row of blocks: lines of the right width 0.2-0.6 m behind the face. ->
+  keep only the nearest surface at each bearing.
+- "Nearest" must be the nearest VERTICAL surface: far floor returns read 1-2 cm
+  high (the Ouster's distance-dependent tilt) and sit inside the slice. A face
+  stacks 2+ beams at one range; the floor never does.
+- The block fronts stand 13-25 mm proud of the deck edge above, so "one range"
+  needs a 5 cm window; and the face's pieces are a pocket apart (0.23 m short,
+  0.385 m long), so the grouping distance must span a pocket.
+- Lines are searched only among those facing the robot.
+Result, single sweeps: short face 1.26-2.5 m found 20/20, range error -7..+9 mm,
+pockets 20/20; long face 0.8-3.0 m 20/20, -5..+7 mm, classified long; empty
+floor 0/20. Five sweeps pooled (0.5 s standing still): the short face at 3.0
+and 3.5 m found 6/6 too (+9 / +31 mm), pockets 6/6. Lateral reads 6-30 mm to
+the right on bags whose lateral was set, not taped; the camera reads the same
+direction on the same bags, so it is most likely the setup. Cost 20-27 ms per
+sweep, 70-124 ms for five, on the laptop: over the 100 ms budget, to be cut.

@@ -1460,6 +1460,41 @@ remove. *Not yet run on the robot:* the node path (`lidar_in_ground` with the
 calibration on) is covered by unit tests and by the same functions in the
 offline tools, not yet by a dry run. (Athreya, 2026-10-28)
 
+**D102. How the fused perception (D97) works -- logic sheet accepted.** All
+defaults accepted by Athreya on 2026-10-28:
+1. *Acquisition* is LiDAR-first: the pallet is found in the calibrated LiDAR
+   cloud, looking only at pallet height; the camera confirms the two pockets.
+   *Why:* the current camera pipeline finds no pallet once a load sits on it
+   (0 of 8-12 frames, sim, 2026-10-27); a height band cannot see a load.
+2. *The camera's job* is the pockets' lateral positions and "two pockets
+   present"; its range only cross-checks. *Why:* it resolves edges ~6x finer
+   than the LiDAR's columns at 2.5 m, while the LiDAR's range is the better one
+   (-0.5 +- 3.4 mm against tape after D101; camera +1..+13 mm to 3 m, +33..+68 mm
+   at 3.5 m).
+3. *"The face" is the block fronts*, which stand 13-25 mm proud of the deck
+   boards on the real pallet: what the robot's body meets first, and what the
+   tape measures.
+4. *Height band* for both sensors: 0.02-0.145 m above the fitted floor.
+5. *Fusion*: a Kalman filter on the pallet's pose in `odom`, each measurement
+   weighted by its sensor's measured error at that range (tape tables);
+   replaces the tracker's N-frame median.
+6. *Disagreement*: camera and LiDAR more than 20 mm apart in range or 3 deg in
+   yaw for 5 frames means no GO.
+7. *LiDAR missing or too thin*: the camera may keep tracking alone, but never
+   decides GO.
+8. *Working range*: face 1.5-3.0 m from `base_footprint` (D97); refused
+   outside.
+9. *Latency*: tracking under 10 ms per frame on the Jetson; acquisition, which
+   runs once, up to 100 ms.
+10. *Rate*: camera tracking at 15 Hz (settles the uncommitted `max_rate`).
+11. *Loaded pallets are in scope*; real loaded-pallet bags to be recorded.
+12. *Done means*: tracker-level detection 100 % inside the working range on the
+    tape bags and the loaded bags; range, lateral and yaw error against tape;
+    Jetson timing measured. Synthetic numbers stay labelled synthetic.
+Build order: (a) LiDAR pallet-height acquisition, scored on the existing tape
+bags; (b) camera pocket strip along the LiDAR line; (c) the filter and the
+disagreement rule; (d) integration and Jetson timing. (Athreya, 2026-10-28)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

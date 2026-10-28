@@ -365,6 +365,39 @@
     #     above a 20 mm board.
     # That is what "four-way entry" means, and it is why every pocket number
     # below is per side rather than shared.
+    # LiDAR-first acquisition (D102 step a, pallet_approach/lidar_pallet.py):
+    # find the pallet in the calibrated LiDAR at pallet height, no prior.
+    lidar_acquisition:
+      # The floor, fitted from the LiDAR's own returns; heights are measured
+      # from it, never from z = 0.
+      floor_search: 0.12             # m either side of floor_z to look for floor
+      floor_min_range: 0.8           # m: nearer is the robot's blind cone
+      floor_max_range: 4.0
+      floor_threshold: 0.02          # m, RANSAC inlier distance
+      floor_stride: 4                # use every 4th return for the floor fit (speed)
+      # [D102 item 4] the pallet-height slice: a load above it is invisible.
+      band: [0.02, 0.145]
+      search_x: [1.0, 3.6]           # m ahead: the working range plus margin
+      search_y: 1.5                  # m either side
+      # Nearest surface per bearing: the face is the nearest wood (D102 item 3).
+      surface_bin_deg: 0.5           # ~2 LiDAR columns
+      surface_window: 0.05           # m: returns this close in range are one surface (block fronts stand 13-25 mm proud of the deck edge above them)
+      surface_min_height: 0.03       # m of height they must span to be VERTICAL (2+ beams), not floor
+      surface_depth: 0.06            # m behind it still counted (blocks 13-25 mm proud of the deck)
+      surface_extra_height: 0.06     # m above the band the vertical test may also use (the deck edge's beam)
+      cluster_link: 0.45             # m: returns closer than this are one object; spans a pocket (0.23 short, 0.385 long), whose bearings may keep no face return
+      min_points: 15
+      line_threshold: 0.025          # m: face-line inliers (the Ouster's ~7 mm noise, plus the blocks' unevenness)
+      max_face_yaw: 45.0             # deg: a face turned further is not the one to approach
+      width_tolerance: 0.12          # m: a face this close to 0.795 or 1.195 is that side
+      # Pockets: occupancy of the face line in bins along it, against the
+      # side's block/pocket layout slid +-pocket_search.
+      pocket_bin: 0.02
+      pocket_search: 0.20
+      pocket_min_points: 10
+      min_pocket_score: 0.30         # blocks minus pockets occupancy: below this, no pockets found
+      working_range: [1.5, 3.0]      # [D97] face distance from base_footprint, m
+
     pallet:
       pallet_height: 0.145           # [measured] same from either side
 
