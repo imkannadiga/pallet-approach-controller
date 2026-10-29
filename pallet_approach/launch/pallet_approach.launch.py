@@ -35,7 +35,8 @@ Arguments:
                          starts pallet_fusion and points the coordinator,
                          controller and dashboard at /pallet_fusion/tracked;
                          the old perception node is never activated.
-                         Default camera.
+                         The default since D106; perception:=camera runs the
+                         camera-only pipeline instead.
     fusion:=true         with perception:=camera, also run pallet_fusion in
                          SHADOW (nothing reads it) to measure it alongside.
     encoder:=auto        forwarded to video_stream.launch.py: auto | nvenc |
@@ -162,7 +163,7 @@ def generate_launch_description():
         DeclareLaunchArgument('log_level', default_value='info'),
         DeclareLaunchArgument('fusion', default_value='false',
                               description='with perception:=camera, run pallet_fusion in shadow'),
-        DeclareLaunchArgument('perception', default_value='camera',
+        DeclareLaunchArgument('perception', default_value='fused',
                               description='camera | fused (D104)'),
         Node(
             package='pallet_approach', executable='pallet_fusion', name='pallet_fusion',

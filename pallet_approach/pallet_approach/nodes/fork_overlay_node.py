@@ -110,7 +110,7 @@ class ForkOverlayNode(Node):
         self.declare_parameter('line_thickness', 2)
         self.declare_parameter('draw_pockets', True)
         self.declare_parameter('draw_face', True)
-        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('perception_source', 'fused')
         self.declare_parameter('pallet.pallet_height', 0.145)
         self.declare_parameter('draw_standoff_marker', True)
         self.declare_parameter('debug_width', 640)

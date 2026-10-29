@@ -3,8 +3,8 @@
 Publishes ~/tracked (TrackedPallet, the tracker's message type) and ~/stats
 (JSON at 1 Hz: timing, uncertainty, disagreement and freshness). With
 `perception_source: camera` nothing reads ~/tracked (shadow); with
-`perception:=fused` the coordinator, controller, dashboard and watchdog do
-(D104). The pockets' width and height in the estimate are the side's NOMINAL
+`perception:=fused` (the default, D106) the coordinator, controller,
+dashboard and watchdog do (D104). The pockets' width and height in the estimate are the side's NOMINAL
 values, not measurements.
 """
 
@@ -96,7 +96,7 @@ class FusionNode(Node):
     def _declare(self):
         for name, value in (
                 ('run_when', 'always'),            # always | running (only while a run is active)
-                ('perception_source', 'camera'),   # only for the log line: fused = the run reads us
+                ('perception_source', 'fused'),    # only for the log line: fused = the run reads us
                 ('max_rate', 15.0),                # depth frames per second, D102 item 10
                 ('odom_match_tolerance', 0.05),
                 ('topics.depth', '/zed2/zed_node/depth/depth_registered'),

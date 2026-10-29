@@ -14,9 +14,9 @@
     # pallet_tracker) or `fused` (pallet_fusion, D102). Chooses the tracked
     # topic the coordinator, controller and dashboard read, the GO/NO-GO
     # evaluation, and whether the old perception node is activated. Set it with
-    # the launch argument perception:=fused, which also starts pallet_fusion.
-    # `camera` until fused passes the sim acceptance, a replay and a dry run.
-    perception_source: camera
+    # the launch argument perception:=camera|fused; pallet_fusion runs in
+    # either (in shadow with camera). `fused` by default since D106.
+    perception_source: fused
 
     # [measured 2026-10-14] Where the real floor is in frames.ground. NOT zero:
     # the URDF's base_footprint joint is 25 mm out (its wheel geometry is right

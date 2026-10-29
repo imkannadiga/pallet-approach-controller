@@ -205,7 +205,7 @@ class CoordinatorNode(Node):
     def _declare(self):
         self.declare_parameter('action_name', 'pallet_task')
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('perception_source', 'fused')
         self.declare_parameter('topics.nav_lock', '/pallet_approach/nav_lock')
         self.declare_parameter('frames.odom', 'odom')
         self.declare_parameter('frames.ground', 'base_footprint')

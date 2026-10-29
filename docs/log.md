@@ -1198,3 +1198,20 @@ say whether fused mode reaches GO.
 **Clean-up.** Docstrings and comments across the package and tools cut to
 what the code does and why (decision refs, one-line measured facts); stale
 EPAL numbers and the old `GO` outcome removed from them. No behaviour change.
+
+## 2026-10-29
+
+**Fused mode drives a whole pickup in the GPU sim.** Three fixes first:
+pallet_fusion still read no overlay (launch_ros puts `-p` before the
+`--params-file` arguments it generates, and later files win; the file paths
+are now plain arguments before `--ros-args`); the dashboard's LiDAR cross-check
+showed DISAGREES whenever GO was not yet allowed (it was filled from
+`go_allowed`; now from the D102 disagreement rule, and the coordinator reads
+`status == 'READY'`); and the fork overlay drew nothing in fused mode (it
+listened to the inactive camera node; it now reads the fused track and also
+outlines the detected face). Then, pallet at 3.0 m, +0.15 m, ~3 deg: CLOSING
+from 3.00 m, GO at the standoff (fused, D104), INSERTED 1.059 m, lifted 50 mm.
+Cross-check during the approach: 1 mm on 87 LiDAR points. A D96 batch in fused
+mode (seed 7) ran without a failure until stopped early; no count recorded.
+Fused made the default (D106). Also fixed: test_evaluate_bags still imported
+BUMPER_X from its old home; full suite 1006 passed, 7 skipped.

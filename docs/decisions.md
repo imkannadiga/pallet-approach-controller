@@ -1556,6 +1556,19 @@ constant with range. Edge smearing and cavity filling, measured on the real
 pallet, are unchanged. Option 1 of three, chosen by Athreya; D104's 20 mm /
 3 deg rule stands. (Athreya, 2026-10-28)
 
+**D106. The fused perception is the default, on the robot and in the sim;
+amends D104's switching gate.** `perception:=fused` is the launch default,
+`perception_source: fused` in params.yaml, and `./sim/run_sim.sh` runs fused
+unless `SIM_PERCEPTION=camera`; `perception:=camera` keeps the camera-only
+pipeline. *Why:* in the GPU sim (2026-10-29) the fused mode drove a whole
+pickup from 3.0 m (GO at the standoff, INSERTED 1.059 m) once the overlay fix
+took effect, and the D96 batch in fused mode ran without a failure until Athreya
+stopped it early. *What D104's gate still asked for and is not yet done:* the
+full 9-of-10 sim count (the batch was stopped, no count recorded) and a dry run
+on the robot. The robot procedure still begins with the dry run
+(`./docker/build_and_run.sh dry`, now fused). The camera-only pipeline stays in
+the code until the fused one passes on the robot. (Athreya, 2026-10-29)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are
