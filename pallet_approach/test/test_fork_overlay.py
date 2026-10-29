@@ -244,3 +244,38 @@ def test_the_text_panel_scales_with_the_drawing():
                     dict(fx=474.8, fy=474.8, cx=320.0, cy=180.0),
                     dict(params, text_scale=0.5, line_thickness=1), floor)
     assert out.shape == small.shape      # draws at the small size without error
+
+
+def test_the_face_outline_spans_its_width_from_the_floor_to_the_pallet_top():
+    from pallet_approach.projection import face_corners
+
+    floor = Plane(np.array([0.0, 0.0, 1.0]), 0.025)          # floor at z = -0.025
+    corners = face_corners(np.array([2.0, 0.1, 0.03]), np.array([-1.0, 0.0, 0.0]),
+                           0.795, 0.145, floor)
+    heights = floor.height_of(corners)
+    assert sorted(np.round(heights, 6)) == pytest.approx([0.0, 0.0, 0.145, 0.145])
+    assert np.ptp(corners[:, 1]) == pytest.approx(0.795)
+    assert corners[:, 0] == pytest.approx([2.0] * 4)          # in the face plane
+
+
+def test_the_face_is_drawn_only_when_its_width_was_measured():
+    import dataclasses
+
+    import cv2  # noqa: F401
+    from pallet_approach.model import PalletEstimate
+
+    image = np.zeros((360, 640, 3), dtype=np.uint8)
+    intrinsics = {'fx': 450.0, 'fy': 450.0, 'cx': 320.0, 'cy': 180.0}
+    base_to_camera = np.array([[0.0, -1.0, 0.0, 0.0],
+                               [0.0, 0.0, -1.0, 0.398],
+                               [1.0, 0.0, 0.0, -0.390],
+                               [0.0, 0.0, 0.0, 1.0]])
+    floor = Plane(np.array([0.0, 0.0, 1.0]), 0.025)
+    estimate = PalletEstimate(position=np.array([2.0, 0.0, 0.025]), normal=np.array([-1.0, 0.0, 0.0]),
+                              yaw=np.pi, pockets=(), face_inlier_count=0, floor=floor,
+                              face_width=0.795)
+    drawn = FO.draw_face(image, estimate, floor, 0.145, base_to_camera, intrinsics, (0, 255, 0), 2)
+    assert drawn.any()
+    unmeasured = dataclasses.replace(estimate, face_width=float('nan'))
+    assert not FO.draw_face(image, unmeasured, floor, 0.145, base_to_camera, intrinsics,
+                            (0, 255, 0), 2).any()

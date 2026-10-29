@@ -22,7 +22,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 from tf2_ros import Buffer
 
-from pallet_approach_interfaces.msg import ForkState
+from pallet_approach_interfaces.msg import ForkState, TrackedPallet
 from pallet_approach_interfaces.msg import PalletEstimate as PalletEstimateMsg
 
 from pallet_approach import fork_overlay
@@ -30,7 +30,8 @@ from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.dashboard import STATE_COLOR_KEYS as STATE_COLORS
 from pallet_approach.model import Plane
 from pallet_approach.nodes._common import (
-    CameraTransformListener, image_to_array, intrinsics_from_camera_info, lookup_waiting)
+    CameraTransformListener, image_to_array, intrinsics_from_camera_info, lookup_waiting,
+    tracked_topic)
 from pallet_approach.rate_limit import Schedule
 from pallet_approach.ros_conversions import estimate_from_msg, transform_to_matrix
 
@@ -79,8 +80,14 @@ class ForkOverlayNode(Node):
         # perception_node, measured 2026-10-22).
         self.create_subscription(Image, self.get_parameter('topics.left_image').value,
                                  self._on_image, SENSOR_QOS, raw=True)
-        self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
-                                 self._on_estimate, 10)
+        # The fused pipeline publishes its estimate inside the track; the camera
+        # node, inactive in fused mode, publishes nothing.
+        if self.get_parameter('perception_source').value == 'fused':
+            self.create_subscription(TrackedPallet, tracked_topic('fused'),
+                                     lambda msg: self._on_estimate(msg.estimate), 10)
+        else:
+            self.create_subscription(PalletEstimateMsg, '/pallet_perception/estimate',
+                                     self._on_estimate, 10)
         self.create_subscription(String, '/coordinator/state', self._on_state, 10)
         self.create_subscription(ForkState, '/virtual_forks/state',
                                  self._on_fork_state, 10)
@@ -102,6 +109,9 @@ class ForkOverlayNode(Node):
         self.declare_parameter('alpha', 0.45)
         self.declare_parameter('line_thickness', 2)
         self.declare_parameter('draw_pockets', True)
+        self.declare_parameter('draw_face', True)
+        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('pallet.pallet_height', 0.145)
         self.declare_parameter('draw_standoff_marker', True)
         self.declare_parameter('debug_width', 640)
         self.declare_parameter('debug_height', 360)
@@ -157,6 +167,8 @@ class ForkOverlayNode(Node):
             'alpha': get('alpha'),
             'line_thickness': get('line_thickness'),
             'draw_pockets': get('draw_pockets'),
+            'draw_face': get('draw_face'),
+            'pallet_height': get('pallet.pallet_height'),
             'draw_standoff_marker': get('draw_standoff_marker'),
         }
 

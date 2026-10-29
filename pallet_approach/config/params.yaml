@@ -997,6 +997,7 @@ fork_overlay:
     alpha: 0.45                 # fill transparency
     line_thickness: 2
     draw_pockets: true
+    draw_face: true                # the detected face's outline: measured width, floor to pallet height
     draw_standoff_marker: true
 # ---------------------------------------------------------------------------
 # dashboard: composites fork_overlay's image with a HUD of everything that is
