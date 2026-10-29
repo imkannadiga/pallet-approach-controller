@@ -3,8 +3,9 @@
 import math
 
 import numpy as np
+import pytest
 
-from pallet_approach.fused_pipeline import FusedPipeline, to_base
+from pallet_approach.fused_pipeline import FusedPipeline, forward_time, pose_at, to_base
 from pallet_approach.fusion import to_odom
 from pallet_scene import CAMERA, INTRINSICS, PARAMS, depth_image, sweep
 
@@ -60,3 +61,30 @@ def test_base_and_odom_round_trip():
     robot = (1.0, -0.5, math.radians(20))
     p = np.array([2.0, 0.3])
     assert np.allclose(to_base(robot, to_odom(robot, p)), p)
+
+
+def test_the_pose_is_interpolated_between_the_samples_either_side():
+    samples = [(0.00, (0.0, 0.0, 0.0)), (0.02, (0.002, 0.0, 0.01))]
+    x, y, yaw = pose_at(samples, 0.015, 0.05)
+    assert x == pytest.approx(0.0015) and yaw == pytest.approx(0.0075)
+
+
+def test_the_interpolated_heading_wraps_through_pi():
+    samples = [(0.0, (0.0, 0.0, math.pi - 0.01)), (0.02, (0.0, 0.0, -math.pi + 0.01))]
+    assert abs(pose_at(samples, 0.01, 0.05)[2]) == pytest.approx(math.pi)
+
+
+def test_beyond_the_samples_the_nearest_within_tolerance_or_none():
+    samples = [(0.00, (0.0, 0.0, 0.0)), (0.02, (0.002, 0.0, 0.0))]
+    assert pose_at(samples, 0.05, 0.05) == (0.002, 0.0, 0.0)
+    assert pose_at(samples, 0.10, 0.05) is None
+    assert pose_at([], 0.0, 0.05) is None
+
+
+def test_the_sweep_time_is_taken_from_the_points_ahead():
+    bearings = np.radians(np.arange(-180, 180, 1.0))
+    points = np.stack([np.cos(bearings), np.sin(bearings), np.zeros_like(bearings)], axis=1)
+    # the Ouster's order on the robot: behind at 0, left at 25 ms, ahead at 50, right at 75
+    times = (0.050 - np.degrees(bearings) / 360 * 0.100)
+    assert forward_time(points, times) == pytest.approx(0.050, abs=0.001)
+    assert forward_time(points[np.abs(np.degrees(bearings)) > 90], times[np.abs(np.degrees(bearings)) > 90]) == 0.0

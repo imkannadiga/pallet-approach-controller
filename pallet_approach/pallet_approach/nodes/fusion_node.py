@@ -30,7 +30,7 @@ from std_msgs.msg import Header, String
 from tf2_ros import Buffer
 
 from pallet_approach.calibration import correct_transform, correction_matrix
-from pallet_approach.fused_pipeline import FusedPipeline
+from pallet_approach.fused_pipeline import FusedPipeline, forward_time, pose_at
 from pallet_approach.model import PalletEstimate, Pocket
 from pallet_approach.nodes._common import (CameraTransformListener, declare_lidar_params, image_to_array,
                                            intrinsics_from_camera_info, lidar_in_ground, lookup_waiting)
@@ -118,12 +118,7 @@ class FusionNode(Node):
         return self.get_parameter('run_when').value == 'always' or self._state not in NOT_RUNNING
 
     def _pose_at(self, stamp: float):
-        if not self._odom:
-            return None
-        t, pose = min(self._odom, key=lambda row: abs(row[0] - stamp))
-        if abs(t - stamp) > self.get_parameter('odom_match_tolerance').value:
-            return None
-        return (pose.x, pose.y, pose.yaw)
+        return pose_at(self._odom, stamp, self.get_parameter('odom_match_tolerance').value)
 
     def _timeout(self):
         return rclpy.duration.Duration(seconds=float(self.get_parameter('frames.tf_timeout').value))
@@ -135,7 +130,8 @@ class FusionNode(Node):
         self._state = msg.data
 
     def _on_odom(self, msg: Odometry):
-        self._odom.append((stamp_to_seconds(msg.header.stamp), pose2d_from_odometry(msg)))
+        pose = pose2d_from_odometry(msg)
+        self._odom.append((stamp_to_seconds(msg.header.stamp), (pose.x, pose.y, pose.yaw)))
 
     def _on_info(self, msg: CameraInfo):
         self._intrinsics = intrinsics_from_camera_info(msg)
@@ -145,16 +141,23 @@ class FusionNode(Node):
             return
         cloud = deserialize_message(raw, PointCloud2)
         stamp = stamp_to_seconds(cloud.header.stamp)
-        robot = self._pose_at(stamp)
-        if robot is None:
-            return
         try:
             matrix = lidar_in_ground(self, self._buffer, cloud.header.frame_id, cloud.header.stamp,
                                      self._timeout())
         except Exception as error:                                        # noqa: BLE001
             self.get_logger().warning(f'LiDAR tf: {error}', throttle_duration_sec=5.0)
             return
-        points = transform_points(unpack_cloud(cloud), matrix)
+        # The stamp is the sweep's start; the pallet ahead is measured later in
+        # the sweep (the Ouster's per-point `t`, ns). The sim's cloud has none.
+        if any(f.name == 't' for f in cloud.fields):
+            raw_points = unpack_cloud(cloud, ('x', 'y', 'z', 't'))
+            points = transform_points(raw_points[:, :3], matrix)
+            stamp += forward_time(points, raw_points[:, 3] * 1e-9)
+        else:
+            points = transform_points(unpack_cloud(cloud), matrix)
+        robot = self._pose_at(stamp)
+        if robot is None:
+            return
         self._points = len(points)
         self._last_stamp = max(self._last_stamp, stamp)
         self._pipe.on_lidar(points, robot, stamp)
