@@ -1232,3 +1232,20 @@ rebuilt ZED container had lost its FastDDS profile (hand-added on the Jetson,
 never in the robot PC's copy that build.sh syncs), so the stack saw none of
 its topics until the profile lines were restored there. The track also
 dropped for 1-2 s while the robot turned; not yet explained.
+
+**First GO on the robot; then an insertion abort from a ZED tf pause.**
+robot_fused_run3, with the 0.17 s camera correction: CLOSING from 2.59 m /
+-87 mm to the standoff in 13.6 s (camera within ~+-5 mm of the LiDAR while
+driving, 3.7 mm rms), GO by the fused tree, forks lowered, insertion started --
+then ABORTED after 2.6 s: "no LiDAR measurement of the face for 5 frames".
+Replaying the insertion's corridor on the bag's sweeps finds the face every
+time (350-380 returns), so the corridor is fine; the bag ends 1.4 s before the
+abort. The controller logged tf extrapolation: at 477.87 the ZED's
+self-calibration link was ~460 ms behind (51 ms normal), and since D101 the
+LiDAR's frame hangs below it, so every LiDAR lookup at the sweep's stamp
+failed. The LiDAR's pose is now looked up at the latest transform (all links
+robot-fixed). The bag also shows ZED pauses of 183 and 251 ms before the run;
+the camera feed's jumps are likely those, its smearing likely WebRTC packet
+loss on Wi-Fi while a bag was being copied over it. The camera lag fitted
+with range as a term: 0.19 s (run2) and 0.10 s (run3) -- a blend, not a fixed
+delay; 0.17 kept for now.
