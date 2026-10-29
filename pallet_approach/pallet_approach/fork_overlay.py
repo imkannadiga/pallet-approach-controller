@@ -14,7 +14,7 @@ import numpy as np
 
 from pallet_approach.model import PalletEstimate, Plane, Pocket
 from pallet_approach.perception import transform_points
-from pallet_approach.projection import pocket_corners, project
+from pallet_approach.projection import face_corners, pocket_corners, project
 
 __all__ = [
     'tine_corners',
@@ -183,6 +183,24 @@ def draw_pockets(
     return annotated
 
 
+def draw_face(image: np.ndarray, estimate: PalletEstimate, floor: Plane, height: float,
+              base_to_camera: np.ndarray, intrinsics: dict, color: tuple[int, int, int],
+              thickness: int) -> np.ndarray:
+    """Outline the detected face: its measured width, from the floor up to
+    `height`, in the face plane. Nothing is drawn without a finite width."""
+    import cv2
+
+    if not np.isfinite(estimate.face_width) or estimate.face_width <= 0:
+        return image
+    corners = face_corners(estimate.position, estimate.normal, estimate.face_width, height, floor)
+    pixels, visible = project(corners, base_to_camera, intrinsics)
+    if not visible.all() or not np.isfinite(pixels).all():
+        return image
+    annotated = image.copy()
+    cv2.polylines(annotated, [pixels.astype(np.int32)], True, color, max(1, thickness - 1), cv2.LINE_AA)
+    return annotated
+
+
 def _dashed_polyline(image, points, color, thickness, dash=9, gap=6):
     """A dashed closed outline. OpenCV has no dash style, so walk each edge."""
     import cv2
@@ -258,6 +276,10 @@ def render(
     # --- what perception found, when it found anything
     lines = [state.upper()]
     if estimate is not None:
+        if params.get('draw_face', True):
+            annotated = draw_face(annotated, estimate, estimate.floor or floor,
+                                  float(params.get('pallet_height', 0.145)),
+                                  base_to_camera, intrinsics, color, thickness)
         if params.get('draw_pockets', True) and estimate.pockets:
             side = params.get('sides', {}).get(estimate.side, {})
             nominal = None

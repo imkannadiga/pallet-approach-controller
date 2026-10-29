@@ -114,7 +114,7 @@ class WatchdogNode(Node):
     # ------------------------------------------------------------- params
 
     def _declare(self):
-        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('perception_source', 'fused')
         self.declare_parameter('topics.depth_camera_info',
                                '/zed2/zed_node/depth/camera_info')
         self.declare_parameter('topics.odom', '/odom')

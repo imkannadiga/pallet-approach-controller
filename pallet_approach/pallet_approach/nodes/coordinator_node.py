@@ -205,7 +205,7 @@ class CoordinatorNode(Node):
     def _declare(self):
         self.declare_parameter('action_name', 'pallet_task')
         self.declare_parameter('topics.odom', '/odom')
-        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('perception_source', 'fused')
         self.declare_parameter('topics.nav_lock', '/pallet_approach/nav_lock')
         self.declare_parameter('frames.odom', 'odom')
         self.declare_parameter('frames.ground', 'base_footprint')
@@ -583,7 +583,7 @@ class CoordinatorNode(Node):
             tracked = self._tracked
             return go_nogo.evaluate_fused(
                 self._estimate, Pose2D(0.0, 0.0, 0.0),
-                bool(tracked is not None and tracked.lidar_agrees),
+                bool(tracked is not None and tracked.status == 'READY'),
                 tracked.reason if tracked is not None else 'no track', params)
         try:
             # The rules work in the estimate's own frame, so the robot is at

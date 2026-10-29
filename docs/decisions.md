@@ -1556,6 +1556,37 @@ constant with range. Edge smearing and cavity filling, measured on the real
 pallet, are unchanged. Option 1 of three, chosen by Athreya; D104's 20 mm /
 3 deg rule stands. (Athreya, 2026-10-28)
 
+**D106. The fused perception is the default, on the robot and in the sim;
+amends D104's switching gate.** `perception:=fused` is the launch default,
+`perception_source: fused` in params.yaml, and `./sim/run_sim.sh` runs fused
+unless `SIM_PERCEPTION=camera`; `perception:=camera` keeps the camera-only
+pipeline. *Why:* in the GPU sim (2026-10-29) the fused mode drove a whole
+pickup from 3.0 m (GO at the standoff, INSERTED 1.059 m) once the overlay fix
+took effect, and the D96 batch in fused mode ran without a failure until Athreya
+stopped it early. *What D104's gate still asked for and is not yet done:* the
+full 9-of-10 sim count (the batch was stopped, no count recorded) and a dry run
+on the robot. The robot procedure still begins with the dry run
+(`./docker/build_and_run.sh dry`, now fused). The camera-only pipeline stays in
+the code until the fused one passes on the robot. (Athreya, 2026-10-29)
+
+**D107. The ZED keeps its depth stabilization; the fused perception corrects
+its lag in time instead.** The fusion node treats each depth frame as measured
+`camera_depth.latency` = 0.17 s before its stamp (the pose at that time goes
+with it); the published track keeps the frame's stamp. The sim's overlay sets
+it to 0. *Why:* on the robot (2026-10-29, robot_fused_run2) camera minus LiDAR
+was +2..+6 mm standing still and grew by 169 mm per m/s while driving, which
+ended both fused runs NO_GO on the 20 mm rule; the turn rate did not matter.
+Turning stabilization off (`depth.depth_stabilization: 0`) removed the cause
+but, standing still, made the camera read +14..+26 mm and -2.2..-3.0 deg
+against the LiDAR, outside what D103 models and at the 3 deg limit. With
+stabilization on, D103 and the tape-bag results stay valid. Of options 1-4
+(compensate; weaker stabilization; a slower closing speed; judging
+disagreement only standing still), Athreya chose 1. *Open:* 0.17 s comes from
+one run, and stabilization blends frames rather than delaying them, so the
+next recorded run is to confirm the slope is near zero, including where the
+speed changes. Also unchanged by this: `debug.use_pub_timestamps` stays false
+(publish-time stamps would make the offset larger). (Athreya, 2026-10-29)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

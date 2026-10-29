@@ -11,12 +11,11 @@ stated reason. On GO it performs a **virtual pickup**: it lowers imaginary forks
 to pocket height, drives them in, lifts, backs out, and hands control back to
 Nav2.
 
-> **Status.** There are two perception pipelines. The original one uses only the
-> camera; it has been validated on depth recorded on the robot and completes
-> pickups in Gazebo. The new **fused** one finds the face with the LiDAR and
-> the pockets with the camera; it has been scored against tape-measured bags
-> from the robot and has run alongside the camera pipeline in Gazebo. It has not
-> yet driven a run to GO, in the simulator or on the robot. The camera-LiDAR
+> **Status.** There are two perception pipelines. The new **fused** one, the
+> default, finds the face with the LiDAR and the pockets with the camera; it has
+> been scored against tape-measured bags from the robot and completes pickups in
+> Gazebo. The original camera-only pipeline has been validated on depth
+> recorded on the robot and also completes pickups in Gazebo. The camera-LiDAR
 > calibration is measured and wired in. Nothing has run closed-loop on the
 > robot yet.
 
@@ -82,7 +81,8 @@ changed the fork height, the standoff and the pocket detection band.
 
 ### Perception, camera only: depth image to pockets
 
-The original pipeline, and still the default (`perception:=camera`).
+The original pipeline, still available with `perception:=camera`. Since D106 the
+fused pipeline below is the default.
 
 ```mermaid
 flowchart LR
@@ -258,10 +258,10 @@ subscribing process, and with two or three subscribers the clouds arrived
 0.37 s old and odometry stalled for up to a second. A relay node takes the one copy and republishes it
 locally.
 
-One launch argument, `perception:=camera|fused`, points every node that reads
-the tracked pallet at one pipeline or the other. `fusion:=true` runs the fused
-pipeline in shadow next to the camera pipeline, so the two can be compared on
-the same run.
+One launch argument, `perception:=fused|camera` (default `fused`), points every
+node that reads the tracked pallet at one pipeline or the other. With
+`perception:=camera`, `fusion:=true` also runs the fused pipeline in shadow, so
+the two can be compared on the same run.
 
 None of the algorithm modules in `pallet_approach/pallet_approach/*.py` import
 ROS. The node wrappers in `nodes/` subscribe, publish and call into them. That
@@ -358,6 +358,7 @@ they come from trials on the robot.
 | Camera mounting error | measured | 0.70° pitch, −0.52° roll; corrected in config |
 | Worst arrival of the closing servo | offline harness, 10 mm depth noise | 17 mm and 2.4°, against 65 mm of pocket slack |
 | Full pickup, camera pipeline driving | Gazebo | INSERTED, insertion depth 1.053 m |
+| Full pickup, fused pipeline driving, from 3.0 m | Gazebo | GO at the standoff, INSERTED, insertion depth 1.059 m |
 | Fused (shadow) vs camera tracker at the standoff, same run | Gazebo | 5 mm in range, 1 mm sideways, 0.1° |
 | Tests | synthetic data and a simulated world | 586 test functions |
 
@@ -369,11 +370,11 @@ The first real bag, taken at 2.0 m, with the three fixes it prompted applied
        alt="Perception pipeline on the first real bag at 2.0 m">
 </p>
 
-**What is next:** verifying that the fused pipeline reaches GO in Gazebo, then
-on the robot. The order is a shadow session first, then a dry run with the
-wheels disconnected, then supervised runs from the ten shared starting
-positions of the acceptance test (9 of 10 must end INSERTED). Open items are
-in [docs/TODO.md](docs/TODO.md).
+**What is next:** the fused pipeline on the robot: a dry run with the wheels
+disconnected first (reading the Jetson's timing from `/pallet_fusion/stats`),
+then supervised runs from the ten shared starting positions of the acceptance
+test (9 of 10 must end INSERTED). Open items are in
+[docs/TODO.md](docs/TODO.md).
 
 ## Simulation
 
@@ -409,8 +410,8 @@ tf and the clock.
 # dashboard: http://localhost:8889/dashboard
 ./sim/run_sim.sh stop
 
-SIM_PERCEPTION=fused ./sim/run_sim.sh up face_x:=3.0   # drive on the fused pipeline
-SIM_FUSION=false ./sim/run_sim.sh up                   # camera pipeline only, no shadow
+SIM_PERCEPTION=camera ./sim/run_sim.sh up              # drive on the camera pipeline (fused in shadow)
+SIM_PERCEPTION=camera SIM_FUSION=false ./sim/run_sim.sh up   # camera pipeline only
 ```
 
 The simulated camera reproduces the real ZED's measured depth errors rather
@@ -462,9 +463,9 @@ logs nothing at all. If you do publish by hand, run `ros2 topic info -v
 /pallet_approach/start` from the same shell first: it should list the
 coordinator as a subscriber. The result of a run is on `/pallet_approach/result`.
 
-`up` launches the camera pipeline, with the fused one off. To run on the fused
-pipeline, launch by hand from `./docker/build_and_run.sh shell`:
-`ros2 launch pallet_approach pallet_approach.launch.py perception:=fused`
+`up` and `dry` run on the fused pipeline. To run the camera-only pipeline,
+launch by hand from `./docker/build_and_run.sh shell`:
+`ros2 launch pallet_approach pallet_approach.launch.py perception:=camera`
 (add `cmd_vel:=/cmd_vel_dry` to keep the wheels disconnected).
 
 Or as an action, with live feedback (Ctrl-C cancels and the robot stops):

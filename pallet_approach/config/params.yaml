@@ -14,9 +14,9 @@
     # pallet_tracker) or `fused` (pallet_fusion, D102). Chooses the tracked
     # topic the coordinator, controller and dashboard read, the GO/NO-GO
     # evaluation, and whether the old perception node is activated. Set it with
-    # the launch argument perception:=fused, which also starts pallet_fusion.
-    # `camera` until fused passes the sim acceptance, a replay and a dry run.
-    perception_source: camera
+    # the launch argument perception:=camera|fused; pallet_fusion runs in
+    # either (in shadow with camera). `fused` by default since D106.
+    perception_source: fused
 
     # [measured 2026-10-14] Where the real floor is in frames.ground. NOT zero:
     # the URDF's base_footprint joint is 25 mm out (its wheel geometry is right
@@ -417,6 +417,11 @@
     # the old camera-only pipeline (perception.py) does not use it.
     camera_depth:
       disparity_bias: 0.0048         # 1/m
+      # [D107, measured 2026-10-29] With the ZED's depth stabilization on (the
+      # SDK default), a moving camera's depth describes the scene this long
+      # before its stamp: camera minus LiDAR grew by 169 mm per m/s on the
+      # robot (robot_fused_run2). One run; check it on the next recorded one.
+      latency: 0.17                  # s
 
     # The fused perception, wired together (D102 step d,
     # pallet_approach/fused_pipeline.py; the pallet_fusion node runs it).
@@ -997,6 +1002,7 @@ fork_overlay:
     alpha: 0.45                 # fill transparency
     line_thickness: 2
     draw_pockets: true
+    draw_face: true                # the detected face's outline: measured width, floor to pallet height
     draw_standoff_marker: true
 # ---------------------------------------------------------------------------
 # dashboard: composites fork_overlay's image with a HUD of everything that is
@@ -1148,11 +1154,9 @@ pallet_fusion:
     run_when: always
     max_rate: 15.0                   # depth frames per second, D102 item 10
     odom_match_tolerance: 0.05       # s: odometry this close to a stamp is the robot's pose then
-    # The file the fused blocks (/** lidar_acquisition, camera_pockets, ...) are
-    # read from. The launch file passes the params file it used; empty means
-    # the installed config/params.yaml.
-    params_file: ''
-    overlay_file: ''                 # merged over params_file's /** (the launch passes overlay_params)
+    # The fused blocks (/** lidar_acquisition, camera_pockets, ...) are read
+    # from the params and overlay files the launch passes as --params and
+    # --overlay; without them, from the installed config/params.yaml.
 
 pallet_tracker:
   ros__parameters:

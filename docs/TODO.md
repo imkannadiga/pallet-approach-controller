@@ -9,12 +9,14 @@ decided until it reaches `decisions.md`.
 ### Fused perception (D102, D104): open items
 - The fused sideways sigma is optimistic (+-2 mm claimed, -12/-3 mm on the two
   taped bags): record more taped-lateral bags before trusting it.
-- `perception:=fused` has not yet reached GO in the sim: the overlay fix
-  (params_file / overlay_file passed with `-p`) is untested.
+- The full D96 sim acceptance in fused mode (seed 7, 10 runs) was stopped
+  early (D106); run it to the end for a 9-of-10 count.
+- The fusion node leaves TrackedPallet's frame counters at 0, so the
+  dashboard's TRACKER widget reads "0/0 frames".
 
 ### Fused perception on the robot (needs the robot)
-Rebuild the image; `./docker/build_and_run.sh dry` with `fusion:=true` (shadow) and then `perception:=fused`; read
-/pallet_fusion/stats (timing on the Jetson, rates, sigma) next to the old
+Rebuild the image; `./docker/build_and_run.sh dry` (fused is the default,
+D106); read /pallet_fusion/stats (timing on the Jetson, rates, sigma) next to the old
 pipeline's estimate through a few runs. Also: D101 dry run, D103 against the
 calibration runs' PnP distances, taped-lateral and loaded-pallet bags.
 

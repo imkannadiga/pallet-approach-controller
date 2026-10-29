@@ -81,7 +81,7 @@ def test_the_d104_limits_are_in_params():
                            .read_text())['coordinator']['ros__parameters']['go_nogo']
     assert coord['max_yaw_error'] == pytest.approx(math.radians(3), abs=0.001)
     assert coord['max_lateral_offset'] == pytest.approx(0.030)
-    assert g['perception_source'] == 'camera'           # fused only after the acceptance
+    assert g['perception_source'] == 'fused'            # the default since D106
 
 
 def test_a_healthy_track_needs_five_accepted_frames_from_both():

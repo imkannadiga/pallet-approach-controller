@@ -128,17 +128,25 @@ def declare_lidar_params(node) -> None:
 def lidar_in_ground(node, buffer, cloud_frame: str, stamp, timeout) -> np.ndarray:
     """4x4 ``ground <- cloud_frame`` with the LiDAR correction in force: D101
     (calibrated, moved with the camera's tilt correction), else D74, else tf as is.
-    Shared by the tracker and the controller so both put the LiDAR in one place.
+    Shared by the tracker, the controller and the fusion node.
+
+    Looked up at the LATEST transform, not at `stamp`: every link between the
+    LiDAR and the ground is fixed to the robot, but since D101 the chain runs
+    through the ZED's self-calibration link, which pauses when the ZED does
+    (460 ms on 2026-10-29, which aborted an insertion). Motion between the
+    sweep and now is the caller's business (odometry, D90); `stamp` is unused.
     """
+    import rclpy.time
     from pallet_approach.calibration import (correct_lidar_transform, correction_matrix,
                                              lidar_follows_camera)
     from pallet_approach.ros_conversions import transform_to_matrix
     get = lambda name: node.get_parameter(name).value   # noqa: E731
     ground = get('frames.ground')
-    matrix = transform_to_matrix(lookup_waiting(buffer, ground, cloud_frame, stamp, timeout))
+    latest = rclpy.time.Time()
+    matrix = transform_to_matrix(lookup_waiting(buffer, ground, cloud_frame, latest, timeout))
     if get('frames.lidar_calibration.enabled'):
         camera = transform_to_matrix(lookup_waiting(
-            buffer, ground, get('frames.camera_optical'), stamp, timeout))
+            buffer, ground, get('frames.camera_optical'), latest, timeout))
         correction = np.eye(3)
         if get('frames.extrinsic_correction.enabled'):
             correction = correction_matrix(get('frames.extrinsic_correction.measured_floor_pitch'),

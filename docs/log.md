@@ -1198,3 +1198,54 @@ say whether fused mode reaches GO.
 **Clean-up.** Docstrings and comments across the package and tools cut to
 what the code does and why (decision refs, one-line measured facts); stale
 EPAL numbers and the old `GO` outcome removed from them. No behaviour change.
+
+## 2026-10-29
+
+**Fused mode drives a whole pickup in the GPU sim.** Three fixes first:
+pallet_fusion still read no overlay (launch_ros puts `-p` before the
+`--params-file` arguments it generates, and later files win; the file paths
+are now plain arguments before `--ros-args`); the dashboard's LiDAR cross-check
+showed DISAGREES whenever GO was not yet allowed (it was filled from
+`go_allowed`; now from the D102 disagreement rule, and the coordinator reads
+`status == 'READY'`); and the fork overlay drew nothing in fused mode (it
+listened to the inactive camera node; it now reads the fused track and also
+outlines the detected face). Then, pallet at 3.0 m, +0.15 m, ~3 deg: CLOSING
+from 3.00 m, GO at the standoff (fused, D104), INSERTED 1.059 m, lifted 50 mm.
+Cross-check during the approach: 1 mm on 87 LiDAR points. A D96 batch in fused
+mode (seed 7) ran without a failure until stopped early; no count recorded.
+Fused made the default (D106). Also fixed: test_evaluate_bags still imported
+BUMPER_X from its old home; full suite 1006 passed, 7 skipped.
+
+**Fused runs on the robot: camera-LiDAR disagreement was a time offset.** Two
+runs from 2.6 m / -0.10 m ended NO_GO on the D102 disagreement rule after ~8 s
+of closing. Measured, not guessed: the clocks agree (chrony 5 ms; clock_audit);
+an Ouster cloud's stamp is the start of its sweep and the points ahead are
+measured 51 ms later (fixed); and from a recorded run (robot_fused_run2, the
+camera's range residual per frame against /odom) camera minus LiDAR grows by
++169 mm per m/s, i.e. the ZED's depth trails its capture stamp by ~170 ms --
+its depth stabilization, on by SDK default. `debug.use_pub_timestamps: true`
+had never reached the node (the compose `command:` replaces the Dockerfile's
+CMD) and would have moved the stamps the wrong way. Stabilization off removed
+the lag but biased the camera standing still (+14..+26 mm, ~-2.6 deg), so it
+is back on and the lag is compensated in software (D107). On the way: the
+rebuilt ZED container had lost its FastDDS profile (hand-added on the Jetson,
+never in the robot PC's copy that build.sh syncs), so the stack saw none of
+its topics until the profile lines were restored there. The track also
+dropped for 1-2 s while the robot turned; not yet explained.
+
+**First GO on the robot; then an insertion abort from a ZED tf pause.**
+robot_fused_run3, with the 0.17 s camera correction: CLOSING from 2.59 m /
+-87 mm to the standoff in 13.6 s (camera within ~+-5 mm of the LiDAR while
+driving, 3.7 mm rms), GO by the fused tree, forks lowered, insertion started --
+then ABORTED after 2.6 s: "no LiDAR measurement of the face for 5 frames".
+Replaying the insertion's corridor on the bag's sweeps finds the face every
+time (350-380 returns), so the corridor is fine; the bag ends 1.4 s before the
+abort. The controller logged tf extrapolation: at 477.87 the ZED's
+self-calibration link was ~460 ms behind (51 ms normal), and since D101 the
+LiDAR's frame hangs below it, so every LiDAR lookup at the sweep's stamp
+failed. The LiDAR's pose is now looked up at the latest transform (all links
+robot-fixed). The bag also shows ZED pauses of 183 and 251 ms before the run;
+the camera feed's jumps are likely those, its smearing likely WebRTC packet
+loss on Wi-Fi while a bag was being copied over it. The camera lag fitted
+with range as a term: 0.19 s (run2) and 0.10 s (run3) -- a blend, not a fixed
+delay; 0.17 kept for now.

@@ -59,7 +59,7 @@ class DashboardNode(Node):
             'with coordinator, health, tracker, controller and fork telemetry')
 
     def _declare(self):
-        self.declare_parameter('perception_source', 'camera')
+        self.declare_parameter('perception_source', 'fused')
         self.declare_parameter('publish_rate', 5.0)
         self.declare_parameter('placeholder_size', [640, 360])
         self.declare_parameter('pad', 8)

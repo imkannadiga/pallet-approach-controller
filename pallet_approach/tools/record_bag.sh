@@ -63,6 +63,11 @@ DEPTH_INFO=/zed2/zed_node/depth/camera_info
 IMAGE=/zed2/zed_node/rgb/color/rect/image
 IMAGE_INFO=/zed2/zed_node/rgb/color/rect/camera_info
 EXTRA=(/tf /tf_static /odom /joint_states /scout_status)
+# The stack's own small outputs, so a run can be analysed against its sensors.
+EXTRA+=(/pallet_fusion/tracked /pallet_fusion/stats /coordinator/status /coordinator/state
+        /coordinator/pallet_pose /approach_controller/status /approach_controller/drive
+        /virtual_forks/state /virtual_forks/command /pallet_approach/nav_lock
+        /cmd_vel_pallet /cmd_vel_safety /cmd_vel /pallet_approach/result /health /diagnostics)
 # The Jetson's local copy, from lidar_relay. NEVER record the raw /ouster/points
 # from a machine other than the robot PC: a second network subscriber to a
 # 3 MB / 10 Hz cloud throttled the Ouster to 2.6-4.6 Hz (docs/dataset.md) and

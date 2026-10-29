@@ -27,7 +27,8 @@
 # added: overlay_params:=config/sim_overlay.yaml (sim time, no camera tilt
 # correction) and encoder:=x264 (no Jetson encoder here). The fused perception
 # (D102) runs in shadow too, fusion:=true; SIM_FUSION=false to leave it out.
-# SIM_PERCEPTION=fused runs the whole stack ON the fused perception (D104).
+# The stack runs ON the fused perception (D104, default since D106);
+# SIM_PERCEPTION=camera runs the camera-only pipeline instead.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -139,7 +140,7 @@ case "${1:-}" in
       "source /ros2_ws/install/setup.bash && ros2 launch pallet_approach pallet_approach.launch.py \
          overlay_params:=/ros2_ws/install/pallet_approach/share/pallet_approach/config/sim_overlay.yaml \
          lidar_calibration:=none encoder:=x264 fusion:=${SIM_FUSION:-true} \
-         perception:=${SIM_PERCEPTION:-camera}"
+         perception:=${SIM_PERCEPTION:-fused}"
     echo "started $GAZEBO and $STACK on domain $DOMAIN (localhost only)."
     echo "  give Gazebo ~20 s to spawn the robot, then:"
     echo "  ./sim/run_sim.sh status"

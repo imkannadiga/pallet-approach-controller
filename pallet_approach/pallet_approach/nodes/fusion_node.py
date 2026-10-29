@@ -3,15 +3,18 @@
 Publishes ~/tracked (TrackedPallet, the tracker's message type) and ~/stats
 (JSON at 1 Hz: timing, uncertainty, disagreement and freshness). With
 `perception_source: camera` nothing reads ~/tracked (shadow); with
-`perception:=fused` the coordinator, controller, dashboard and watchdog do
-(D104). The pockets' width and height in the estimate are the side's NOMINAL
+`perception:=fused` (the default, D106) the coordinator, controller,
+dashboard and watchdog do (D104). The pockets' width and height in the estimate are the side's NOMINAL
 values, not measurements.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import os
+import sys
 from collections import deque
 
 import numpy as np
@@ -19,6 +22,7 @@ import rclpy
 import yaml
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
@@ -26,7 +30,7 @@ from std_msgs.msg import Header, String
 from tf2_ros import Buffer
 
 from pallet_approach.calibration import correct_transform, correction_matrix
-from pallet_approach.fused_pipeline import FusedPipeline
+from pallet_approach.fused_pipeline import FusedPipeline, forward_time, pose_at
 from pallet_approach.model import PalletEstimate, Pocket
 from pallet_approach.nodes._common import (CameraTransformListener, declare_lidar_params, image_to_array,
                                            intrinsics_from_camera_info, lidar_in_ground, lookup_waiting)
@@ -50,18 +54,16 @@ def _merge(base: dict, over: dict) -> None:
 
 class FusionNode(Node):
 
-    def __init__(self):
+    def __init__(self, params_file: str | None = None, overlay_file: str | None = None):
         super().__init__('pallet_fusion')
         self._declare()
         get = lambda n: self.get_parameter(n).value   # noqa: E731
-        path = get('params_file') or self._default_params
-        with open(path) as f:
+        with open(params_file or _default_params()) as f:
             shared = yaml.safe_load(f)['/**']['ros__parameters']
         # The overlay applies here too: the sim's switches off the real ZED's
         # disparity offset (D103), which made sim depth read +30 mm far.
-        overlay = get('overlay_file')
-        if overlay:
-            with open(overlay) as f:
+        if overlay_file:
+            with open(overlay_file) as f:
                 over = (yaml.safe_load(f) or {}).get('/**', {}).get('ros__parameters', {})
             _merge(shared, over)
         self._shared = shared
@@ -92,15 +94,9 @@ class FusionNode(Node):
         self.get_logger().info(f'fused perception {mode} ({get("run_when")}); publishing ~/tracked, ~/stats')
 
     def _declare(self):
-        import os
-        from ament_index_python.packages import get_package_share_directory
-        self._default_params = os.path.join(get_package_share_directory('pallet_approach'), 'config',
-                                            'params.yaml')
         for name, value in (
-                ('params_file', ''),               # the fused blocks are read from here, see below
-                ('overlay_file', ''),              # and merged with this one's /** block (the sim's)
                 ('run_when', 'always'),            # always | running (only while a run is active)
-                ('perception_source', 'camera'),   # only for the log line: fused = the run reads us
+                ('perception_source', 'fused'),    # only for the log line: fused = the run reads us
                 ('max_rate', 15.0),                # depth frames per second, D102 item 10
                 ('odom_match_tolerance', 0.05),
                 ('topics.depth', '/zed2/zed_node/depth/depth_registered'),
@@ -114,20 +110,15 @@ class FusionNode(Node):
             self.declare_parameter(name, value)
         declare_lidar_params(self)
         # The pipeline's nested blocks (lidar_acquisition, camera_pockets,
-        # fusion, ...) are read from the YAML files themselves (`params_file`,
-        # `overlay_file`) rather than declared key by key.
+        # fusion, ...) are read from the YAML files themselves (--params,
+        # --overlay; see main) rather than declared key by key.
 
     # ----------------------------------------------------------- helpers
     def _active(self) -> bool:
         return self.get_parameter('run_when').value == 'always' or self._state not in NOT_RUNNING
 
     def _pose_at(self, stamp: float):
-        if not self._odom:
-            return None
-        t, pose = min(self._odom, key=lambda row: abs(row[0] - stamp))
-        if abs(t - stamp) > self.get_parameter('odom_match_tolerance').value:
-            return None
-        return (pose.x, pose.y, pose.yaw)
+        return pose_at(self._odom, stamp, self.get_parameter('odom_match_tolerance').value)
 
     def _timeout(self):
         return rclpy.duration.Duration(seconds=float(self.get_parameter('frames.tf_timeout').value))
@@ -139,7 +130,8 @@ class FusionNode(Node):
         self._state = msg.data
 
     def _on_odom(self, msg: Odometry):
-        self._odom.append((stamp_to_seconds(msg.header.stamp), pose2d_from_odometry(msg)))
+        pose = pose2d_from_odometry(msg)
+        self._odom.append((stamp_to_seconds(msg.header.stamp), (pose.x, pose.y, pose.yaw)))
 
     def _on_info(self, msg: CameraInfo):
         self._intrinsics = intrinsics_from_camera_info(msg)
@@ -149,16 +141,23 @@ class FusionNode(Node):
             return
         cloud = deserialize_message(raw, PointCloud2)
         stamp = stamp_to_seconds(cloud.header.stamp)
-        robot = self._pose_at(stamp)
-        if robot is None:
-            return
         try:
             matrix = lidar_in_ground(self, self._buffer, cloud.header.frame_id, cloud.header.stamp,
                                      self._timeout())
         except Exception as error:                                        # noqa: BLE001
             self.get_logger().warning(f'LiDAR tf: {error}', throttle_duration_sec=5.0)
             return
-        points = transform_points(unpack_cloud(cloud), matrix)
+        # The stamp is the sweep's start; the pallet ahead is measured later in
+        # the sweep (the Ouster's per-point `t`, ns). The sim's cloud has none.
+        if any(f.name == 't' for f in cloud.fields):
+            raw_points = unpack_cloud(cloud, ('x', 'y', 'z', 't'))
+            points = transform_points(raw_points[:, :3], matrix)
+            stamp += forward_time(points, raw_points[:, 3] * 1e-9)
+        else:
+            points = transform_points(unpack_cloud(cloud), matrix)
+        robot = self._pose_at(stamp)
+        if robot is None:
+            return
         self._points = len(points)
         self._last_stamp = max(self._last_stamp, stamp)
         self._pipe.on_lidar(points, robot, stamp)
@@ -173,8 +172,13 @@ class FusionNode(Node):
         self._last_depth = now
         msg = deserialize_message(raw, Image)
         stamp = stamp_to_seconds(msg.header.stamp)
+        # The ZED's depth stabilization blends frames, so its depth describes
+        # the scene `latency` before the stamp (D107). The pipeline gets that
+        # time and the pose then; the published track keeps the frame's stamp.
+        measured = stamp - float(self._shared['camera_depth'].get('latency', 0.0))
         robot = self._pose_at(stamp)
-        if robot is None:
+        robot_measured = self._pose_at(measured)
+        if robot is None or robot_measured is None:
             return
         try:
             cam = transform_to_matrix(lookup_waiting(self._buffer, self.get_parameter('frames.ground').value,
@@ -184,7 +188,8 @@ class FusionNode(Node):
             return
         cam = correct_transform(cam, self._correction)
         self._last_stamp = max(self._last_stamp, stamp)
-        self._pipe.on_depth(image_to_array(msg).astype(np.float32), self._intrinsics, cam, robot, stamp)
+        self._pipe.on_depth(image_to_array(msg).astype(np.float32), self._intrinsics, cam,
+                            robot_measured, measured)
         self._publish(msg.header, stamp, robot)
 
     # ----------------------------------------------------------- output
@@ -193,7 +198,7 @@ class FusionNode(Node):
         out.header = Header(stamp=header.stamp, frame_id=self.get_parameter('frames.ground').value)
         st = self._pipe.status(stamp)
         # D104 stages: confirmed = the LiDAR is tracking (enough to drive);
-        # lidar_agrees = ready for GO; status SEARCHING/TRACKING/DISAGREE/READY.
+        # status READY = GO allowed; SEARCHING/TRACKING/DISAGREE otherwise.
         tracking = st.initialised and st.lidar_age <= self._shared['fusion']['lidar_max_age']
         out.status = ('DISAGREE' if st.disagreeing else 'READY' if st.go_allowed
                       else 'TRACKING' if tracking else 'SEARCHING')
@@ -230,8 +235,11 @@ class FusionNode(Node):
         out.center_odom.x, out.center_odom.y = float(st.centre[0]), float(st.centre[1])
         out.yaw_odom = float(st.yaw)
         cam = self._pipe.last_camera
-        out.lidar_evaluated = True
-        out.lidar_agrees = bool(st.go_allowed)
+        # The cross-check proper (D102 item 6), not readiness: that is `status`.
+        f = self._shared['fusion']
+        out.lidar_evaluated = bool(cam is not None and st.lidar_age <= f['lidar_max_age']
+                                   and st.camera_age <= f['camera_max_age'])
+        out.lidar_agrees = bool(out.lidar_evaluated and not st.disagreeing)
         out.lidar_offset = float(cam.range_residual) if cam else float('nan')
         out.lidar_points = int(face.points) if face else 0
         out.lidar_detail = f'sigma lateral {1000 * st.sigma_lateral:.1f} mm, range {1000 * st.sigma_range:.1f} mm'
@@ -255,9 +263,21 @@ class FusionNode(Node):
         self._stats_pub.publish(String(data=json.dumps(stats, allow_nan=True)))
 
 
+def _default_params() -> str:
+    from ament_index_python.packages import get_package_share_directory
+    return os.path.join(get_package_share_directory('pallet_approach'), 'config', 'params.yaml')
+
+
 def main(args=None):
+    # The files are plain arguments before --ros-args, not ROS parameters: a
+    # node-specific entry in any --params-file beats both a launch dict and a
+    # -p override, so as parameters the launch's paths never arrived.
     rclpy.init(args=args)
-    node = FusionNode()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--params', default=None, help='params.yaml to read the fused blocks from')
+    parser.add_argument('--overlay', default=None, help="merged over its /** block (the sim's)")
+    files, _ = parser.parse_known_args(remove_ros_args(args if args is not None else sys.argv)[1:])
+    node = FusionNode(files.params, files.overlay)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

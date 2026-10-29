@@ -42,6 +42,18 @@ def pocket_corners(pocket, face_normal, floor, nominal=None) -> np.ndarray:
                      c + half_w * along - half_h * up])
 
 
+def face_corners(position, face_normal, width, height, floor) -> np.ndarray:
+    """The four corners of the pallet's face, in `base_footprint`: `width`
+    across, centred on `position`, from the floor plane up to `height`."""
+    up = np.asarray(floor.normal, dtype=float)
+    along = np.cross(up, face_normal)
+    along /= np.linalg.norm(along)
+    base = np.asarray(position, dtype=float) - floor.height_of(position) * up
+    half = width / 2
+    return np.array([base + half * along + height * up, base - half * along + height * up,
+                     base - half * along, base + half * along])
+
+
 def project(points_ground, ground_to_camera, intrinsics):
     """(N, 3) in base_footprint -> (N, 2) pixels, plus a visibility mask.
 

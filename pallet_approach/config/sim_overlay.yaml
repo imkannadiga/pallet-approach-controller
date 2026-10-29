@@ -39,6 +39,7 @@
     # pallet_fusion, which merges this file's /** block over params.yaml's.
     camera_depth:
       disparity_bias: 0.0
+      latency: 0.0                   # the sim's depth has no stabilization lag (D107)
 
 pallet_fusion:
   ros__parameters:

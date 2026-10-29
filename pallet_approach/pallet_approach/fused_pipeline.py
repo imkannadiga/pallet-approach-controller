@@ -10,6 +10,7 @@ The floor is the LiDAR's last fit in the base frame (valid on a flat floor).
 
 from __future__ import annotations
 
+import bisect
 import math
 import time
 from dataclasses import dataclass, field
@@ -20,6 +21,38 @@ from pallet_approach.camera_pockets import CameraPockets, measure
 from pallet_approach.fusion import FusionStatus, PalletFilter, to_odom, wrap
 from pallet_approach.lidar_pallet import LidarPallet, find_pallet
 from pallet_approach.model import Plane
+
+
+def pose_at(samples, stamp: float, tolerance: float):
+    """The odom pose (x, y, yaw) at `stamp`, interpolated between the samples
+    either side of it; `samples` is [(time, (x, y, yaw)), ...] in time order.
+    Without a sample within `tolerance` on each side, the nearest one within
+    `tolerance`, or None."""
+    if not samples:
+        return None
+    times = [t for t, _ in samples]
+    i = bisect.bisect_left(times, stamp)
+    before = samples[i - 1] if i > 0 else None
+    after = samples[i] if i < len(samples) else None
+    if (before and after and stamp - before[0] <= tolerance and after[0] - stamp <= tolerance
+            and after[0] > before[0]):
+        k = (stamp - before[0]) / (after[0] - before[0])
+        (x0, y0, a0), (x1, y1, a1) = before[1], after[1]
+        return (x0 + k * (x1 - x0), y0 + k * (y1 - y0), wrap(a0 + k * wrap(a1 - a0)))
+    near = min((s for s in (before, after) if s), key=lambda s: abs(s[0] - stamp))
+    return tuple(near[1]) if abs(near[0] - stamp) <= tolerance else None
+
+
+def forward_time(points: np.ndarray, times: np.ndarray, half_angle_deg: float = 30.0) -> float:
+    """Median measurement time of the points within `half_angle_deg` of straight
+    ahead (base frame), where the pallet is during an approach; 0 when none.
+
+    A LiDAR sweep carries one stamp, the start of the sweep; the Ouster measures
+    straight ahead about 51 ms later (measured 2026-10-29), so a pose looked up
+    at the stamp places a moving robot's sweep wrongly by speed x 51 ms."""
+    ahead = (points[:, 0] > 0) & (np.abs(np.degrees(np.arctan2(points[:, 1], points[:, 0])))
+                                   <= half_angle_deg)
+    return float(np.median(times[ahead])) if ahead.any() else 0.0
 
 
 def to_base(robot: tuple[float, float, float], point: np.ndarray) -> np.ndarray:

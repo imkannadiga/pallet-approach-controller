@@ -11,7 +11,8 @@ import pytest
 
 pytest.importorskip('rosbags')
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'tools'))
-from evaluate_bags import BUMPER_X, truth_for  # noqa: E402
+from _bagutil import BUMPER_X  # noqa: E402
+from evaluate_bags import truth_for  # noqa: E402
 
 SIDES = {'short': {'face_width': 0.795, 'pocket_spacing': 0.365, 'pocket_width': 0.23,
                    'opening_bottom': 0.0, 'opening_top': 0.10}}
