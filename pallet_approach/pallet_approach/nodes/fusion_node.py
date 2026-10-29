@@ -189,7 +189,7 @@ class FusionNode(Node):
         out.header = Header(stamp=header.stamp, frame_id=self.get_parameter('frames.ground').value)
         st = self._pipe.status(stamp)
         # D104 stages: confirmed = the LiDAR is tracking (enough to drive);
-        # lidar_agrees = ready for GO; status SEARCHING/TRACKING/DISAGREE/READY.
+        # status READY = GO allowed; SEARCHING/TRACKING/DISAGREE otherwise.
         tracking = st.initialised and st.lidar_age <= self._shared['fusion']['lidar_max_age']
         out.status = ('DISAGREE' if st.disagreeing else 'READY' if st.go_allowed
                       else 'TRACKING' if tracking else 'SEARCHING')
@@ -226,8 +226,11 @@ class FusionNode(Node):
         out.center_odom.x, out.center_odom.y = float(st.centre[0]), float(st.centre[1])
         out.yaw_odom = float(st.yaw)
         cam = self._pipe.last_camera
-        out.lidar_evaluated = True
-        out.lidar_agrees = bool(st.go_allowed)
+        # The cross-check proper (D102 item 6), not readiness: that is `status`.
+        f = self._shared['fusion']
+        out.lidar_evaluated = bool(cam is not None and st.lidar_age <= f['lidar_max_age']
+                                   and st.camera_age <= f['camera_max_age'])
+        out.lidar_agrees = bool(out.lidar_evaluated and not st.disagreeing)
         out.lidar_offset = float(cam.range_residual) if cam else float('nan')
         out.lidar_points = int(face.points) if face else 0
         out.lidar_detail = f'sigma lateral {1000 * st.sigma_lateral:.1f} mm, range {1000 * st.sigma_range:.1f} mm'

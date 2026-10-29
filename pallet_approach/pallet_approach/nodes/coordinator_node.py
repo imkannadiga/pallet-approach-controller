@@ -583,7 +583,7 @@ class CoordinatorNode(Node):
             tracked = self._tracked
             return go_nogo.evaluate_fused(
                 self._estimate, Pose2D(0.0, 0.0, 0.0),
-                bool(tracked is not None and tracked.lidar_agrees),
+                bool(tracked is not None and tracked.status == 'READY'),
                 tracked.reason if tracked is not None else 'no track', params)
         try:
             # The rules work in the estimate's own frame, so the robot is at
