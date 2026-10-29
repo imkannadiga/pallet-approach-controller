@@ -88,3 +88,33 @@ def test_the_sweep_time_is_taken_from_the_points_ahead():
     times = (0.050 - np.degrees(bearings) / 360 * 0.100)
     assert forward_time(points, times) == pytest.approx(0.050, abs=0.001)
     assert forward_time(points[np.abs(np.degrees(bearings)) > 90], times[np.abs(np.degrees(bearings)) > 90]) == 0.0
+
+
+def test_a_lagging_camera_agrees_with_the_lidar_only_at_its_measurement_time():
+    """D107: the ZED's stabilized depth shows the scene `lag` before its stamp.
+    Placed at the stamp's pose, a robot driving in at 0.1 m/s sees the camera
+    read 0.1 * lag farther than the LiDAR; at the measurement time, not.
+    Compared with a camera without lag: the synthetic depth has no ZED bias,
+    so the D103 correction in PARAMS adds a constant offset to every case."""
+    def residual(lag, compensate):
+        pipe = FusedPipeline(PARAMS)
+        for i in range(5):
+            pipe.on_lidar(sweep(*PALLET, seed=i), (0.0, 0.0, 0.0), 0.1 * i)
+        t, x, v = 0.5, 0.0, 0.1
+        out = []
+        for step in range(20):
+            t += 0.1
+            x += v * 0.1
+            pipe.on_lidar(sweep(PALLET[0] - x, PALLET[1], seed=200 + step), (x, 0.0, 0.0), t)
+            seen = x - v * lag                       # where the camera's depth really is from
+            measured, pose = (t - lag, seen) if compensate else (t, x)
+            r = pipe.on_depth(depth_image(PALLET[0] - seen, PALLET[1], seed=step),
+                              INTRINSICS, CAMERA, (pose, 0.0, 0.0), measured)
+            if r is not None and np.isfinite(r.range_residual):
+                out.append(r.range_residual)
+        return float(np.median(out))
+
+    lag = 0.17
+    baseline = residual(0.0, compensate=False)
+    assert residual(lag, compensate=False) - baseline == pytest.approx(0.1 * lag, abs=0.005)
+    assert abs(residual(lag, compensate=True) - baseline) < 0.003

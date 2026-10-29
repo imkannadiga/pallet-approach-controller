@@ -417,6 +417,11 @@
     # the old camera-only pipeline (perception.py) does not use it.
     camera_depth:
       disparity_bias: 0.0048         # 1/m
+      # [D107, measured 2026-10-29] With the ZED's depth stabilization on (the
+      # SDK default), a moving camera's depth describes the scene this long
+      # before its stamp: camera minus LiDAR grew by 169 mm per m/s on the
+      # robot (robot_fused_run2). One run; check it on the next recorded one.
+      latency: 0.17                  # s
 
     # The fused perception, wired together (D102 step d,
     # pallet_approach/fused_pipeline.py; the pallet_fusion node runs it).

@@ -172,8 +172,13 @@ class FusionNode(Node):
         self._last_depth = now
         msg = deserialize_message(raw, Image)
         stamp = stamp_to_seconds(msg.header.stamp)
+        # The ZED's depth stabilization blends frames, so its depth describes
+        # the scene `latency` before the stamp (D107). The pipeline gets that
+        # time and the pose then; the published track keeps the frame's stamp.
+        measured = stamp - float(self._shared['camera_depth'].get('latency', 0.0))
         robot = self._pose_at(stamp)
-        if robot is None:
+        robot_measured = self._pose_at(measured)
+        if robot is None or robot_measured is None:
             return
         try:
             cam = transform_to_matrix(lookup_waiting(self._buffer, self.get_parameter('frames.ground').value,
@@ -183,7 +188,8 @@ class FusionNode(Node):
             return
         cam = correct_transform(cam, self._correction)
         self._last_stamp = max(self._last_stamp, stamp)
-        self._pipe.on_depth(image_to_array(msg).astype(np.float32), self._intrinsics, cam, robot, stamp)
+        self._pipe.on_depth(image_to_array(msg).astype(np.float32), self._intrinsics, cam,
+                            robot_measured, measured)
         self._publish(msg.header, stamp, robot)
 
     # ----------------------------------------------------------- output

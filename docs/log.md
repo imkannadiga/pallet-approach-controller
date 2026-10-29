@@ -1215,3 +1215,20 @@ Cross-check during the approach: 1 mm on 87 LiDAR points. A D96 batch in fused
 mode (seed 7) ran without a failure until stopped early; no count recorded.
 Fused made the default (D106). Also fixed: test_evaluate_bags still imported
 BUMPER_X from its old home; full suite 1006 passed, 7 skipped.
+
+**Fused runs on the robot: camera-LiDAR disagreement was a time offset.** Two
+runs from 2.6 m / -0.10 m ended NO_GO on the D102 disagreement rule after ~8 s
+of closing. Measured, not guessed: the clocks agree (chrony 5 ms; clock_audit);
+an Ouster cloud's stamp is the start of its sweep and the points ahead are
+measured 51 ms later (fixed); and from a recorded run (robot_fused_run2, the
+camera's range residual per frame against /odom) camera minus LiDAR grows by
++169 mm per m/s, i.e. the ZED's depth trails its capture stamp by ~170 ms --
+its depth stabilization, on by SDK default. `debug.use_pub_timestamps: true`
+had never reached the node (the compose `command:` replaces the Dockerfile's
+CMD) and would have moved the stamps the wrong way. Stabilization off removed
+the lag but biased the camera standing still (+14..+26 mm, ~-2.6 deg), so it
+is back on and the lag is compensated in software (D107). On the way: the
+rebuilt ZED container had lost its FastDDS profile (hand-added on the Jetson,
+never in the robot PC's copy that build.sh syncs), so the stack saw none of
+its topics until the profile lines were restored there. The track also
+dropped for 1-2 s while the robot turned; not yet explained.
