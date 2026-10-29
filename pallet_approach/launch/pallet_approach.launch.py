@@ -168,13 +168,9 @@ def generate_launch_description():
             package='pallet_approach', executable='pallet_fusion', name='pallet_fusion',
             output='screen',
             parameters=[params, overlay_params, source_override],
-            # The file paths as -p, not in `parameters`: params.yaml sets both
-            # empty in pallet_fusion's own block, and a node-specific entry
-            # beats the launch's dict (which arrives as a wildcard) -- so the
-            # node read no overlay and the sim kept the real ZED's D103
-            # correction (+37 mm at 2.8 m). -p overrides every file.
-            arguments=arguments + ['-p', ['params_file:=', params],
-                                   '-p', ['overlay_file:=', overlay_params]],
+            # The files the node reads its fused blocks from, as plain arguments
+            # before --ros-args: no parameter file can override them there.
+            arguments=['--params', params, '--overlay', overlay_params] + arguments,
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('perception'), "' == 'fused' or '",
                 LaunchConfiguration('fusion'), "' == 'true'"])),

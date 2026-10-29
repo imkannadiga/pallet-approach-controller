@@ -10,8 +10,11 @@ values, not measurements.
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import os
+import sys
 from collections import deque
 
 import numpy as np
@@ -19,6 +22,7 @@ import rclpy
 import yaml
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.utilities import remove_ros_args
 from rclpy.qos import QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import CameraInfo, Image, PointCloud2
@@ -50,18 +54,16 @@ def _merge(base: dict, over: dict) -> None:
 
 class FusionNode(Node):
 
-    def __init__(self):
+    def __init__(self, params_file: str | None = None, overlay_file: str | None = None):
         super().__init__('pallet_fusion')
         self._declare()
         get = lambda n: self.get_parameter(n).value   # noqa: E731
-        path = get('params_file') or self._default_params
-        with open(path) as f:
+        with open(params_file or _default_params()) as f:
             shared = yaml.safe_load(f)['/**']['ros__parameters']
         # The overlay applies here too: the sim's switches off the real ZED's
         # disparity offset (D103), which made sim depth read +30 mm far.
-        overlay = get('overlay_file')
-        if overlay:
-            with open(overlay) as f:
+        if overlay_file:
+            with open(overlay_file) as f:
                 over = (yaml.safe_load(f) or {}).get('/**', {}).get('ros__parameters', {})
             _merge(shared, over)
         self._shared = shared
@@ -92,13 +94,7 @@ class FusionNode(Node):
         self.get_logger().info(f'fused perception {mode} ({get("run_when")}); publishing ~/tracked, ~/stats')
 
     def _declare(self):
-        import os
-        from ament_index_python.packages import get_package_share_directory
-        self._default_params = os.path.join(get_package_share_directory('pallet_approach'), 'config',
-                                            'params.yaml')
         for name, value in (
-                ('params_file', ''),               # the fused blocks are read from here, see below
-                ('overlay_file', ''),              # and merged with this one's /** block (the sim's)
                 ('run_when', 'always'),            # always | running (only while a run is active)
                 ('perception_source', 'camera'),   # only for the log line: fused = the run reads us
                 ('max_rate', 15.0),                # depth frames per second, D102 item 10
@@ -114,8 +110,8 @@ class FusionNode(Node):
             self.declare_parameter(name, value)
         declare_lidar_params(self)
         # The pipeline's nested blocks (lidar_acquisition, camera_pockets,
-        # fusion, ...) are read from the YAML files themselves (`params_file`,
-        # `overlay_file`) rather than declared key by key.
+        # fusion, ...) are read from the YAML files themselves (--params,
+        # --overlay; see main) rather than declared key by key.
 
     # ----------------------------------------------------------- helpers
     def _active(self) -> bool:
@@ -255,9 +251,21 @@ class FusionNode(Node):
         self._stats_pub.publish(String(data=json.dumps(stats, allow_nan=True)))
 
 
+def _default_params() -> str:
+    from ament_index_python.packages import get_package_share_directory
+    return os.path.join(get_package_share_directory('pallet_approach'), 'config', 'params.yaml')
+
+
 def main(args=None):
+    # The files are plain arguments before --ros-args, not ROS parameters: a
+    # node-specific entry in any --params-file beats both a launch dict and a
+    # -p override, so as parameters the launch's paths never arrived.
     rclpy.init(args=args)
-    node = FusionNode()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--params', default=None, help='params.yaml to read the fused blocks from')
+    parser.add_argument('--overlay', default=None, help="merged over its /** block (the sim's)")
+    files, _ = parser.parse_known_args(remove_ros_args(args if args is not None else sys.argv)[1:])
+    node = FusionNode(files.params, files.overlay)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

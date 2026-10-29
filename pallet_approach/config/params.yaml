@@ -1148,11 +1148,9 @@ pallet_fusion:
     run_when: always
     max_rate: 15.0                   # depth frames per second, D102 item 10
     odom_match_tolerance: 0.05       # s: odometry this close to a stamp is the robot's pose then
-    # The file the fused blocks (/** lidar_acquisition, camera_pockets, ...) are
-    # read from. The launch file passes the params file it used; empty means
-    # the installed config/params.yaml.
-    params_file: ''
-    overlay_file: ''                 # merged over params_file's /** (the launch passes overlay_params)
+    # The fused blocks (/** lidar_acquisition, camera_pockets, ...) are read
+    # from the params and overlay files the launch passes as --params and
+    # --overlay; without them, from the installed config/params.yaml.
 
 pallet_tracker:
   ros__parameters:
