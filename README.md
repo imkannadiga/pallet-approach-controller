@@ -476,7 +476,7 @@ tf and the clock.
 
 ```bash
 ./sim/run_sim.sh build
-./sim/run_sim.sh up face_x:=3.5 face_y:=0.25 face_yaw:=0.1
+./sim/run_sim.sh up face_x:=2.8 face_y:=0.25 face_yaw:=0.1   # face 1.5-3.0 m ahead (D97)
 ./sim/run_sim.sh run pickup
 # dashboard: http://localhost:8889/dashboard
 ./sim/run_sim.sh stop
