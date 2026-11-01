@@ -15,11 +15,20 @@ decided until it reaches `decisions.md`.
   dashboard's TRACKER widget reads "0/0 frames".
 
 ### Fused perception on the robot (needs the robot)
-Rebuild the image; `./docker/build_and_run.sh dry` (fused is the default,
-D106); read /pallet_fusion/stats (timing on the Jetson, rates, sigma) next to the old
-pipeline's estimate through a few runs. Also: D101 dry run, D103 against the
-calibration runs' PnP distances, taped-lateral and loaded-pallet bags.
-
+- **D96 acceptance on the robot:** ten supervised runs from the seed-7 starts,
+  9 of 10 INSERTED. Record each (record_bag.sh) and run tools/run_report.py.
+- **Re-fit D103 on new flat-board bags.** From 2.86 m the camera read
+  +23..+25 mm against the LiDAR standing still (limit 20 mm), so runs start
+  from <= ~2.6 m for now. Check the fit with stabilization on, as deployed.
+- **Confirm the 0.17 s camera lag (D107)** over more runs; run2 and run3 fit
+  0.19 and 0.10 s once range is a separate term.
+- **ZED pauses:** 183, 251 and 460 ms seen on 2026-10-29 (the last aborted an
+  insertion before the LiDAR lookup stopped depending on it). With the Jetson
+  at 86-90 % CPU in MODE_30W (8 of 12 cores), try the full power mode; it may
+  also shorten the fused estimate's 213-462 ms age.
+- **The bag recorder stalled for 5 s** during run5's insertion (all topics at
+  once, the stack unaffected); record fewer/thinner topics or on the robot PC.
+- Taped-lateral and loaded-pallet bags.
 
 - **Learned pallet detector in front of the geometry.** A small detector
   (YOLO class, TensorRT on the Orin's GPU; an open-vocabulary model such as
