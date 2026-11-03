@@ -23,7 +23,6 @@ from pallet_approach.approach import wrap_angle as wrap
 from pallet_approach.range_error import sigma_total
 
 
-
 def to_odom(robot: tuple[float, float, float], point: np.ndarray) -> np.ndarray:
     """A base-frame (x, y) point into odom, given the robot's odom pose (x, y, yaw)."""
     x, y, yaw = robot
