@@ -6,8 +6,9 @@ pallet is static, so prediction only grows the covariance (odometry drift).
 The LiDAR measures the full pose (good range and angle, rough lateral); the
 camera only the lateral, z = t . (px, py). Each update is gated by its
 Mahalanobis distance. GO additionally needs (D102 items 6-7, D104 item 3):
-no camera-LiDAR disagreement over 20 mm / 3 deg for 5 frames, both sensors
-fresh, and both accepted for the last `healthy_frames` frames.
+no camera-LiDAR disagreement over `disagree_range` (30 mm, D110) or
+`disagree_yaw_deg` for `disagree_frames` frames, both sensors fresh, and both
+accepted for the last `healthy_frames` frames.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import numpy as np
 
 from pallet_approach.approach import wrap_angle as wrap
 from pallet_approach.range_error import sigma_total
-
 
 
 def to_odom(robot: tuple[float, float, float], point: np.ndarray) -> np.ndarray:

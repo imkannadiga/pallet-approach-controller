@@ -198,7 +198,7 @@ pocket edges about six times finer than the LiDAR's columns at 2.5 m.
   short by an error that grows with the square of the distance, the signature
   of one constant disparity offset: 1/z_measured = 1/z_true + β. One
   number, β = 0.0048 m⁻¹, fitted on the board bags, corrects it.
-- **A Kalman filter in `odom` combines them.** The LiDAR measures range
+- **A Kalman filter in `odom` combines them** ([step by step on a real run](docs/kalman_filter.md)). The LiDAR measures range
   (σ 4 mm), angle (1°) and a rough lateral position (15 mm); the camera
   measures the lateral position (5 mm). Odometry carries the estimate between
   measurements, and chi-square gates refuse outliers. If camera and LiDAR
@@ -640,6 +640,7 @@ docs/                            design record, system facts, dataset and tape t
 | [docs/decisions.md](docs/decisions.md) | Every behaviour decision (D1–D108): what, why, when |
 | [docs/SYSTEM.md](docs/SYSTEM.md) | Measured facts about the robot: topics, frames, calibration, network |
 | [docs/TODO.md](docs/TODO.md) | What is still open |
+| [docs/kalman_filter.md](docs/kalman_filter.md) | How the camera–LiDAR Kalman filter works, step by step, on a real run |
 | [docs/dataset.md](docs/dataset.md), [docs/bag_truth.yaml](docs/bag_truth.yaml) | The recorded bags and their tape-measured ground truth |
 | [docs/log.md](docs/log.md) | Daily engineering log: what broke and how it was fixed |
 | [sim/README.md](sim/README.md) | The Gazebo simulation, and its limits |
