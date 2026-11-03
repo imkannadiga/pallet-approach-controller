@@ -15,6 +15,10 @@ decided until it reaches `decisions.md`.
   dashboard's TRACKER widget reads "0/0 frames".
 
 ### Fused perception on the robot (needs the robot)
+- **Heading at GO vs the forks' side room (D110):** 3 deg at GO / 2 deg
+  square-up allow ~125-173 mm of tip drift against 65 mm. Decide a tighter GO
+  yaw (~0.75-1 deg) and check the square-up can reach it (arrival_yaw is set by
+  the base's minimum turn rate).
 - **Far acquisition (D108, deferred items 4-5):** pallet bags standing still at
   3.5, 4.0, 4.5 and 5.0 m (short and long face); then decide how far
   `lidar_acquisition.search_x` may reach and whether a one-beam face is

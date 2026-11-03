@@ -1672,6 +1672,22 @@ carries the bias it corrects. *Not decided here:* the study did not converge
 disagreement rule -- in the sim, 1 of 3 seeds ended NO_GO on it.
 (Athreya, 2026-11-03)
 
+**D110. The camera-LiDAR range disagreement limit is 30 mm (was 20).**
+`fusion.disagree_range: 0.030`; the 3 deg yaw part and the 5 frames are
+unchanged. *Why:* within 2 m the camera's range error stays within ~20 mm on
+the real robot, 30 mm in the worst case, and the range study puts its scatter
+per position at 12-13 mm, so 20 mm gave NO-GOs with nothing wrong (sim seed 3,
+twice). Range only decides how far the robot drives in, against a 240 mm gap
+between bumper and pallet, and the track's range comes mostly from the LiDAR.
+*Checked:* GPU sim seed 3, GO and INSERTED 1.061 m. *Not decided here, raised
+with it:* the forks' SIDEWAYS room is 65 mm each side (230 mm pocket, 100 mm
+tine), and a heading error theta at GO moves the tips sideways by about
+2.7 m x sin(theta) by full depth (1.07 m of travel plus the tips 1.65 m ahead):
+the current limits (3 deg at GO, 2 deg square-up, 30 mm offset) allow up to
+~125-173 mm. Run 5 fitted (0.92 deg, 6 mm offset: ~50 mm). Tightening the GO
+yaw (~0.75 deg with 30 mm, or 1 deg with 15 mm) needs the square-up to reach
+it; a heading correction during insertion would change D7. (Athreya, 2026-11-03)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

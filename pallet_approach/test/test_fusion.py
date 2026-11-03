@@ -59,11 +59,16 @@ def test_camera_only_tracks_but_never_allows_go():
 
 
 def test_a_range_disagreement_blocks_go_after_five_frames():
-    f, s = _run(camera_range=0.03)
+    f, s = _run(camera_range=0.04)
     assert s.disagreeing and not s.go_allowed
     for _ in range(3):                                                 # a few frames of agreement end it
         f.check_camera(0.0, 0.0)
     assert not f.disagreeing
+
+
+def test_25_mm_of_range_disagreement_is_within_d110s_limit():
+    _, s = _run(camera_range=0.025)
+    assert not s.disagreeing and s.go_allowed, s.reason
 
 
 def test_an_outlier_is_gated():
