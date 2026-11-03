@@ -61,8 +61,9 @@
   direction: GZ_TO_ROS
 
 # Ouster. PointCloud2 like the driver's (x, y, z, intensity, ring), not the
-# LaserScan the sim repo bridges.
-- ros_topic_name: /ouster/points
+# LaserScan the sim repo bridges. lidar_error.py adds the measured range bias
+# (D109) and publishes /ouster/points.
+- ros_topic_name: /sim/lidar/points_raw
   gz_topic_name: /sim/lidar/points
   ros_type_name: sensor_msgs/msg/PointCloud2
   gz_type_name: ignition.msgs.PointCloudPacked

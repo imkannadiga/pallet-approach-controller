@@ -1652,6 +1652,26 @@ study used the tall board. First record pallet bags at 3.5, 4.0, 4.5 and 5.0 m.
 *Checked:* GPU sim from 3.0 m, GO and INSERTED 1.059 m; from 3.4 m NO_PALLET
 (the sim's LiDAR finds no two-beam face standing still). (Athreya, 2026-11-03)
 
+**D109. The range study's error curves are the sensors' model, in the pipeline
+and in the sim.** The study (lidar-camera-calib range-error, 2026-11-02, 20
+board positions 1.0-3.9 m against a tape; docs/studies/range_error_20261102.yaml)
+goes into params.yaml `range_error`, and replaces D103's depth correction:
+*Pipeline:* the LiDAR's returns are corrected along each ray by its bias
+(a + b m, +0.3..+3.3 mm); the filter's LiDAR range sigma is the study's
+sigma_total at the face's distance (4.3-4.8 mm, was 4 mm flat); the camera's
+depth is corrected by the study's inverse model, s/(1 - beta s) - a with beta
+0.0053548 1/m and a 9.08 mm (was beta 0.0048 alone). *Sim:* a new node gives
+Gazebo's LiDAR the same bias; on vertical faces the depth model gives the camera
+the same bias, a static offset per view of 12.4 mm (the study's sigma_position
+13.1 mm less the tape, 4.2 mm, in quadrature -- the LiDAR's own sigma_position
+being the tape), D105's 4 mm ripple, and the per-frame jitter; the floor keeps
+D80. The sim overlay no longer switches the depth correction off: the sim now
+carries the bias it corrects. *Not decided here:* the study did not converge
+(camera bias known to +-25.6 mm, LiDAR to +-5 mm, 95 %), and the camera's
+12-13 mm scatter per position is large against D102 item 6's 20 mm
+disagreement rule -- in the sim, 1 of 3 seeds ended NO_GO on it.
+(Athreya, 2026-11-03)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

@@ -24,6 +24,12 @@ from pallet_approach.lidar_pallet import LidarPallet, find_pallet
 from pallet_approach.model import Plane
 
 
+def camera_correction(params: dict) -> tuple[float, float]:
+    """(disparity_bias, offset) of the camera's depth correction (D109)."""
+    c = params['range_error']['camera']
+    return float(c['disparity_bias']), float(c['offset'])
+
+
 def pose_at(samples, stamp: float, tolerance: float):
     """The odom pose (x, y, yaw) at `stamp`, interpolated between the samples
     either side of it; `samples` is [(time, (x, y, yaw)), ...] in time order.
@@ -134,7 +140,8 @@ class FusedPipeline:
             self.floor = info['floor_plane']
         if face is not None and face.side == self.side:
             centre = face.pocket_centre if face.pocket_centre is not None else face.centre
-            if self.filter.update_lidar(to_odom(robot, centre), wrap(face.yaw + robot[2]), stamp):
+            if self.filter.update_lidar(to_odom(robot, centre), wrap(face.yaw + robot[2]), stamp,
+                                        face.distance):
                 self.last_face = face
                 self.in_range = face.in_range
         if stamp - self.filter.last_lidar > self.p['reacquire_after']:
@@ -142,7 +149,8 @@ class FusedPipeline:
 
     def _start(self, face: LidarPallet, robot, stamp: float) -> None:
         centre = face.pocket_centre if face.pocket_centre is not None else face.centre
-        self.filter.initialise(to_odom(robot, centre), wrap(face.yaw + robot[2]), stamp)
+        self.filter.initialise(to_odom(robot, centre), wrap(face.yaw + robot[2]), stamp,
+                               distance=face.distance)
         self.side, self.last_face, self.in_range = face.side, face, face.in_range
         self.pool = []
 
@@ -165,7 +173,7 @@ class FusedPipeline:
         yaw = wrap(st.yaw - robot[2])
         side = self.params['pallet']['sides'][self.side]
         result = measure(depth, intrinsics, ground_from_camera, centre, yaw, self.floor, side,
-                         self.params['camera_pockets'], self.params['camera_depth']['disparity_bias'])
+                         self.params['camera_pockets'], *camera_correction(self.params))
         self.timing.camera = result.ms
         self.timing.calls['camera'] += 1
         self.last_camera = result

@@ -137,6 +137,8 @@ def _setup(context):
              parameters=[{'blades': blades, 'hfov': camera.hfov,
                           'zed_model': arg('depth_model') == 'zed',
                           'seed': int(arg('seed'))}, sim_time]),
+        Node(package='pallet_approach_sim', executable='lidar_error', output='screen',
+             parameters=[sim_time]),
         *extra,
     ]
 

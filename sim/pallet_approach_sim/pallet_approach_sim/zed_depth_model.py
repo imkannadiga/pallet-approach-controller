@@ -63,12 +63,25 @@ class ZedParams:
     edge_jump: float = 0.10           # m
     smear_scale: float = 2.5
     downsample: int = 4               # cavity search resolution
-    # D105 (2026-10-28): the warp above was fitted on FLOOR bags -- a grazing
-    # surface, stereo's hard case. On a vertical face the real ZED does far
-    # better: on the flat-board bags deck_80..deck_305 its residual, once the
-    # disparity offset (D103) is removed, is 3-4 mm rms, at most 7 mm, and does
-    # not grow with range from 0.9 to 3.1 m. Vertical surfaces get that.
-    vertical_warp_sd: float = 0.004   # m, constant with range
+    # Vertical faces (D105, D109). The warp above was fitted on FLOOR bags, a
+    # grazing surface; vertical faces follow the range study of 2026-11-02
+    # (docs/studies/range_error_20261102.yaml, the same numbers as params.yaml's
+    # range_error.camera, which a test checks):
+    # * a bias, s_measured = u / (1 + beta u) with u = s_true + offset -- the
+    #   inverse of the stack's correction, so the sim exercises it;
+    # * a static offset of the whole face per view (redrawn as the view
+    #   changes, like the warp): the study's sigma_position, 13.1 mm, minus the
+    #   tape in quadrature (the LiDAR's own sigma_position, 4.2 mm, which is the
+    #   tape: its frame noise is sub-millimetre) = 12.4 mm;
+    # * D105's ripple across a face (the warp field), 4 mm;
+    # * a per-frame jitter of the whole face, sigma_frame0 * m ** exponent.
+    vertical_bias_beta: float = 0.0053548        # 1/m
+    vertical_bias_offset: float = 0.00908        # m
+    vertical_offset_sd: float = 0.012413         # m, constant with range
+    vertical_warp_sd: float = 0.004              # m (D105)
+    vertical_frame_sd0: float = 0.0001116        # m at m = 1 m
+    vertical_frame_exponent: float = 2.5078
+    sensor_minus_mark: float = 0.06936           # m: the study's m = depth - this
     horizontal_normal: float = 0.8    # |normal . up| at or above this: floor-like
 
 
@@ -99,6 +112,8 @@ class DepthModel:
         self.rng = np.random.default_rng(seed)
         self._grids = (self.rng.standard_normal(self.p.warp_cells),
                        self.rng.standard_normal(self.p.warp_cells))
+        self._offsets = tuple(self.rng.standard_normal(2))      # one per grid: the face's offset
+        self.view_offset = 0.0                                   # unit variance, blended like the field
         self._t0 = None
         self._field_cache = {}
 
@@ -111,9 +126,11 @@ class DepthModel:
             self._t0 = progress
         while progress - self._t0 >= self.p.warp_motion:
             self._grids = (self._grids[1], self.rng.standard_normal(self.p.warp_cells))
+            self._offsets = (self._offsets[1], self.rng.standard_normal())
             self._t0 += self.p.warp_motion
             self._field_cache.clear()
         s = (progress - self._t0) / self.p.warp_motion
+        self.view_offset = ((1.0 - s) * self._offsets[0] + s * self._offsets[1]) / math.hypot(1.0 - s, s)
         key = (height, width)
         if key not in self._field_cache:
             self._field_cache[key] = tuple(_upsample(g, height, width) for g in self._grids)
@@ -209,7 +226,13 @@ class DepthModel:
         finite = np.isfinite(d)
         z = np.where(finite, d, 0.0)
         field = self.warp_field(progress, *d.shape)
-        sd = np.where(flat, warp_sd(z, self.p), self.p.vertical_warp_sd)      # D105
-        noise = (field * sd
-                 + self.rng.standard_normal(d.shape) * self.p.flicker * z * z)
-        return np.where(finite, d + noise, d).astype(np.float32)
+        p = self.p
+        vertical = finite & ~flat
+        # D109: the measured bias on vertical faces, then their position and frame noise.
+        u = z + p.vertical_bias_offset
+        biased = np.where(vertical, u / (1.0 + p.vertical_bias_beta * u), z)
+        m = np.maximum(z - p.sensor_minus_mark, 0.0)
+        frame = self.rng.standard_normal() * p.vertical_frame_sd0 * m ** p.vertical_frame_exponent
+        noise = np.where(flat, field * warp_sd(z, p) + self.rng.standard_normal(d.shape) * p.flicker * z * z,
+                         field * p.vertical_warp_sd + self.view_offset * p.vertical_offset_sd + frame)
+        return np.where(finite, biased + noise, d).astype(np.float32)

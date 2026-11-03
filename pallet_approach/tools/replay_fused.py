@@ -30,6 +30,7 @@ sys.path.insert(0, str(HERE))
 import _bagutil as bag  # noqa: E402
 from pallet_approach import camera_pockets as CP  # noqa: E402
 from pallet_approach import lidar_pallet as LP  # noqa: E402
+from pallet_approach.fused_pipeline import camera_correction  # noqa: E402
 
 
 def truth(name: str, shared: dict):
@@ -81,8 +82,8 @@ def main() -> int:
 
     # ---- camera stage, along the LiDAR's face
     cpp = shared['camera_pockets']
-    beta = shared['camera_depth']['disparity_bias']
-    res = CP.measure(depth, k, cam, face.centre, face.yaw, floor, side, cpp, beta)
+    beta, offset_c = camera_correction(shared)
+    res = CP.measure(depth, k, cam, face.centre, face.yaw, floor, side, cpp, beta, offset_c)
     half = side['face_width'] / 2 + cpp['margin']
     s = np.arange(-half, half + 1e-9, cpp['step'])
     rows = side['band_center'] + np.linspace(-1, 1, cpp['rows']) * side['band_half_height']
@@ -95,7 +96,7 @@ def main() -> int:
     expected = ((pts - cam[:3, 3]) @ cam[:3, :3])[:, 2]
     measured = np.full(len(pts), np.nan)
     ui, vi = uv[inside].astype(int).T
-    measured[inside] = CP.corrected_depth(depth[vi, ui].astype(float), beta)
+    measured[inside] = CP.corrected_depth(depth[vi, ui].astype(float), beta, offset_c)
     diff = measured - expected
     label = np.where(np.abs(diff) <= cpp['wood_tolerance'], 1.0, np.where(diff >= cpp['hole_depth'], -1.0, 0.0))
     label[~np.isfinite(diff)] = np.nan
@@ -163,7 +164,7 @@ def main() -> int:
                    label={1.0: 'wood (depth on the face)', -1.0: 'hole (8+ cm deeper)', 0.0: 'neither'}[val])
     ax.set_title(f'4. Camera, only where the pockets must be: the LiDAR\'s face line at {len(rows)} heights '
                  f'across the pocket band, every {1000 * cpp["step"]:.0f} mm\n'
-                 f'depth corrected for the ZED\'s disparity offset (D103, beta {beta})', fontsize=11)
+                 f'depth corrected by the range study (D109: beta {beta}, offset {1000 * offset_c:.1f} mm)', fontsize=11)
     ax.legend(loc='upper right', fontsize=9, markerscale=3)
     pc = uv[inside]
     ax.set(xlim=(pc[:, 0].min() - 120, pc[:, 0].max() + 120), ylim=(pc[:, 1].max() + 140, pc[:, 1].min() - 200))

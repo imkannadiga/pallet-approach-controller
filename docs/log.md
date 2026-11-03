@@ -1274,3 +1274,13 @@ reason says "LiDAR only until ... (D108)". Tests: a camera reading 40 mm far at
 Suite 1019 passed. GPU sim: from 3.0 m GO and INSERTED 1.059 m; from 3.4 m
 NO_PALLET -- the sim's LiDAR gets one beam on the pallet there, which is the
 deferred half of D108 (far bags first).
+
+**D109: the range study in the pipeline and the sim.** The pipeline corrects
+the LiDAR's range bias per return, takes its range sigma from the study, and
+corrects the camera's depth with the study's model (beta 0.0053548, a 9.08 mm).
+The sim's LiDAR (new node lidar_error) and camera (vertical faces) carry the
+same bias and noise. Stack 1025 passed, sim 52 passed. GPU sim from the default
+2.5 m: seeds 1 and 2 GO and INSERTED (1.059, 1.061 m); seed 3 NO_GO on the
+camera-LiDAR disagreement, twice (once with the Gazebo window). The camera's
+12.4 mm per-view offset against the 20 mm rule is expected to trip it in a
+share of views -- the rule's limit is Athreya's to revisit.

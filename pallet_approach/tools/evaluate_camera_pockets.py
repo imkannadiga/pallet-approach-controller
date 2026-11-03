@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import _bagutil as bag  # noqa: E402
 from pallet_approach.camera_pockets import measure  # noqa: E402
+from pallet_approach.fused_pipeline import camera_correction  # noqa: E402
 from pallet_approach.lidar_pallet import find_pallet  # noqa: E402
 
 
@@ -37,11 +38,13 @@ def main() -> int:
     ap.add_argument('bags', nargs='+', type=pathlib.Path)
     ap.add_argument('--frames', type=int, default=20)
     ap.add_argument('--disparity-bias', type=float, default=None,
-                    help='override camera_depth.disparity_bias (0 = no depth correction)')
+                    help='override range_error.camera.disparity_bias (0 with --offset 0: no correction)')
+    ap.add_argument('--offset', type=float, default=None, help='override range_error.camera.offset')
     args = ap.parse_args()
     shared = bag.shared_params()
-    if args.disparity_bias is None:
-        args.disparity_bias = shared['camera_depth']['disparity_bias']
+    beta, offset = camera_correction(shared)
+    args.disparity_bias = beta if args.disparity_bias is None else args.disparity_bias
+    args.offset = offset if args.offset is None else args.offset
     truths = yaml.safe_load((HERE.parent.parent / 'docs' / 'bag_truth.yaml').read_text()) or {}
     ec = shared['frames']['extrinsic_correction']
     print(f"{'bag':22s} {'found':>7s} {'cam dy':>7s} {'lidar dy':>8s} {'scatter':>7s} "
@@ -59,7 +62,7 @@ def main() -> int:
         cam = bag.camera_to_ground(data, ec)
         side = shared['pallet']['sides'][face.side]
         results = [measure(d, data['intrinsics'], cam, face.centre, face.yaw, info['floor_plane'], side,
-                           shared['camera_pockets'], args.disparity_bias) for d in data['depth']]
+                           shared['camera_pockets'], args.disparity_bias, args.offset) for d in data['depth']]
         ok = [r for r in results if r.offset is not None and r.both_open]
         line = f'{path.name:22s} {len(ok):3d}/{len(results):<3d}'
         if not ok:

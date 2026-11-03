@@ -32,6 +32,7 @@ from tf2_ros import Buffer
 from pallet_approach.calibration import correct_transform, correction_matrix
 from pallet_approach.fused_pipeline import FusedPipeline, forward_time, pose_at
 from pallet_approach.model import PalletEstimate, Pocket
+from pallet_approach.range_error import correct_lidar
 from pallet_approach.nodes._common import (CameraTransformListener, declare_lidar_params, image_to_array,
                                            intrinsics_from_camera_info, lidar_in_ground, lookup_waiting)
 from pallet_approach.pointcloud import transform_points, unpack_cloud
@@ -155,6 +156,8 @@ class FusionNode(Node):
             stamp += forward_time(points, raw_points[:, 3] * 1e-9)
         else:
             points = transform_points(unpack_cloud(cloud), matrix)
+        # The LiDAR's range bias, along each ray from the sensor (D109).
+        points = correct_lidar(points, matrix[:3, 3], self._shared['range_error']['lidar'])
         robot = self._pose_at(stamp)
         if robot is None:
             return

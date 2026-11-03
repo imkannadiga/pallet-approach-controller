@@ -19,6 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pallet_approach.approach import wrap_angle as wrap
+from pallet_approach.range_error import sigma_total
 
 
 
@@ -53,6 +54,8 @@ class FusionStatus:
 class PalletFilter:
     def __init__(self, params: dict):
         self.p = params['fusion']
+        study = params.get('range_error', {})                          # D109
+        self.range_error, self.mark_x = study.get('lidar'), study.get('mark_x', 0.0)
         self.x: np.ndarray | None = None
         self.P = np.zeros((3, 3))
         self.stamp = 0.0
@@ -66,15 +69,14 @@ class PalletFilter:
 
     # ---------------------------------------------------------------- core
     def initialise(self, centre: np.ndarray, yaw: float, stamp: float,
-                   sigma_lateral: float | None = None) -> None:
+                   sigma_lateral: float | None = None, distance: float | None = None) -> None:
         """Start from an acquisition (LiDAR face, odom), uncertain as one LiDAR reading."""
-        p = self.p
         self.x = np.array([centre[0], centre[1], yaw], float)
-        self.P = self._lidar_r(yaw)
+        self.P = self._lidar_r(yaw, distance)
         if sigma_lateral is not None:
             t = np.array([math.sin(yaw), -math.cos(yaw)])
             n = np.array([math.cos(yaw), math.sin(yaw)])
-            self.P[:2, :2] = (p['lidar_sigma_range'] ** 2 * np.outer(n, n)
+            self.P[:2, :2] = (self.lidar_sigma_range(distance) ** 2 * np.outer(n, n)
                               + sigma_lateral ** 2 * np.outer(t, t))
         self.stamp = stamp
         self.last_lidar = stamp
@@ -108,22 +110,32 @@ class PalletFilter:
         self.P = 0.5 * (self.P + self.P.T)
         return True
 
-    def _lidar_r(self, yaw: float) -> np.ndarray:
+    def lidar_sigma_range(self, distance: float | None) -> float:
+        """The LiDAR's range sigma at a face `distance` from base_footprint: the
+        range study's sigma_total (D109), else the constant `lidar_sigma_range`."""
+        if distance is None or not self.range_error:
+            return float(self.p['lidar_sigma_range'])
+        e = self.range_error
+        return float(sigma_total(distance - self.mark_x, e))
+
+    def _lidar_r(self, yaw: float, distance: float | None = None) -> np.ndarray:
         p = self.p
         n = np.array([math.cos(yaw), math.sin(yaw)])
         t = np.array([math.sin(yaw), -math.cos(yaw)])
         r = np.zeros((3, 3))
-        r[:2, :2] = p['lidar_sigma_range'] ** 2 * np.outer(n, n) + p['lidar_sigma_lateral'] ** 2 * np.outer(t, t)
+        r[:2, :2] = (self.lidar_sigma_range(distance) ** 2 * np.outer(n, n)
+                     + p['lidar_sigma_lateral'] ** 2 * np.outer(t, t))
         r[2, 2] = math.radians(p['lidar_sigma_yaw_deg']) ** 2
         return r
 
     # ---------------------------------------------------------------- sensors
-    def update_lidar(self, centre: np.ndarray, yaw: float, stamp: float) -> bool:
-        """A LiDAR face (odom): position and angle."""
+    def update_lidar(self, centre: np.ndarray, yaw: float, stamp: float,
+                     distance: float | None = None) -> bool:
+        """A LiDAR face (odom): position and angle; `distance` from the robot sets R."""
         if self.x is None:
             return False
         self.predict(stamp)
-        ok = self._update(np.array([centre[0], centre[1], yaw]), np.eye(3), self._lidar_r(self.x[2]),
+        ok = self._update(np.array([centre[0], centre[1], yaw]), np.eye(3), self._lidar_r(self.x[2], distance),
                           self.p['gate_chi2_3d'], angle_row=2)
         self.recent['lidar'].append(ok)
         if ok:
