@@ -1263,3 +1263,14 @@ ended NO_GO at once: standing still, camera +23..+25 mm against the LiDAR --
 D103's fit does not hold that far; to be re-fitted on new board bags.
 tools/replay_fused.py draws the fused stages on a bag (README figure,
 pallet_s_129: pocket centre 4/3 mm from tape, camera-LiDAR 1.9 mm).
+
+## 2026-11-03
+
+**D108: LiDAR-only far phase, camera inside 2.5 m.** From Athreya's error-vs-
+distance study. The fusion pipeline ignores depth frames while the tracked face
+is farther than `camera_max_range` (2.5 m), latched once inside; the status
+reason says "LiDAR only until ... (D108)". Tests: a camera reading 40 mm far at
+2.9 m changes nothing and blocks nothing; the camera joins inside and stays on.
+Suite 1019 passed. GPU sim: from 3.0 m GO and INSERTED 1.059 m; from 3.4 m
+NO_PALLET -- the sim's LiDAR gets one beam on the pallet there, which is the
+deferred half of D108 (far bags first).

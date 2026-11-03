@@ -11,6 +11,7 @@ The floor is the LiDAR's last fit in the base frame (valid on a flat floor).
 from __future__ import annotations
 
 import bisect
+import dataclasses
 import math
 import time
 from dataclasses import dataclass, field
@@ -88,6 +89,7 @@ class FusedPipeline:
         self.last_face: LidarPallet | None = None
         self.last_camera: CameraPockets | None = None
         self.in_range = False
+        self.camera_on = False          # D108: latched once the face is within camera_max_range
         self.timing = Timing()
 
     @property
@@ -153,6 +155,13 @@ class FusedPipeline:
         self.filter.predict(stamp)
         st = self.filter.status(stamp)
         centre = to_base(robot, st.centre)
+        # D108: far away the LiDAR alone drives; the camera's depth is not
+        # trusted beyond camera_max_range and is ignored there entirely (no
+        # update, no disagreement). Latched, so range noise cannot toggle it.
+        if not self.camera_on:
+            if float(np.linalg.norm(centre)) > self.p['camera_max_range']:
+                return None
+            self.camera_on = True
         yaw = wrap(st.yaw - robot[2])
         side = self.params['pallet']['sides'][self.side]
         result = measure(depth, intrinsics, ground_from_camera, centre, yaw, self.floor, side,
@@ -170,7 +179,11 @@ class FusedPipeline:
 
     # ---------------------------------------------------------------- output
     def status(self, now: float) -> FusionStatus:
-        return self.filter.status(now)
+        st = self.filter.status(now)
+        if self.tracking and not self.camera_on:
+            st = dataclasses.replace(st, reason=f'LiDAR only until the face is within '
+                                                f'{self.p["camera_max_range"]:.2f} m (D108)')
+        return st
 
     def in_base(self, robot: tuple[float, float, float], now: float):
         """(centre (2,), yaw) of the tracked pallet in the base frame now, or None."""

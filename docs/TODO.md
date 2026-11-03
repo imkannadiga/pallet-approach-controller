@@ -15,6 +15,12 @@ decided until it reaches `decisions.md`.
   dashboard's TRACKER widget reads "0/0 frames".
 
 ### Fused perception on the robot (needs the robot)
+- **Far acquisition (D108, deferred items 4-5):** pallet bags standing still at
+  3.5, 4.0, 4.5 and 5.0 m (short and long face); then decide how far
+  `lidar_acquisition.search_x` may reach and whether a one-beam face is
+  accepted. Run evaluate_lidar_acquisition.py on them.
+- **A robot run from ~3 m** to see the D108 handover at 2.5 m on real data
+  (the 2.86 m start ended NO_GO before D108).
 - **D96 acceptance on the robot:** ten supervised runs from the seed-7 starts,
   9 of 10 INSERTED. Record each (record_bag.sh) and run tools/run_report.py.
 - **Re-fit D103 on new flat-board bags.** From 2.86 m the camera read

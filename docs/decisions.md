@@ -1587,6 +1587,71 @@ next recorded run is to confirm the slope is near zero, including where the
 speed changes. Also unchanged by this: `debug.use_pub_timestamps` stays false
 (publish-time stamps would make the offset larger). (Athreya, 2026-10-29)
 
+## 2026-11-02: each sensor's range error, measured for the fusion filter
+
+**D108. The fusion filter's range noise is to come from a measured,
+distance-dependent model, not from constants.** Built as
+`lidar-camera-calib range-error` (the calibration tool's repository, not this
+stack); wiring it into the stack is a separate step after a real session.
+Decided by Athreya, item by item:
+1. *Procedure:* a flat board; the robot starts about 1 m from it and reverses
+   to 10 evenly spaced positions out to 4 m; at each the operator types a tape
+   reading from **one mark at the bumper's centre**. Straight board by
+   default; `--poses` adds angles, as in the calibration.
+2. *What is compared:* each sensor's fitted board plane in `base_footprint`,
+   distance from the mark to it, against the tape's shortest reading from the
+   same mark. Robot yaw and board lean cancel; no small patch is used (too few
+   LiDAR points far away).
+3. *Data:* 10 s per position, processed live, **nothing raw stored on the
+   Jetson**; only one distance per frame per sensor (KB) and the report.
+4. *Everything as a function of the measured distance m*, since that is what
+   the filter has. **Bias is corrected, not put in R**;
+   `R(m) = sigma_frame² + sigma_position² + sigma_fit²` (frame-to-frame
+   noise, the place-specific error around the bias curve, and the bias
+   curve's own uncertainty).
+5. *Models:* LiDAR bias `a + b m` (time of flight), `+ c m²` only if
+   significant; camera the 1/z model of D103 plus an offset. Noise exponents
+   are fitted on log-log axes, not assumed (no proof that the LiDAR is flat;
+   the data decides).
+6. *Stopping:* add positions in the widest gap until the bias's 95 % band is
+   within ±2 mm (LiDAR) and ±5 mm (camera), at most 20 positions; the
+   uncertainty is over positions, never frames. The file is written only when
+   met.
+7. *Wiring, accepted defaults for the next step:* a launch argument
+   `sensor_error:=<path>|none` (`none` = today's constants); the LiDAR range
+   bias is corrected if the fit finds one; outside the measured range the end
+   values are held, never extrapolated (relevant to the sub-1 m insertion
+   stop); the camera's beta from the file replaces `disparity_bias` in
+   params.yaml.
+*Why:* `fusion.lidar_sigma_range` and the others are single numbers from tape
+bags good to ~1 cm, coarser than the LiDAR's own ~4 mm. *Not covered:* the
+LiDAR's lateral and yaw and the camera's lateral (a straight board measures
+range only); a flat board, not the pallet face. Synthetic only so far:
+a simulated session recovered a known disparity offset (0.00484 vs 0.0048
+1/m) and LiDAR scale (1.96 vs 2.00 mm/m), and needed 17 positions with a
+±1 mm tape. (Athreya, 2026-11-02)
+
+**D108. Two phases: far away the LiDAR alone tracks and the robot closes on it;
+the camera joins inside 2.5 m.** `fused_pipeline.camera_max_range: 2.5` (face
+distance from base_footprint, by the track). Beyond it the camera's frames are
+ignored entirely -- no update to the filter, no disagreement check -- and the
+existing closing drive steers on the LiDAR face and its coarse pocket position
+(our controller, not Nav2; same 0.10 m/s). Once inside, the camera stays on
+(latched, so range noise cannot toggle it) and is reset with the track. GO is
+unchanged: at the standoff (1.75 m), both sensors fresh and agreeing (D104); the
+far phase can never give GO. No pockets from the camera after the handover is
+NO_GO at the standoff; a pallet lost far out reacquires within 2 s or the run
+aborts, as before. *Why:* Athreya's error-vs-distance study: the LiDAR holds its
+accuracy far out, the camera only within 2.5 m; from 2.86 m the camera read
++23..+25 mm against the LiDAR standing still and the run ended NO_GO before
+moving. *Deferred, needing data:* raising the LiDAR's search beyond 3.6 m
+(`search_x`) and accepting a face on a single beam. The OS0-64's beams are
+~1.4 deg apart, ~9 cm at 3.5 m and ~12.5 cm at 5 m on a 14.5 cm pallet, and
+acquisition needs two stacked beams to tell a face from the floor; the error
+study used the tall board. First record pallet bags at 3.5, 4.0, 4.5 and 5.0 m.
+*Checked:* GPU sim from 3.0 m, GO and INSERTED 1.059 m; from 3.4 m NO_PALLET
+(the sim's LiDAR finds no two-beam face standing still). (Athreya, 2026-11-03)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

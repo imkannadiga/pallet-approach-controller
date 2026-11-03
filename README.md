@@ -204,6 +204,12 @@ pocket edges about six times finer than the LiDAR's columns at 2.5 m.
   measurements, and chi-square gates refuse outliers. If camera and LiDAR
   disagree by more than 20 mm or 3° for five frames in a row, the run cannot
   reach GO.
+- **Far away, the LiDAR alone.** The camera's depth is trusted only within
+  2.5 m of the face (an error-vs-distance study of both sensors), so beyond
+  that the LiDAR tracks the face by itself and the robot closes in on it; the
+  camera joins inside 2.5 m and GO still needs both (D108). How far the LiDAR
+  can find a 14.5 cm pallet is set by its beam spacing (~9 cm at 3.5 m), so the
+  search stays at 3.6 m until far bags show more.
 - **Every measurement is placed at the time it describes.** Measured on the
   robot: an Ouster sweep's stamp is its start, and the points straight ahead
   are measured 51 ms later; the ZED's depth stabilization makes a moving
@@ -442,8 +448,9 @@ The first real bag, taken at 2.0 m, with the three fixes it prompted applied
 
 **What is next:** the acceptance test on the robot, ten supervised runs from the
 shared starting positions (9 of 10 must end INSERTED); new flat-board bags to
-re-fit the depth correction, so runs can start from up to 3.0 m (from 2.86 m the
-camera read 23–25 mm farther than the LiDAR); confirming the 170 ms camera lag
+a run from about 3 m on the robot to check the LiDAR-only far phase and the
+camera's handover at 2.5 m (D108); pallet bags at 3.5–5 m to decide how far the
+LiDAR's search may reach; confirming the 170 ms camera lag
 over more runs; and the Jetson's full power mode, which may shorten the
 estimate's age. Open items are in [docs/TODO.md](docs/TODO.md).
 
@@ -630,7 +637,7 @@ docs/                            design record, system facts, dataset and tape t
 
 | Document | What is in it |
 |---|---|
-| [docs/decisions.md](docs/decisions.md) | Every behaviour decision (D1–D107): what, why, when |
+| [docs/decisions.md](docs/decisions.md) | Every behaviour decision (D1–D108): what, why, when |
 | [docs/SYSTEM.md](docs/SYSTEM.md) | Measured facts about the robot: topics, frames, calibration, network |
 | [docs/TODO.md](docs/TODO.md) | What is still open |
 | [docs/dataset.md](docs/dataset.md), [docs/bag_truth.yaml](docs/bag_truth.yaml) | The recorded bags and their tape-measured ground truth |

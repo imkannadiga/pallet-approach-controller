@@ -430,6 +430,11 @@
       still_distance: 0.01           # m of odometry motion that restarts the pool
       still_angle_deg: 0.5
       reacquire_after: 2.0           # s with no accepted LiDAR sweep: drop the track, acquire again
+      # [D108, Athreya 2026-11-03] The camera's depth is trusted only within
+      # this face distance (error study: the LiDAR holds far out, the camera
+      # does not). Farther, the LiDAR alone tracks and the robot closes on it;
+      # the camera joins once inside (latched) and GO still needs both.
+      camera_max_range: 2.5          # m, face distance from base_footprint
 
     # Camera and LiDAR in one estimate (D102 step c, pallet_approach/fusion.py):
     # a Kalman filter on the pallet's pose in odom. Measurement errors are the
