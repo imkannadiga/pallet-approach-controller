@@ -1587,6 +1587,107 @@ next recorded run is to confirm the slope is near zero, including where the
 speed changes. Also unchanged by this: `debug.use_pub_timestamps` stays false
 (publish-time stamps would make the offset larger). (Athreya, 2026-10-29)
 
+## 2026-11-02: each sensor's range error, measured for the fusion filter
+
+**D108. The fusion filter's range noise is to come from a measured,
+distance-dependent model, not from constants.** Built as
+`lidar-camera-calib range-error` (the calibration tool's repository, not this
+stack); wiring it into the stack is a separate step after a real session.
+Decided by Athreya, item by item:
+1. *Procedure:* a flat board; the robot starts about 1 m from it and reverses
+   to 10 evenly spaced positions out to 4 m; at each the operator types a tape
+   reading from **one mark at the bumper's centre**. Straight board by
+   default; `--poses` adds angles, as in the calibration.
+2. *What is compared:* each sensor's fitted board plane in `base_footprint`,
+   distance from the mark to it, against the tape's shortest reading from the
+   same mark. Robot yaw and board lean cancel; no small patch is used (too few
+   LiDAR points far away).
+3. *Data:* 10 s per position, processed live, **nothing raw stored on the
+   Jetson**; only one distance per frame per sensor (KB) and the report.
+4. *Everything as a function of the measured distance m*, since that is what
+   the filter has. **Bias is corrected, not put in R**;
+   `R(m) = sigma_frame² + sigma_position² + sigma_fit²` (frame-to-frame
+   noise, the place-specific error around the bias curve, and the bias
+   curve's own uncertainty).
+5. *Models:* LiDAR bias `a + b m` (time of flight), `+ c m²` only if
+   significant; camera the 1/z model of D103 plus an offset. Noise exponents
+   are fitted on log-log axes, not assumed (no proof that the LiDAR is flat;
+   the data decides).
+6. *Stopping:* add positions in the widest gap until the bias's 95 % band is
+   within ±2 mm (LiDAR) and ±5 mm (camera), at most 20 positions; the
+   uncertainty is over positions, never frames. The file is written only when
+   met.
+7. *Wiring, accepted defaults for the next step:* a launch argument
+   `sensor_error:=<path>|none` (`none` = today's constants); the LiDAR range
+   bias is corrected if the fit finds one; outside the measured range the end
+   values are held, never extrapolated (relevant to the sub-1 m insertion
+   stop); the camera's beta from the file replaces `disparity_bias` in
+   params.yaml.
+*Why:* `fusion.lidar_sigma_range` and the others are single numbers from tape
+bags good to ~1 cm, coarser than the LiDAR's own ~4 mm. *Not covered:* the
+LiDAR's lateral and yaw and the camera's lateral (a straight board measures
+range only); a flat board, not the pallet face. Synthetic only so far:
+a simulated session recovered a known disparity offset (0.00484 vs 0.0048
+1/m) and LiDAR scale (1.96 vs 2.00 mm/m), and needed 17 positions with a
+±1 mm tape. (Athreya, 2026-11-02)
+
+**D108. Two phases: far away the LiDAR alone tracks and the robot closes on it;
+the camera joins inside 2.5 m.** `fused_pipeline.camera_max_range: 2.5` (face
+distance from base_footprint, by the track). Beyond it the camera's frames are
+ignored entirely -- no update to the filter, no disagreement check -- and the
+existing closing drive steers on the LiDAR face and its coarse pocket position
+(our controller, not Nav2; same 0.10 m/s). Once inside, the camera stays on
+(latched, so range noise cannot toggle it) and is reset with the track. GO is
+unchanged: at the standoff (1.75 m), both sensors fresh and agreeing (D104); the
+far phase can never give GO. No pockets from the camera after the handover is
+NO_GO at the standoff; a pallet lost far out reacquires within 2 s or the run
+aborts, as before. *Why:* Athreya's error-vs-distance study: the LiDAR holds its
+accuracy far out, the camera only within 2.5 m; from 2.86 m the camera read
++23..+25 mm against the LiDAR standing still and the run ended NO_GO before
+moving. *Deferred, needing data:* raising the LiDAR's search beyond 3.6 m
+(`search_x`) and accepting a face on a single beam. The OS0-64's beams are
+~1.4 deg apart, ~9 cm at 3.5 m and ~12.5 cm at 5 m on a 14.5 cm pallet, and
+acquisition needs two stacked beams to tell a face from the floor; the error
+study used the tall board. First record pallet bags at 3.5, 4.0, 4.5 and 5.0 m.
+*Checked:* GPU sim from 3.0 m, GO and INSERTED 1.059 m; from 3.4 m NO_PALLET
+(the sim's LiDAR finds no two-beam face standing still). (Athreya, 2026-11-03)
+
+**D109. The range study's error curves are the sensors' model, in the pipeline
+and in the sim.** The study (lidar-camera-calib range-error, 2026-11-02, 20
+board positions 1.0-3.9 m against a tape; docs/studies/range_error_20261102.yaml)
+goes into params.yaml `range_error`, and replaces D103's depth correction:
+*Pipeline:* the LiDAR's returns are corrected along each ray by its bias
+(a + b m, +0.3..+3.3 mm); the filter's LiDAR range sigma is the study's
+sigma_total at the face's distance (4.3-4.8 mm, was 4 mm flat); the camera's
+depth is corrected by the study's inverse model, s/(1 - beta s) - a with beta
+0.0053548 1/m and a 9.08 mm (was beta 0.0048 alone). *Sim:* a new node gives
+Gazebo's LiDAR the same bias; on vertical faces the depth model gives the camera
+the same bias, a static offset per view of 12.4 mm (the study's sigma_position
+13.1 mm less the tape, 4.2 mm, in quadrature -- the LiDAR's own sigma_position
+being the tape), D105's 4 mm ripple, and the per-frame jitter; the floor keeps
+D80. The sim overlay no longer switches the depth correction off: the sim now
+carries the bias it corrects. *Not decided here:* the study did not converge
+(camera bias known to +-25.6 mm, LiDAR to +-5 mm, 95 %), and the camera's
+12-13 mm scatter per position is large against D102 item 6's 20 mm
+disagreement rule -- in the sim, 1 of 3 seeds ended NO_GO on it.
+(Athreya, 2026-11-03)
+
+**D110. The camera-LiDAR range disagreement limit is 30 mm (was 20).**
+`fusion.disagree_range: 0.030`; the 3 deg yaw part and the 5 frames are
+unchanged. *Why:* within 2 m the camera's range error stays within ~20 mm on
+the real robot, 30 mm in the worst case, and the range study puts its scatter
+per position at 12-13 mm, so 20 mm gave NO-GOs with nothing wrong (sim seed 3,
+twice). Range only decides how far the robot drives in, against a 240 mm gap
+between bumper and pallet, and the track's range comes mostly from the LiDAR.
+*Checked:* GPU sim seed 3, GO and INSERTED 1.061 m. *Not decided here, raised
+with it:* the forks' SIDEWAYS room is 65 mm each side (230 mm pocket, 100 mm
+tine), and a heading error theta at GO moves the tips sideways by about
+2.7 m x sin(theta) by full depth (1.07 m of travel plus the tips 1.65 m ahead):
+the current limits (3 deg at GO, 2 deg square-up, 30 mm offset) allow up to
+~125-173 mm. Run 5 fitted (0.92 deg, 6 mm offset: ~50 mm). Tightening the GO
+yaw (~0.75 deg with 30 mm, or 1 deg with 15 mm) needs the square-up to reach
+it; a heading correction during insertion would change D7. (Athreya, 2026-11-03)
+
 ## Open, with numbers attached
 
 Two predictions the offline harness makes about the real robot. Both are

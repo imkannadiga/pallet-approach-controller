@@ -137,6 +137,8 @@ def _setup(context):
              parameters=[{'blades': blades, 'hfov': camera.hfov,
                           'zed_model': arg('depth_model') == 'zed',
                           'seed': int(arg('seed'))}, sim_time]),
+        Node(package='pallet_approach_sim', executable='lidar_error', output='screen',
+             parameters=[sim_time]),
         *extra,
     ]
 
@@ -149,7 +151,9 @@ def generate_launch_description():
                               description='open the Gazebo window (needs X11)'),
         DeclareLaunchArgument('face', default_value='short',
                               description='which pallet face the robot is looking at'),
-        DeclareLaunchArgument('face_x', default_value='3.5',
+        # Inside the fused perception's working range (1.5-3.0 m, D97), like the
+        # acceptance starts (~2.5 m); 3.5 m only suited the camera-only pipeline.
+        DeclareLaunchArgument('face_x', default_value='2.5',
                               description='face centre, metres ahead of the robot'),
         DeclareLaunchArgument('face_y', default_value='0.10',
                               description='face centre, metres to the robot\'s left'),

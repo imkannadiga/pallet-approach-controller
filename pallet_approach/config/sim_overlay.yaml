@@ -34,11 +34,10 @@
       #    the frames that would have succeeded anyway.
       tf_timeout: 0.5
 
-    # The real ZED reads short by a disparity offset (D103); the sim's depth
-    # does not, and correcting it made the camera read 30+ mm far. Read by
-    # pallet_fusion, which merges this file's /** block over params.yaml's.
+    # Read by pallet_fusion, which merges this file's /** block over params.yaml's.
+    # The sim's camera and LiDAR now carry the range study's bias and noise
+    # (D109), so the depth and LiDAR corrections stay ON here, as on the robot.
     camera_depth:
-      disparity_bias: 0.0
       latency: 0.0                   # the sim's depth has no stabilization lag (D107)
 
 pallet_fusion:

@@ -11,13 +11,14 @@ stated reason. On GO it performs a **virtual pickup**: it lowers imaginary forks
 to pocket height, drives them in, lifts, backs out, and hands control back to
 Nav2.
 
-> **Status.** There are two perception pipelines. The new **fused** one, the
-> default, finds the face with the LiDAR and the pockets with the camera; it has
-> been scored against tape-measured bags from the robot and completes pickups in
-> Gazebo. The original camera-only pipeline has been validated on depth
-> recorded on the robot and also completes pickups in Gazebo. The camera-LiDAR
-> calibration is measured and wired in. Nothing has run closed-loop on the
-> robot yet.
+> **Status.** The robot completes virtual pickups on its own: from about
+> 2.4–2.6 m in front of the pallet it closes in, decides GO, inserts the virtual
+> forks 1.07 m and lifts, in 36 s (one recorded run, timed below). It runs on
+> the **fused** perception, the default: the LiDAR finds the pallet's face, the
+> camera finds the pockets along it. The original camera-only pipeline is still
+> available. Not yet done: the ten-start acceptance test on the robot, and runs
+> from beyond about 2.6 m, where the camera's depth error grows past the
+> camera-LiDAR agreement limit.
 
 There is no trained model. The pipeline is plane and line fitting, clustering,
 template matching and a Kalman filter, so it needs no labelled data and every
@@ -28,14 +29,40 @@ decision it makes can be read off a log.
   <p align="center"><img src="docs/images/robot.jpg" width="640" alt="The SCOUT 2.0 with the ZED 2i and Ouster in front of the pallet"></p>
 -->
 
+The same recorded bag through both pipelines (`pallet_s_129`, short face
+1.75 m from the robot's centre by tape):
+
+<p align="center">
+  <img src="docs/images/fused_pallet_s_129.png" width="900"
+       alt="Every stage of the fused perception pipeline on one real bag">
+  <br>
+  <em><b>Fused pipeline (default).</b> The LiDAR finds the face (1–3): 296,081
+  returns, reduced to the nearest vertical surface at pallet height, then one
+  line, 0.786 m wide, so the short face. The camera then reads depth only along
+  that line at pocket height (4) and slides the block/pocket layout along the
+  profile (5). Result (6): pocket pair centre 4 mm and 3 mm from the tape,
+  camera and LiDAR agreeing to 1.9 mm, 1.5 ms of camera work per frame on a
+  laptop.</em>
+</p>
+
 <p align="center">
   <img src="docs/images/perception_pallet_s_129.png" width="900"
-       alt="Every stage of the perception pipeline on one real frame">
+       alt="Every stage of the camera-only perception pipeline on one real frame">
   <br>
-  <em>Every stage of the perception pipeline on a real recorded frame, short
-  face 1.75 m ahead. Both pockets found (solid green: 217 × 82 and
-  232 × 86 mm) where the measured 230 × 100 mm pockets should be (dashed).</em>
+  <em><b>Camera-only pipeline.</b> Every stage on a frame of the same bag:
+  the whole depth image becomes a point cloud, the floor plane is fitted and
+  removed, the pallet is clustered, its face fitted, and the pockets found as
+  gaps. Both pockets found (solid green: 217 × 82 and 232 × 86 mm) where the
+  measured 230 × 100 mm pockets should be (dashed).</em>
 </p>
+
+| On this bag | Camera only | Fused |
+|---|---|---|
+| Input it processes | the whole 1280×720 depth image (~160k points after cropping) | one LiDAR line, then ~1,000 depth pixels along it |
+| Where the face is | a plane fitted to stereo depth | a line fitted to LiDAR returns (rms 8.6 mm) |
+| Pockets found | as gaps in the face's points | by matching the known block/pocket layout |
+| Face distance | stereo, error grows with the square of the distance | LiDAR: −0.5 mm mean, sd 3.4 mm against tape (16 bags) |
+| A second opinion | — | camera and LiDAR must agree within 20 mm / 3° |
 
 <p align="center">
   <img src="docs/images/live_overlay_pallet_s_129.png" width="900"
@@ -67,7 +94,7 @@ decision it makes can be read off a log.
 | Classify | Short face or long face, from the pocket spacing (365 vs 525 mm), confirmed by the face width; ambiguous is refused, never guessed |
 | Approach | Reverse for run-up if needed, then a continuous servo onto the pocket centre line, squaring up at a 1.75 m standoff |
 | Check | On a stationary robot: GO or NO-GO, always with a reason |
-| Pick up | Forks down to the opening's centre, straight in with a LiDAR distance stop, lift, back out, hand back to Nav2 |
+| Pick up | Forks down to the opening's centre, straight in with a LiDAR distance stop, lift; on the robot it then stops at the pallet (back-out is off, D91) |
 
 One run mode, `pickup`: the whole sequence. (An approach-only mode was removed
 in D95; a dry run uses the wheels-disconnected launch instead.)
@@ -137,6 +164,8 @@ tilt pull the solution, so the final board is 80 × 100 cm.
 
 ### Perception, fused: the LiDAR finds the face, the camera finds the pockets
 
+The default pipeline. The figure at the top shows each of its stages on a real bag.
+
 ```mermaid
 flowchart LR
     L[Ouster sweep,<br/>calibrated] --> A[Pallet-height slice<br/>above the LiDAR's floor]
@@ -175,6 +204,19 @@ pocket edges about six times finer than the LiDAR's columns at 2.5 m.
   measurements, and chi-square gates refuse outliers. If camera and LiDAR
   disagree by more than 20 mm or 3° for five frames in a row, the run cannot
   reach GO.
+- **Far away, the LiDAR alone.** The camera's depth is trusted only within
+  2.5 m of the face (an error-vs-distance study of both sensors), so beyond
+  that the LiDAR tracks the face by itself and the robot closes in on it; the
+  camera joins inside 2.5 m and GO still needs both (D108). How far the LiDAR
+  can find a 14.5 cm pallet is set by its beam spacing (~9 cm at 3.5 m), so the
+  search stays at 3.6 m until far bags show more.
+- **Every measurement is placed at the time it describes.** Measured on the
+  robot: an Ouster sweep's stamp is its start, and the points straight ahead
+  are measured 51 ms later; the ZED's depth stabilization makes a moving
+  camera's depth describe the scene about 170 ms before its stamp. Uncorrected,
+  that lag alone made camera and LiDAR disagree by 17 mm at the 0.1 m/s
+  closing speed and ended the first two robot runs NO-GO. Each depth frame is
+  now matched with the robot's pose 170 ms earlier (D107).
 
 ### Tracking and the closing servo
 
@@ -327,6 +369,40 @@ from the robot's centre (`base_footprint`, 0.46 m behind the bumper) unless
 stated. No accuracy or false-GO figures for a complete run are claimed until
 they come from trials on the robot.
 
+**On the robot: one recorded pickup** (`robot_fused_run5`, fused perception,
+start 2.43 m from the face and 17 mm off-centre; `tools/run_report.py`)
+
+| Stage | Time | Share | What the robot did |
+|---|---|---|---|
+| Confirm the pallet | 0.06 s | 0.2 % | — |
+| Close in to the standoff | 9.27 s | 25.9 % | 0.69 m, mean 0.074 m/s, peak 0.11 m/s, 8° of turning |
+| GO / NO-GO | 0.53 s | 1.5 % | standing; GO |
+| Lower the forks | 2.28 s | 6.4 % | standing |
+| Insert (blind) | 22.18 s | 61.9 % | 1.072 m at 0.05 m/s, stopped on odometry with the LiDAR seeing the face |
+| Lift | 1.52 s | 4.2 % | standing; pallet lifted 50 mm |
+| **Trigger to result** | **35.85 s** | | INSERTED |
+
+| At the decision | Value |
+|---|---|
+| Face | 1.775 m ahead (standoff 1.75 m), yaw −0.9° from square |
+| Off the pocket centre line | 6 mm (controller) |
+| Camera vs LiDAR | 1.8 mm apart at the decision; median −0.2 mm, max 8.9 mm over the run (limit 20 mm) |
+| Filter uncertainty | ±1.6 mm in range, ±1.7 mm sideways |
+
+| Where the time goes in perception (Jetson Orin, 30 W mode) | Median | p95 |
+|---|---|---|
+| ZED depth: capture → the stack | 58 ms | 76 ms |
+| Ouster sweep: start → the stack (includes the 100 ms sweep) | 243 ms | 258 ms |
+| LiDAR face fit, per sweep | 39 ms | 67 ms |
+| Camera pocket match, per frame | 5 ms | 19 ms |
+| Fused estimate updated by a depth frame: capture → out | 213 ms | 267 ms |
+| Fused estimate updated by a LiDAR sweep: capture → out | 462 ms | 753 ms |
+
+The work itself is a small part of the age; most of it is transport and
+queueing on a CPU that ran at 86–90 % on all 8 active cores throughout (GPU
+58–83 %, RAM 4.3 GB). One run, so these are single measurements, not
+statistics; the 9-of-10 acceptance runs will give the spread.
+
 **Calibration and sensors**
 
 | Result | Source | Value |
@@ -360,7 +436,7 @@ they come from trials on the robot.
 | Full pickup, camera pipeline driving | Gazebo | INSERTED, insertion depth 1.053 m |
 | Full pickup, fused pipeline driving, from 3.0 m | Gazebo | GO at the standoff, INSERTED, insertion depth 1.059 m |
 | Fused (shadow) vs camera tracker at the standoff, same run | Gazebo | 5 mm in range, 1 mm sideways, 0.1° |
-| Tests | synthetic data and a simulated world | 586 test functions |
+| Tests | synthetic data and a simulated world | 594 test functions |
 
 The first real bag, taken at 2.0 m, with the three fixes it prompted applied
 (a narrower detection band, a slab instead of inliers, two points per bin):
@@ -370,11 +446,13 @@ The first real bag, taken at 2.0 m, with the three fixes it prompted applied
        alt="Perception pipeline on the first real bag at 2.0 m">
 </p>
 
-**What is next:** the fused pipeline on the robot: a dry run with the wheels
-disconnected first (reading the Jetson's timing from `/pallet_fusion/stats`),
-then supervised runs from the ten shared starting positions of the acceptance
-test (9 of 10 must end INSERTED). Open items are in
-[docs/TODO.md](docs/TODO.md).
+**What is next:** the acceptance test on the robot, ten supervised runs from the
+shared starting positions (9 of 10 must end INSERTED); new flat-board bags to
+a run from about 3 m on the robot to check the LiDAR-only far phase and the
+camera's handover at 2.5 m (D108); pallet bags at 3.5–5 m to decide how far the
+LiDAR's search may reach; confirming the 170 ms camera lag
+over more runs; and the Jetson's full power mode, which may shorten the
+estimate's age. Open items are in [docs/TODO.md](docs/TODO.md).
 
 ## Simulation
 
@@ -405,7 +483,7 @@ tf and the clock.
 
 ```bash
 ./sim/run_sim.sh build
-./sim/run_sim.sh up face_x:=3.5 face_y:=0.25 face_yaw:=0.1
+./sim/run_sim.sh up face_x:=2.8 face_y:=0.25 face_yaw:=0.1   # face 1.5-3.0 m ahead (D97)
 ./sim/run_sim.sh run pickup
 # dashboard: http://localhost:8889/dashboard
 ./sim/run_sim.sh stop
@@ -512,11 +590,13 @@ Bags are read offline with the `rosbags` library; no ROS needed.
 ```bash
 ./pallet_approach/tools/fetch_bag.sh -o pallet_2m_0deg -d 20        # record on the Jetson, copy here
 python3 pallet_approach/tools/bag_to_frames.py ~/bags/pallet_2m_0deg --out /tmp/frames
-python3 pallet_approach/tools/replay.py ~/bags/pallet_2m_0deg --truth-x 2.0
+python3 pallet_approach/tools/replay.py ~/bags/pallet_2m_0deg --truth-x 2.0      # camera-only stages
+python3 pallet_approach/tools/replay_fused.py ~/bags/pallet_s_129                 # fused stages
+python3 pallet_approach/tools/run_report.py ~/bags/robot_fused_run5               # timing of a recorded run
 ```
 
-`replay.py` runs the whole perception pipeline on a bag and draws every stage,
-as in the figures above. Ground truth for each bag lives in
+`replay.py` and `replay_fused.py` run the camera-only and the fused pipeline on
+a bag and draw every stage, as in the figures at the top. Ground truth for each bag lives in
 [docs/dataset.md](docs/dataset.md).
 
 ## Repository layout
@@ -557,7 +637,7 @@ docs/                            design record, system facts, dataset and tape t
 
 | Document | What is in it |
 |---|---|
-| [docs/decisions.md](docs/decisions.md) | Every behaviour decision (D1–D105): what, why, when |
+| [docs/decisions.md](docs/decisions.md) | Every behaviour decision (D1–D108): what, why, when |
 | [docs/SYSTEM.md](docs/SYSTEM.md) | Measured facts about the robot: topics, frames, calibration, network |
 | [docs/TODO.md](docs/TODO.md) | What is still open |
 | [docs/dataset.md](docs/dataset.md), [docs/bag_truth.yaml](docs/bag_truth.yaml) | The recorded bags and their tape-measured ground truth |

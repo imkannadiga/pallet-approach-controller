@@ -1,0 +1,168 @@
+tool: lidar-camera-calib 0.1.0 range-error
+date: '2026-11-02T16:01:13'
+converged: false
+targets_band95_m: {lidar: 0.002, camera: 0.005}
+measured: distance from the bumper-centre mark to the board plane, base frame, against a tape from the same mark; every quantity
+  is a function of the MEASURED distance m (metres)
+use: true = m - bias(m); R(m) = sigma_total(m)^2. Outside valid_range_m hold the end values; never extrapolate. sigma_position
+  includes the tape reading error.
+base_frame: base_footprint
+mark_m: [0.4625, 0.0, 0.3]
+board:
+  inner_corners: [9, 6]
+  square_m: 0.065
+  size_m: [0.8, 1.0]
+poses: ['straight:0:0']
+frames: {camera: zed2_left_camera_frame_optical, lidar: lidar_calibrated}
+run_dir: range_runs/20261102-153240
+lidar:
+  valid_range_m: [0.993, 3.892]
+  positions: 20
+  frames: 1916
+  sensor_minus_mark_m: 0.3141
+  bias: {model: linear, formula: error = measured - true = a + b m (+ c m^2), a_m: -0.000762, b: 0.001038, quadratic_t: 0.22,
+    quadratic_t_needed: 2.11}
+  bias_band95_m: 0.005033
+  noise:
+    frame: {sigma0_m: 0.0001763, exponent: 0.9116, exponent_se: 0.1308, constant: false}
+    position: {sigma0_m: 0.0041633, exponent: 0.0, exponent_se: 0.5246, constant: true}
+  table:
+    columns: [m, bias, sigma_frame, sigma_position, sigma_fit, sigma_total]
+    rows:
+    - [0.993, 0.000269, 0.000175, 0.004163, 0.002395, 0.004806]
+    - [1.0, 0.000276, 0.000176, 0.004163, 0.002388, 0.004803]
+    - [1.25, 0.000536, 0.000216, 0.004163, 0.002112, 0.004673]
+    - [1.5, 0.000795, 0.000255, 0.004163, 0.001843, 0.00456]
+    - [1.75, 0.001055, 0.000294, 0.004163, 0.001583, 0.004464]
+    - [2.0, 0.001314, 0.000332, 0.004163, 0.001338, 0.004385]
+    - [2.25, 0.001574, 0.000369, 0.004163, 0.001117, 0.004326]
+    - [2.5, 0.001833, 0.000406, 0.004163, 0.000938, 0.004287]
+    - [2.75, 0.002093, 0.000443, 0.004163, 0.000829, 0.004268]
+    - [3.0, 0.002352, 0.00048, 0.004163, 0.000817, 0.00427]
+    - [3.25, 0.002612, 0.000516, 0.004163, 0.000907, 0.004292]
+    - [3.5, 0.002871, 0.000552, 0.004163, 0.001073, 0.004335]
+    - [3.75, 0.003131, 0.000588, 0.004163, 0.001286, 0.004397]
+    - [3.892, 0.003278, 0.000608, 0.004163, 0.00142, 0.004441]
+camera:
+  valid_range_m: [0.989, 3.775]
+  positions: 20
+  frames: 375
+  sensor_minus_mark_m: 0.06936
+  bias: {model: inverse, formula: 'error = measured - true = a + s - s / (1 - beta s), s = sensor-to-plane distance', disparity_bias: 0.0053548,
+    a_m: 0.00908}
+  bias_band95_m: 0.025586
+  noise:
+    frame: {sigma0_m: 0.0001116, exponent: 2.5078, exponent_se: 0.3474, constant: false}
+    position: {sigma0_m: 0.0130921, exponent: 0.0, exponent_se: 0.5377, constant: true}
+  table:
+    columns: [m, bias, sigma_frame, sigma_position, sigma_fit, sigma_total]
+    rows:
+    - [0.989, 0.003042, 0.000109, 0.013092, 0.004937, 0.013992]
+    - [1.0, 0.002921, 0.000112, 0.013092, 0.004912, 0.013984]
+    - [1.25, -0.000308, 0.000195, 0.013092, 0.004283, 0.013776]
+    - [1.5, -0.00422, 0.000308, 0.013092, 0.003557, 0.01357]
+    - [1.75, -0.008819, 0.000454, 0.013092, 0.002798, 0.013395]
+    - [2.0, -0.014108, 0.000635, 0.013092, 0.002189, 0.013289]
+    - [2.25, -0.020088, 0.000853, 0.013092, 0.002146, 0.013294]
+    - [2.5, -0.026764, 0.00111, 0.013092, 0.002912, 0.013458]
+    - [2.75, -0.034137, 0.00141, 0.013092, 0.004219, 0.013827]
+    - [3.0, -0.042211, 0.001754, 0.013092, 0.00584, 0.014442]
+    - [3.25, -0.050988, 0.002144, 0.013092, 0.007687, 0.015333]
+    - [3.5, -0.060472, 0.002582, 0.013092, 0.009728, 0.016514]
+    - [3.75, -0.070665, 0.00307, 0.013092, 0.011949, 0.017989]
+    - [3.775, -0.071713, 0.003121, 0.013092, 0.012178, 0.018151]
+camera_pnp_crosscheck:
+  valid_range_m: [0.995, 3.896]
+  positions: 20
+  frames: 320
+  sensor_minus_mark_m: 0.07092
+  bias: {model: linear, formula: error = measured - true = a + b m (+ c m^2), a_m: 0.002063, b: 0.0015592, quadratic_t: 0.5,
+    quadratic_t_needed: 2.11}
+  bias_band95_m: 0.004363
+  noise:
+    frame: {sigma0_m: 4.03e-05, exponent: 2.1772, exponent_se: 0.264, constant: false}
+    position: {sigma0_m: 0.009623, exponent: -1.2542, exponent_se: 0.4343, constant: false}
+  table:
+    columns: [m, bias, sigma_frame, sigma_position, sigma_fit, sigma_total]
+    rows:
+    - [0.995, 0.003615, 4.0e-05, 0.009678, 0.002077, 0.009899]
+    - [1.0, 0.003622, 4.0e-05, 0.009623, 0.002072, 0.009844]
+    - [1.25, 0.004012, 6.5e-05, 0.007274, 0.001829, 0.007501]
+    - [1.5, 0.004402, 9.7e-05, 0.005787, 0.001591, 0.006003]
+    - [1.75, 0.004792, 0.000136, 0.00477, 0.001362, 0.004962]
+    - [2.0, 0.005182, 0.000182, 0.004034, 0.001146, 0.004198]
+    - [2.25, 0.005571, 0.000235, 0.00348, 0.000952, 0.003616]
+    - [2.5, 0.005961, 0.000296, 0.003049, 0.000798, 0.003166]
+    - [2.75, 0.006351, 0.000364, 0.002706, 0.000709, 0.002821]
+    - [3.0, 0.006741, 0.00044, 0.002426, 0.00071, 0.002566]
+    - [3.25, 0.007131, 0.000524, 0.002194, 0.000801, 0.002394]
+    - [3.5, 0.00752, 0.000616, 0.002, 0.000956, 0.0023]
+    - [3.75, 0.00791, 0.000716, 0.001834, 0.00115, 0.00228]
+    - [3.896, 0.008138, 0.000778, 0.001748, 0.001275, 0.002299]
+  note: the camera from the checkerboard corners, no stereo; a cross-check, not for the filter
+stopping: ['lidar: bias known to +-5.0 mm (95 %), target +-2.0 mm  NOT met', 'camera: bias known to +-25.6 mm (95 %), target
+    +-5.0 mm  NOT met']
+per_position:
+  lidar:
+  - {tape_m: 0.998, measured_m: 0.99314, error_mm: -4.86, residual_mm: -5.13, frame_sigma_mm: 0.185, frames: 88}
+  - {tape_m: 1.31, measured_m: 1.31415, error_mm: 4.15, residual_mm: 3.55, frame_sigma_mm: 0.217, frames: 97}
+  - {tape_m: 1.628, measured_m: 1.6303, error_mm: 2.3, residual_mm: 1.37, frame_sigma_mm: 0.273, frames: 93}
+  - {tape_m: 1.956, measured_m: 1.95087, error_mm: -5.13, residual_mm: -6.39, frame_sigma_mm: 0.286, frames: 99}
+  - {tape_m: 2.277, measured_m: 2.2782, error_mm: 1.2, residual_mm: -0.4, frame_sigma_mm: 0.415, frames: 94}
+  - {tape_m: 2.597, measured_m: 2.60022, error_mm: 3.22, residual_mm: 1.29, frame_sigma_mm: 0.454, frames: 93}
+  - {tape_m: 2.919, measured_m: 2.92621, error_mm: 7.21, residual_mm: 4.94, frame_sigma_mm: 0.512, frames: 97}
+  - {tape_m: 3.246, measured_m: 3.25144, error_mm: 5.44, residual_mm: 2.83, frame_sigma_mm: 0.338, frames: 95}
+  - {tape_m: 3.567, measured_m: 3.56737, error_mm: 0.37, residual_mm: -2.57, frame_sigma_mm: 0.848, frames: 96}
+  - {tape_m: 3.888, measured_m: 3.89165, error_mm: 3.65, residual_mm: 0.37, frame_sigma_mm: 0.6, frames: 98}
+  - {tape_m: 3.042, measured_m: 3.04938, error_mm: 7.38, residual_mm: 4.98, frame_sigma_mm: 0.74, frames: 99}
+  - {tape_m: 1.748, measured_m: 1.74028, error_mm: -7.72, residual_mm: -8.77, frame_sigma_mm: 0.249, frames: 92}
+  - {tape_m: 3.32, measured_m: 3.32239, error_mm: 2.39, residual_mm: -0.3, frame_sigma_mm: 0.319, frames: 98}
+  - {tape_m: 1.426, measured_m: 1.43185, error_mm: 5.85, residual_mm: 5.13, frame_sigma_mm: 0.283, frames: 95}
+  - {tape_m: 2.691, measured_m: 2.69105, error_mm: 0.05, residual_mm: -1.98, frame_sigma_mm: 0.419, frames: 96}
+  - {tape_m: 2.366, measured_m: 2.36478, error_mm: -1.22, residual_mm: -2.91, frame_sigma_mm: 0.405, frames: 99}
+  - {tape_m: 3.639, measured_m: 3.63848, error_mm: -0.52, residual_mm: -3.53, frame_sigma_mm: 0.555, frames: 97}
+  - {tape_m: 2.035, measured_m: 2.03695, error_mm: 1.95, residual_mm: 0.59, frame_sigma_mm: 0.456, frames: 96}
+  - {tape_m: 1.085, measured_m: 1.0913, error_mm: 6.3, residual_mm: 5.93, frame_sigma_mm: 0.158, frames: 97}
+  - {tape_m: 3.377, measured_m: 3.38077, error_mm: 3.77, residual_mm: 1.02, frame_sigma_mm: 0.474, frames: 97}
+  camera:
+  - {tape_m: 0.998, measured_m: 0.98945, error_mm: -8.55, residual_mm: -11.57, frame_sigma_mm: 0.156, frames: 10}
+  - {tape_m: 1.31, measured_m: 1.30621, error_mm: -3.79, residual_mm: -2.64, frame_sigma_mm: 0.117, frames: 13}
+  - {tape_m: 1.628, measured_m: 1.62449, error_mm: -3.51, residual_mm: 2.95, frame_sigma_mm: 0.535, frames: 14}
+  - {tape_m: 1.956, measured_m: 1.94227, error_mm: -13.73, residual_mm: -0.87, frame_sigma_mm: 0.49, frames: 18}
+  - {tape_m: 2.277, measured_m: 2.26472, error_mm: -12.28, residual_mm: 8.18, frame_sigma_mm: 0.464, frames: 18}
+  - {tape_m: 2.597, measured_m: 2.57699, error_mm: -20.01, residual_mm: 9.03, frame_sigma_mm: 0.916, frames: 20}
+  - {tape_m: 2.919, measured_m: 2.89704, error_mm: -21.96, residual_mm: 16.82, frame_sigma_mm: 0.978, frames: 20}
+  - {tape_m: 3.246, measured_m: 3.20132, error_mm: -44.68, residual_mm: 4.52, frame_sigma_mm: 2.118, frames: 20}
+  - {tape_m: 3.567, measured_m: 3.51224, error_mm: -54.76, residual_mm: 6.1, frame_sigma_mm: 3.253, frames: 19}
+  - {tape_m: 3.888, measured_m: 3.77476, error_mm: -113.24, residual_mm: -41.55, frame_sigma_mm: 5.933, frames: 21}
+  - {tape_m: 3.042, measured_m: 3.0157, error_mm: -26.3, residual_mm: 16.51, frame_sigma_mm: 0.879, frames: 19}
+  - {tape_m: 1.748, measured_m: 1.72831, error_mm: -19.69, residual_mm: -11.26, frame_sigma_mm: 0.328, frames: 16}
+  - {tape_m: 3.32, measured_m: 3.28119, error_mm: -38.81, residual_mm: 13.29, frame_sigma_mm: 2.496, frames: 29}
+  - {tape_m: 1.426, measured_m: 1.41739, error_mm: -8.61, residual_mm: -5.7, frame_sigma_mm: 1.058, frames: 14}
+  - {tape_m: 2.691, measured_m: 2.65871, error_mm: -32.29, residual_mm: -0.93, frame_sigma_mm: 0.67, frames: 18}
+  - {tape_m: 2.366, measured_m: 2.34176, error_mm: -24.24, residual_mm: -1.77, frame_sigma_mm: 0.427, frames: 17}
+  - {tape_m: 3.639, measured_m: 3.57109, error_mm: -67.91, residual_mm: -4.98, frame_sigma_mm: 9.184, frames: 25}
+  - {tape_m: 2.035, measured_m: 2.0245, error_mm: -10.5, residual_mm: 4.21, frame_sigma_mm: 0.59, frames: 22}
+  - {tape_m: 1.085, measured_m: 1.08105, error_mm: -3.95, residual_mm: -5.86, frame_sigma_mm: 0.15, frames: 12}
+  - {tape_m: 3.377, measured_m: 3.3289, error_mm: -48.1, residual_mm: 5.52, frame_sigma_mm: 3.156, frames: 30}
+  pnp:
+  - {tape_m: 0.998, measured_m: 0.99545, error_mm: -2.55, residual_mm: -6.17, frame_sigma_mm: 0.046, frames: 11}
+  - {tape_m: 1.31, measured_m: 1.31611, error_mm: 6.11, residual_mm: 1.99, frame_sigma_mm: 0.095, frames: 13}
+  - {tape_m: 1.628, measured_m: 1.63533, error_mm: 7.33, residual_mm: 2.72, frame_sigma_mm: 0.12, frames: 13}
+  - {tape_m: 1.956, measured_m: 1.95805, error_mm: 2.05, residual_mm: -3.07, frame_sigma_mm: 0.082, frames: 17}
+  - {tape_m: 2.277, measured_m: 2.28672, error_mm: 9.72, residual_mm: 4.1, frame_sigma_mm: 0.131, frames: 16}
+  - {tape_m: 2.597, measured_m: 2.60448, error_mm: 7.48, residual_mm: 1.35, frame_sigma_mm: 0.214, frames: 16}
+  - {tape_m: 2.919, measured_m: 2.92507, error_mm: 6.07, residual_mm: -0.56, frame_sigma_mm: 0.309, frames: 17}
+  - {tape_m: 3.246, measured_m: 3.25395, error_mm: 7.95, residual_mm: 0.82, frame_sigma_mm: 1.506, frames: 18}
+  - {tape_m: 3.567, measured_m: 3.57726, error_mm: 10.26, residual_mm: 2.62, frame_sigma_mm: 0.536, frames: 18}
+  - {tape_m: 3.888, measured_m: 3.89635, error_mm: 8.35, residual_mm: 0.21, frame_sigma_mm: 0.772, frames: 18}
+  - {tape_m: 3.042, measured_m: 3.05152, error_mm: 9.52, residual_mm: 2.7, frame_sigma_mm: 0.555, frames: 18}
+  - {tape_m: 1.748, measured_m: 1.74463, error_mm: -3.37, residual_mm: -8.15, frame_sigma_mm: 0.116, frames: 14}
+  - {tape_m: 3.32, measured_m: 3.32565, error_mm: 5.65, residual_mm: -1.6, frame_sigma_mm: 0.827, frames: 18}
+  - {tape_m: 1.426, measured_m: 1.43373, error_mm: 7.73, residual_mm: 3.44, frame_sigma_mm: 0.084, frames: 14}
+  - {tape_m: 2.691, measured_m: 2.69677, error_mm: 5.77, residual_mm: -0.5, frame_sigma_mm: 0.297, frames: 17}
+  - {tape_m: 2.366, measured_m: 2.37299, error_mm: 6.99, residual_mm: 1.22, frame_sigma_mm: 0.164, frames: 17}
+  - {tape_m: 3.639, measured_m: 3.64594, error_mm: 6.94, residual_mm: -0.8, frame_sigma_mm: 0.506, frames: 18}
+  - {tape_m: 2.035, measured_m: 2.04221, error_mm: 7.21, residual_mm: 1.96, frame_sigma_mm: 0.167, frames: 17}
+  - {tape_m: 1.085, measured_m: 1.09208, error_mm: 7.08, residual_mm: 3.31, frame_sigma_mm: 0.09, frames: 12}
+  - {tape_m: 3.377, measured_m: 3.37873, error_mm: 1.73, residual_mm: -5.61, frame_sigma_mm: 1.344, frames: 18}

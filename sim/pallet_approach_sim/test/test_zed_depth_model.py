@@ -72,25 +72,89 @@ def test_apply_keeps_the_scene_and_adds_bounded_error():
     assert np.all(np.isfinite(out))
 
 
-def test_d105_vertical_faces_get_the_board_measured_error_the_floor_keeps_d80():
+def _scene():
     """A level camera 0.4 m up, looking at a floor and at a wall 2.5 m away."""
     import numpy as np
-    from pallet_approach_sim.zed_depth_model import DepthModel, ZedParams, warp_sd
     h, w, fx = 360, 640, 475.0
     v, u = np.mgrid[0:h, 0:w].astype(float)
     ray_y = (v - h / 2) / fx                               # optical y, down
     with np.errstate(divide='ignore'):
         floor_z = np.where(ray_y > 0, 0.4 / ray_y, np.inf)  # where each ray meets the floor
     depth = np.minimum(floor_z, 2.5).astype(np.float32)     # a wall at 2.5 m
+    return depth, floor_z, u, v, w, h, fx
+
+
+def test_vertical_faces_carry_the_range_studys_bias_and_noise_the_floor_keeps_d80():
+    """D109: on the wall, the error's mean is the study's bias and its spread
+    across views the study's sigma_position less the tape."""
+    import math
+    import numpy as np
+    from pallet_approach_sim.zed_depth_model import DepthModel, ZedParams, warp_sd
+    depth, floor_z, u, v, w, h, fx = _scene()
     model = DepthModel(ZedParams(), seed=3)
     flat = model.horizontal(depth, fx)
     assert flat[(floor_z < 2.0) & (np.abs(u - w / 2) < 200)].mean() > 0.95
-    assert not flat[(depth == 2.5) & (v < h / 2 - 20)].any()
+    assert not flat[(depth == 2.5) & (v < h / 2 - 40)].any()
+    p = ZedParams()
+    s = 2.5
+    expected_bias = p.vertical_bias_offset + s - s / (1 - p.vertical_bias_beta * s)
     errors = []
-    for seed in range(40):                                   # many warp draws
-        m = DepthModel(ZedParams(flicker=0.0), seed=seed)
+    for seed in range(200):                                  # many views
+        m = DepthModel(ZedParams(), seed=seed)
         out = m.apply(depth, fx, progress=0.0)
         errors.append(float(np.median((out - depth)[(depth == 2.5) & (v < h / 2 - 40)])))
-    sd = float(np.std(errors))
-    assert sd < 0.008, sd                                    # board-like, not D80's 29 mm at 2.5 m
+    errors = np.array(errors)
+    # The model's measured depth is u / (1 + beta u); the study's error is
+    # measured - true. At 2.5 m that is about -24 mm (camera reads short).
+    assert np.mean(errors) == pytest.approx(-(s - (s + p.vertical_bias_offset)
+                                              / (1 + p.vertical_bias_beta * (s + p.vertical_bias_offset))),
+                                            abs=0.003)
+    assert np.mean(errors) == pytest.approx(expected_bias, abs=0.003)
+    assert np.std(errors) == pytest.approx(math.hypot(p.vertical_offset_sd, 0.0), rel=0.25)
     assert warp_sd(np.array([2.5]), ZedParams())[0] > 0.02   # the floor's model is unchanged
+
+
+def test_the_sim_camera_and_lidar_use_the_numbers_in_params_yaml():
+    """The sim image cannot import the stack, so its numbers are copies: same values."""
+    import math
+    import pathlib
+    import yaml
+    from pallet_approach_sim.zed_depth_model import ZedParams
+    from pallet_approach_sim.lidar_error import LidarError
+    params = pathlib.Path(__file__).resolve().parents[3] / 'pallet_approach' / 'config' / 'params.yaml'
+    if not params.exists():
+        pytest.skip('params.yaml not beside the sim package')
+    e = yaml.safe_load(params.read_text())['/**']['ros__parameters']['range_error']
+    c, li, p = e['camera'], e['lidar'], ZedParams()
+    assert (p.vertical_bias_beta, p.vertical_bias_offset) == (c['disparity_bias'], c['offset'])
+    assert (p.vertical_frame_sd0, p.vertical_frame_exponent) == (c['sigma_frame0'], c['sigma_frame_exponent'])
+    assert p.sensor_minus_mark == c['sensor_minus_mark']
+    lidar_tape = LidarError().tape_sigma
+    assert p.vertical_offset_sd == pytest.approx(math.sqrt(c['sigma_position'] ** 2 - lidar_tape ** 2), abs=1e-5)
+    le = LidarError()
+    assert (le.bias_a, le.bias_b, le.sensor_minus_mark) == (li['bias_a'], li['bias_b'], li['sensor_minus_mark'])
+    assert le.valid_range == tuple(li['valid_range'])
+
+
+def test_the_lidar_error_moves_returns_along_their_rays_by_the_studys_bias():
+    from pallet_approach_sim.lidar_error import LidarError
+    e = LidarError()
+    xyz = np.array([[3.0, 0.0, 0.0], [0.0, 1.5, 0.2], [0.0, 0.0, 0.0], [20.0, 0.0, 0.0]])
+    out = e.apply(xyz)
+    r0, r1 = np.linalg.norm(xyz, axis=1), np.linalg.norm(out, axis=1)
+    assert r1[0] - r0[0] == pytest.approx(e.bias_a + e.bias_b * (3.0 - e.sensor_minus_mark))
+    assert np.allclose(out[1] / r1[1], xyz[1] / r0[1])
+    assert np.all(out[2] == 0.0)                                       # no return stays none
+    assert r1[3] - r0[3] == pytest.approx(e.bias_a + e.bias_b * e.valid_range[1])   # held, not extrapolated
+
+
+def test_the_lidar_error_rewrites_a_pointcloud_buffer_in_place_of_its_fields():
+    from pallet_approach_sim.lidar_error import LidarError
+    e = LidarError()
+    dt = np.dtype([('x', '<f4'), ('y', '<f4'), ('z', '<f4'), ('pad', '<f4'), ('intensity', '<f4')])
+    pts = np.zeros(3, dtype=dt)
+    pts['x'], pts['y'], pts['z'], pts['intensity'] = [2.0, 0.0, 1.0], [0.0, 3.0, 1.0], [0.1, 0.0, 0.5], 7.0
+    out = np.frombuffer(e.apply_to_buffer(pts.tobytes(), dt.itemsize, {'x': 0, 'y': 4, 'z': 8}), dtype=dt)
+    xyz = np.stack([pts['x'], pts['y'], pts['z']], 1).astype(float)
+    assert np.allclose(np.stack([out['x'], out['y'], out['z']], 1), e.apply(xyz), atol=1e-6)
+    assert np.all(out['intensity'] == 7.0)                    # other fields untouched

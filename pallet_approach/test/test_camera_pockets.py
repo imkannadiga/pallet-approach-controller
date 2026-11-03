@@ -72,3 +72,20 @@ def test_the_camera_sees_a_turn_the_lidar_missed():
     assert abs(math.degrees(r.yaw_residual)) == pytest.approx(4.0, abs=1.0)
     square = _measure(depth_image(2.0, 0.0, noise=0.003), 2.0, 0.0, 0.0)
     assert abs(math.degrees(square.yaw_residual)) < 0.5
+
+
+def test_the_range_studys_camera_model_is_inverted_exactly():
+    """D109: error = a + s - s / (1 - beta s); correcting measured s gives true s."""
+    import yaml, pathlib
+    from pallet_approach.camera_pockets import corrected_depth
+    params = yaml.safe_load((pathlib.Path(__file__).resolve().parents[1] / 'config' / 'params.yaml')
+                            .read_text())['/**']['ros__parameters']
+    c = params['range_error']['camera']
+    beta, a = c['disparity_bias'], c['offset']
+    true = np.array([1.0, 2.0, 3.0])
+    u = true + a                                   # s / (1 - beta s) = true + a
+    measured = u / (1.0 + beta * u)
+    assert np.allclose(corrected_depth(measured, beta, a), true)
+    # the study's table, error at mark distance 3.0 m: -42.2 mm
+    s = 3.0 + c['sensor_minus_mark']
+    assert a + s - s / (1 - beta * s) == pytest.approx(-0.042211, abs=2e-4)

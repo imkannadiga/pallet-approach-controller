@@ -17,6 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from pallet_approach.model import Plane
+from pallet_approach.range_error import camera_true_depth
 
 
 @dataclass(frozen=True)
@@ -39,17 +40,15 @@ def _template(s: np.ndarray, side: dict, beyond: float) -> np.ndarray:
     return t
 
 
-def corrected_depth(z: np.ndarray, disparity_bias: float) -> np.ndarray:
-    """The ZED's depth with its constant disparity offset removed (D103).
-
-    1/z_measured = 1/z_true + beta, so z_true = z_measured / (1 - beta z_measured).
-    """
-    return z / (1.0 - disparity_bias * z)
+def corrected_depth(z: np.ndarray, disparity_bias: float, offset: float = 0.0) -> np.ndarray:
+    """The ZED's depth with its error removed (D103, D109): a constant disparity
+    offset, 1/z_measured = 1/z_true + beta, and a constant range `offset`."""
+    return camera_true_depth(z, disparity_bias, offset)
 
 
 def measure(depth: np.ndarray, intrinsics: dict, ground_from_camera: np.ndarray,
             centre: np.ndarray, yaw: float, floor: Plane, side: dict, p: dict,
-            disparity_bias: float = 0.0) -> CameraPockets:
+            disparity_bias: float = 0.0, offset: float = 0.0) -> CameraPockets:
     """Pocket position along a known face (`centre`, outward-normal `yaw`, ground
     frame, as lidar_pallet reports it), from one depth image."""
     t0 = time.perf_counter()
@@ -72,7 +71,7 @@ def measure(depth: np.ndarray, intrinsics: dict, ground_from_camera: np.ndarray,
     h, w = depth.shape
     inside = (z > 0.3) & (u >= 0) & (u < w) & (v >= 0) & (v < h)
     measured = np.full(z.shape, np.nan)
-    measured[inside] = corrected_depth(depth[v[inside], u[inside]].astype(float), disparity_bias)
+    measured[inside] = corrected_depth(depth[v[inside], u[inside]].astype(float), disparity_bias, offset)
     diff = measured - z                                                        # + = deeper than the face
     valid = np.isfinite(diff)
     wood = valid & (np.abs(diff) <= p['wood_tolerance'])

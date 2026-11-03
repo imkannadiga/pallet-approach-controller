@@ -28,7 +28,10 @@ def test_acquires_standing_still_then_tracks_while_driving_in():
         if step % 3 == 0:
             r = pipe.on_depth(depth_image(PALLET[0] - x, PALLET[1], noise=0.003, seed=step),
                               INTRINSICS, CAMERA, robot, t)
-            assert r is not None
+            # D108: the camera joins once the face is within camera_max_range
+            far = np.hypot(PALLET[0] - x, PALLET[1]) - PARAMS['fused_pipeline']['camera_max_range']
+            if abs(far) > 0.02:
+                assert (r is not None) == (far < 0)
         t += 0.1
     s = pipe.status(t)
     assert np.linalg.norm(s.centre - PALLET) < 0.01          # fixed in odom while the robot moved
@@ -118,3 +121,41 @@ def test_a_lagging_camera_agrees_with_the_lidar_only_at_its_measurement_time():
     baseline = residual(0.0, compensate=False)
     assert residual(lag, compensate=False) - baseline == pytest.approx(0.1 * lag, abs=0.005)
     assert abs(residual(lag, compensate=True) - baseline) < 0.003
+
+
+def _acquire(pipe, face_x):
+    for i in range(5):
+        pipe.on_lidar(sweep(face_x, 0.0, seed=i), (0.0, 0.0, 0.0), 0.1 * i)
+    assert pipe.tracking
+    return 0.5
+
+
+def test_far_away_the_lidar_alone_tracks_and_the_camera_is_ignored():
+    """D108: beyond camera_max_range a camera reading 40 mm far changes nothing."""
+    pipe = FusedPipeline(PARAMS)
+    t = _acquire(pipe, 2.9)
+    before = pipe.status(t).centre.copy()
+    for step in range(10):
+        t += 0.1
+        pipe.on_lidar(sweep(2.9, 0.0, seed=50 + step), (0.0, 0.0, 0.0), t)
+        biased = depth_image(2.94, 0.0, seed=step)            # the camera's far-range error
+        assert pipe.on_depth(biased, INTRINSICS, CAMERA, (0.0, 0.0, 0.0), t) is None
+    st = pipe.status(t)
+    assert not st.disagreeing and not st.go_allowed
+    assert 'LiDAR only' in st.reason and 'D108' in st.reason
+    assert np.linalg.norm(st.centre - before) < 0.01
+
+
+def test_the_camera_joins_inside_the_range_and_stays_on():
+    pipe = FusedPipeline(PARAMS)
+    t = _acquire(pipe, 2.4)
+    t += 0.1
+    pipe.on_lidar(sweep(2.4, 0.0, seed=60), (0.0, 0.0, 0.0), t)
+    assert pipe.on_depth(depth_image(2.4, 0.0, seed=1), INTRINSICS, CAMERA, (0.0, 0.0, 0.0), t) is not None
+    assert pipe.camera_on
+    # Latched: a range estimate back over the limit does not switch it off.
+    t += 0.1
+    pipe.on_lidar(sweep(2.55, 0.0, seed=61), (-0.15, 0.0, 0.0), t)
+    assert pipe.on_depth(depth_image(2.55, 0.0, seed=2), INTRINSICS, CAMERA, (-0.15, 0.0, 0.0), t) is not None
+    pipe.reset()
+    assert not pipe.camera_on

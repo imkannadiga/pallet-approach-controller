@@ -1249,3 +1249,43 @@ the camera feed's jumps are likely those, its smearing likely WebRTC packet
 loss on Wi-Fi while a bag was being copied over it. The camera lag fitted
 with range as a term: 0.19 s (run2) and 0.10 s (run3) -- a blend, not a fixed
 delay; 0.17 kept for now.
+
+**A whole virtual pickup on the robot, recorded and timed (robot_fused_run5).**
+Fused perception, start 2.43 m / -17 mm: closing 9.27 s, GO after 0.53 s,
+lowering 2.28 s, insertion 1.072 m in 22.18 s, lift 1.52 s -- INSERTED in
+35.85 s from the trigger. At the decision: face 1.775 m, yaw -0.9 deg, 6 mm off
+the centre line, camera and LiDAR 1.8 mm apart (median -0.2 mm, max 8.9 mm over
+the run). Perception age: depth 58 ms to the stack, LiDAR 243 ms; face fit
+39 ms, pocket match 5 ms; the fused estimate 213 ms (depth-driven) to 462 ms
+(LiDAR-driven) after capture, mostly queueing on a Jetson at 86-90 % CPU.
+tools/run_report.py prints all of it from the bag. An attempt from 2.86 m
+ended NO_GO at once: standing still, camera +23..+25 mm against the LiDAR --
+D103's fit does not hold that far; to be re-fitted on new board bags.
+tools/replay_fused.py draws the fused stages on a bag (README figure,
+pallet_s_129: pocket centre 4/3 mm from tape, camera-LiDAR 1.9 mm).
+
+## 2026-11-03
+
+**D108: LiDAR-only far phase, camera inside 2.5 m.** From Athreya's error-vs-
+distance study. The fusion pipeline ignores depth frames while the tracked face
+is farther than `camera_max_range` (2.5 m), latched once inside; the status
+reason says "LiDAR only until ... (D108)". Tests: a camera reading 40 mm far at
+2.9 m changes nothing and blocks nothing; the camera joins inside and stays on.
+Suite 1019 passed. GPU sim: from 3.0 m GO and INSERTED 1.059 m; from 3.4 m
+NO_PALLET -- the sim's LiDAR gets one beam on the pallet there, which is the
+deferred half of D108 (far bags first).
+
+**D109: the range study in the pipeline and the sim.** The pipeline corrects
+the LiDAR's range bias per return, takes its range sigma from the study, and
+corrects the camera's depth with the study's model (beta 0.0053548, a 9.08 mm).
+The sim's LiDAR (new node lidar_error) and camera (vertical faces) carry the
+same bias and noise. Stack 1025 passed, sim 52 passed. GPU sim from the default
+2.5 m: seeds 1 and 2 GO and INSERTED (1.059, 1.061 m); seed 3 NO_GO on the
+camera-LiDAR disagreement, twice (once with the Gazebo window). The camera's
+12.4 mm per-view offset against the 20 mm rule is expected to trip it in a
+share of views -- the rule's limit is Athreya's to revisit.
+
+**D110: disagreement limit 30 mm.** Sim seed 3, NO_GO twice at 20 mm, now GO and
+INSERTED 1.061 m (watched in the Gazebo window). Worked out the forks' sideways
+budget on the way: heading at GO, not the camera's range error, is what can use
+up the 65 mm -- left open in TODO for Athreya.

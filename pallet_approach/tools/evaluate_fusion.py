@@ -26,6 +26,7 @@ sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import _bagutil as bag  # noqa: E402
 from pallet_approach.camera_pockets import measure  # noqa: E402
+from pallet_approach.fused_pipeline import camera_correction  # noqa: E402
 from pallet_approach.fusion import PalletFilter  # noqa: E402
 from pallet_approach.lidar_pallet import find_pallet  # noqa: E402
 
@@ -67,7 +68,7 @@ def main() -> int:
             else:
                 st = f.status(t)
                 m = measure(item, data['intrinsics'], cam, st.centre, st.yaw, info['floor_plane'], side,
-                            shared['camera_pockets'], shared['camera_depth']['disparity_bias'])
+                            shared['camera_pockets'], *camera_correction(shared))
                 if m.offset is not None and m.both_open:
                     accepted['camera'] += f.update_camera(st.centre + m.offset * st.tangent, t)
                     f.check_camera(m.range_residual, m.yaw_residual)
